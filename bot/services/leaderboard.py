@@ -46,6 +46,53 @@ class LeaderboardService:
         return "\n".join(lines)
 
     @classmethod
+    def format_bot_ranks_preview(
+        cls,
+        me: User,
+        top_rows: list[User],
+        rank: int,
+        total_users: int,
+        prize_usd: int,
+    ) -> str:
+        """Bot ichidagi TOP-15 + foydalanuvchi o‘rni (HTML)."""
+        if rank <= 15:
+            motiv = "🔥 <b>Siz TOP-15 ichidasiz!</b> O‘z pozitsiyangizni ushlab turing."
+        elif rank <= 50:
+            motiv = "📌 TOP-50 ga chiqish uchun bir nechta yangi referal yetarli — davom eting!"
+        else:
+            motiv = "💪 Har bir yangi do‘st sizni yuqoriga tortadi — havolangizni tarqating."
+
+        lines: list[str] = [
+            "📈 <b>Reyting — TOP 15</b>",
+            "",
+            f"🌟 <b>Sizning o‘rangingiz:</b> #{rank} / {total_users} ta ishtirokchi",
+            f"👥 <b>Sizning referallaringiz:</b> <b>{me.referrals_count}</b> ta",
+            "",
+            f"💰 <i>Asosiy yo‘nalish: ~{prize_usd}$ gacha mukofot.</i>",
+            "",
+            motiv,
+            "",
+            "━━━━━━━━━━━━━━━━━━━━",
+            "",
+        ]
+        if not top_rows:
+            lines.append("<i>Hozircha jadval bo‘sh — birinchi bo‘ling!</i>")
+        else:
+            for i, u in enumerate(top_rows, start=1):
+                medal = cls.MEDALS[i - 1] if i <= 3 else f"<b>{i}.</b>"
+                row_body = cls.format_user_row_public(u)
+                lines.append(f"{medal} {row_body} — <b>{u.referrals_count}</b> ta")
+        lines.extend(
+            [
+                "",
+                "━━━━━━━━━━━━━━━━━━━━",
+                "",
+                "<i>Kanalda ham muntazam TOP e’lon qilinadi — o‘yinni kuzating.</i>",
+            ]
+        )
+        return "\n".join(lines)
+
+    @classmethod
     def format_user_row_public(cls, u: User) -> str:
         """Kanalga chiqadigan bir qator: taxallus yoki TG ism, @havola, id."""
         chunks: list[str] = []

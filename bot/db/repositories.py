@@ -2,7 +2,7 @@ import secrets
 import string
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import AppMeta, User
@@ -140,6 +140,26 @@ class UserRepository:
     async def set_leaderboard_alias(self, user: User, alias: str | None) -> None:
         user.leaderboard_alias = alias
         await self.session.flush()
+
+    async def count_users(self) -> int:
+        c = await self.session.scalar(select(func.count()).select_from(User))
+        return int(c or 0)
+
+    async def rank_position(self, user: User) -> int:
+        """Umumiy tartib: referrals_count desc, id asc (kanal TOP bilan bir xil)."""
+        c = await self.session.scalar(
+            select(func.count()).select_from(User).where(
+                or_(
+                    User.referrals_count > user.referrals_count,
+                    and_(User.referrals_count == user.referrals_count, User.id < user.id),
+                )
+            )
+        )
+        return int(c or 0) + 1
+
+    async def list_all_tg_ids(self) -> list[int]:
+        r = await self.session.execute(select(User.tg_id))
+        return [row[0] for row in r.all()]
 
 
 class AppMetaRepository:

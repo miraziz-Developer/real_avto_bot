@@ -36,6 +36,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="👥 Do‘stlarni taklif qilish", callback_data="invite")],
             [InlineKeyboardButton(text="📊 Mening statistikam", callback_data="stats")],
+            [InlineKeyboardButton(text="📈 Reyting (TOP 15)", callback_data="ranks")],
             [InlineKeyboardButton(text="✏️ TOP uchun taxallus", callback_data="alias_start")],
             [InlineKeyboardButton(text="🏆 Musobaqa haqida", callback_data="about")],
         ]

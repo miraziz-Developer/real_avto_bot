@@ -20,6 +20,19 @@ def _int(name: str, default: int) -> int:
     return int(raw)
 
 
+def _admin_telegram_ids() -> frozenset[int]:
+    raw = os.getenv("ADMIN_TELEGRAM_IDS", "").strip()
+    if not raw:
+        return frozenset()
+    ids: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        ids.append(int(part))
+    return frozenset(ids)
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -30,6 +43,7 @@ class Settings:
     leaderboard_channel_id: str
     prize_usd: int
     leaderboard_interval_days: int
+    admin_telegram_ids: frozenset[int]
 
 
 settings = Settings(
@@ -41,4 +55,5 @@ settings = Settings(
     leaderboard_channel_id=_req("LEADERBOARD_CHANNEL_ID"),
     prize_usd=_int("PRIZE_USD", 50),
     leaderboard_interval_days=_int("LEADERBOARD_INTERVAL_DAYS", 3),
+    admin_telegram_ids=_admin_telegram_ids(),
 )

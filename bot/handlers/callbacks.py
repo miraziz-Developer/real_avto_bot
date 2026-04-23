@@ -9,6 +9,7 @@ from bot.db.repositories import UserRepository
 from bot.handlers.helpers import edit_or_answer
 from bot.handlers.render import invite_text, present_user_state
 from bot.keyboards import back_home_keyboard, main_menu_keyboard
+from bot.services.leaderboard import LeaderboardService
 from bot.services.subscription import SubscriptionService
 from bot.utils import messages as msg
 
@@ -190,6 +191,45 @@ async def cb_stats(
         tg_id=db_user.tg_id,
     )
     await edit_or_answer(cq, text, back_home_keyboard())
+
+
+@router.callback_query(F.data == "ranks")
+async def cb_ranks(
+    cq: CallbackQuery,
+    users: UserRepository,
+) -> None:
+    if cq.from_user is None:
+        await cq.answer()
+        return
+
+    db_user = await users.get_by_tg_id(cq.from_user.id)
+    if db_user is None or not (db_user.channel_ok and db_user.instagram_ok):
+        await cq.answer("Avval ro‘yxatdan o‘ting", show_alert=True)
+        return
+
+    ok = await SubscriptionService.is_channel_member(
+        cq.bot,
+        settings.channel_id,
+        cq.from_user.id,
+    )
+    if not ok:
+        await cq.answer()
+        if cq.message:
+            await cq.message.answer(msg.REVERIFY_CHANNEL)
+        return
+
+    top = await users.top_referrers(15)
+    total = await users.count_users()
+    rank = await users.rank_position(db_user)
+    text = LeaderboardService.format_bot_ranks_preview(
+        db_user,
+        top,
+        rank,
+        total,
+        settings.prize_usd,
+    )
+    await edit_or_answer(cq, text, back_home_keyboard())
+    await cq.answer()
 
 
 @router.callback_query(F.data == "about")
