@@ -1,1 +1,0 @@
-"""Telegram referal musobaqasi boti."""
