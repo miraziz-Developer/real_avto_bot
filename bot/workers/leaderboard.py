@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 from bot.config import settings
 from bot.db.repositories import AppMetaRepository, UserRepository
@@ -34,14 +35,30 @@ async def leaderboard_loop(bot: Bot, session_factory: async_sessionmaker[AsyncSe
                         continue
 
                     rows = await users_repo.top_referrers(15)
-                    await LeaderboardService.post_to_channel(bot, rows)
+                    posted = False
+                    try:
+                        await LeaderboardService.post_to_channel(bot, rows)
+                        posted = True
+                    except (TelegramBadRequest, TelegramForbiddenError) as e:
+                        await session.rollback()
+                        logger.warning(
+                            "TOP-15 kanalga yuborilmadi (%s). LEADERBOARD_CHANNEL_ID=%r — "
+                            "to‘g‘ri -100… ID yoki @kanal, bot ushbu chatda xabar yubora olishi kerak.",
+                            e,
+                            settings.leaderboard_channel_id,
+                        )
+                    except Exception:
+                        await session.rollback()
+                        logger.exception("Leaderboard post xatosi")
+
                     await meta.set_next_leaderboard_at(
                         now + timedelta(days=settings.leaderboard_interval_days)
                     )
                     await session.commit()
-                    logger.info("TOP-15 post kanalga yuborildi")
+                    if posted:
+                        logger.info("TOP-15 post kanalga yuborildi")
                 except Exception:
                     await session.rollback()
-                    logger.exception("Leaderboard worker xatosi")
+                    logger.exception("Leaderboard worker (bazaga yozish)")
     except asyncio.CancelledError:
         logger.info("Leaderboard worker to‘xtatildi")

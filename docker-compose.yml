@@ -1,3 +1,14 @@
+# Bot kod yangilanganda image qayta build:
+#   docker compose build bot --no-cache && docker compose up -d bot
+#
+# Server rebootdan keyin avtomatik ishga tushirish: scripts/real-avto-stack.service ni systemd ga qo'shing.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:16-alpine
@@ -14,15 +25,90 @@ services:
       retries: 10
       start_period: 10s
     restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    stop_grace_period: 10s
+    logging: *default-logging
+
+  backend:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"require('http').get('http://127.0.0.1:'+(process.env.PORT||3001)+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+    stop_grace_period: 25s
+    logging: *default-logging
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+    stop_grace_period: 15s
+    logging: *default-logging
 
   bot:
     build: .
     env_file:
       - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    init: true
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"from bot.config import settings; assert settings.bot_token and settings.database_url\"",
+        ]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
     restart: unless-stopped
+    stop_grace_period: 35s
+    logging: *default-logging
 
 volumes:
   pg_data:

@@ -1,0 +1,17 @@
+[Unit]
+Description=Real Avto — Docker Compose (db, redis, backend, frontend, bot)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Loyiha papkasi (git clone qilgan joyingiz):
+WorkingDirectory=/opt/real_avto_konkurs
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

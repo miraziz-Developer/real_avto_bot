@@ -1,16 +1,27 @@
+import html
 import os
+import re
 from dataclasses import dataclass
+from datetime import timedelta
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
+def _normalize_chat_id(raw: str) -> str:
+    """Bo'shliq, qo'shtirnoq; ba'zan nusxa-qo'yishda keladigan axlatni olib tashlash."""
+    s = (raw or "").strip()
+    if len(s) >= 2 and s[0] in "\"'" and s[-1] == s[0]:
+        s = s[1:-1].strip()
+    return s
+
+
 def _req(name: str) -> str:
     v = os.getenv(name)
     if not v:
         raise RuntimeError(f"Atribut talab qilinadi: {name} (.env)")
-    return v.strip()
+    return _normalize_chat_id(v)
 
 
 def _int(name: str, default: int) -> int:
@@ -33,6 +44,67 @@ def _admin_telegram_ids() -> frozenset[int]:
     return frozenset(ids)
 
 
+_SALES_PHONE_DEFAULT = "+998 90 123 45 67"
+
+
+def _sales_phone() -> str:
+    """Wishlist / savdo: .env dagi matn (bir nechta raqam vergul/nuqta-vergul/| bilan)."""
+    return (os.getenv("SALES_PHONE", "") or "").strip() or _SALES_PHONE_DEFAULT
+
+
+def sales_phone_entries() -> list[str]:
+    """SALES_PHONE ni ajratib ro‘yxat (kanal e‘lonida bir nechta raqam chiqishi uchun)."""
+    raw = (os.getenv("SALES_PHONE", "") or "").strip()
+    if not raw:
+        return [_SALES_PHONE_DEFAULT]
+    parts = re.split(r"\s*[,;|]\s*|\n+", raw)
+    out = [p.strip() for p in parts if p.strip()]
+    return out if out else [_SALES_PHONE_DEFAULT]
+
+
+def _optional_url(name: str) -> str | None:
+    v = (os.getenv(name) or "").strip()
+    return v or None
+
+
+_REAL_AVTO_MAP_DEFAULT = "https://www.google.com/maps?q=41.148170,69.017201"
+
+
+def _parking_location_text() -> str:
+    """Sotilmadi javobida; to‘liq override: PARKING_LOCATION_TEXT. Havola: REAL_AVTO_MAP_URL."""
+    raw = (os.getenv("PARKING_LOCATION_TEXT") or "").strip()
+    if raw:
+        return raw
+    map_url = (os.getenv("REAL_AVTO_MAP_URL") or "").strip() or _REAL_AVTO_MAP_DEFAULT
+    safe_href = html.escape(map_url, quote=True)
+    return (
+        "📍 <b>Real Avto — parking / mashinani ko‘rish</b>\n"
+        "Kelib, shaxsan ko‘rishingiz yoki menejer bilan kelishuv qilishingiz mumkin.\n\n"
+        "Koordinatalar: <code>41°08'53.4\"N 69°01'01.9\"E</code>\n"
+        f'<a href="{safe_href}">Google Maps — joylashuv</a>'
+    )
+
+
+def _reviews_channel_id() -> str:
+    """Sharhlar kanali; bo‘sh qoldirilsa — @real_avto_otzivlar (bot kanalda admin bo‘lishi kerak)."""
+    v = (os.getenv("REVIEWS_CHANNEL_ID") or "").strip()
+    if v:
+        return _normalize_chat_id(v)
+    return _normalize_chat_id("@real_avto_otzivlar")
+
+
+def _log_level() -> str:
+    return (os.getenv("LOG_LEVEL", "INFO") or "INFO").strip().upper()
+
+
+def _optional_positive_int(name: str) -> int | None:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return None
+    v = int(raw)
+    return v if v > 0 else None
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -41,9 +113,21 @@ class Settings:
     channel_username: str
     instagram_username: str
     leaderboard_channel_id: str
+    sales_phone: str
     prize_usd: int
     leaderboard_interval_days: int
     admin_telegram_ids: frozenset[int]
+    usd_rate_uzs: int
+    redis_url: str | None
+    db_pool_size: int
+    db_max_overflow: int
+    db_pool_recycle: int
+    db_pool_timeout: int
+    log_level: str
+    reviews_channel_id: str
+    sale_followup_interval_hours: int
+    sale_followup_interval_minutes: int | None
+    parking_location_text: str
 
 
 settings = Settings(
@@ -53,7 +137,51 @@ settings = Settings(
     channel_username=_req("CHANNEL_USERNAME"),
     instagram_username=_req("INSTAGRAM_USERNAME"),
     leaderboard_channel_id=_req("LEADERBOARD_CHANNEL_ID"),
+    sales_phone=_sales_phone(),
     prize_usd=_int("PRIZE_USD", 50),
     leaderboard_interval_days=_int("LEADERBOARD_INTERVAL_DAYS", 3),
     admin_telegram_ids=_admin_telegram_ids(),
+    usd_rate_uzs=_int("USD_RATE_UZS", 13000),
+    redis_url=_optional_url("REDIS_URL"),
+    db_pool_size=_int("DB_POOL_SIZE", 20),
+    db_max_overflow=_int("DB_MAX_OVERFLOW", 40),
+    db_pool_recycle=_int("DB_POOL_RECYCLE", 3600),
+    db_pool_timeout=_int("DB_POOL_TIMEOUT", 30),
+    log_level=_log_level(),
+    reviews_channel_id=_reviews_channel_id(),
+    sale_followup_interval_hours=_int("SALE_FOLLOWUP_INTERVAL_HOURS", 24),
+    sale_followup_interval_minutes=_optional_positive_int("SALE_FOLLOWUP_INTERVAL_MINUTES"),
+    parking_location_text=_parking_location_text(),
 )
+
+
+def sale_followup_interval_timedelta(s: Settings = settings) -> timedelta:
+    if s.sale_followup_interval_minutes is not None:
+        return timedelta(minutes=max(1, s.sale_followup_interval_minutes))
+    return timedelta(hours=max(1, s.sale_followup_interval_hours))
+
+
+def sale_followup_first_prompt_after(interval: timedelta, s: Settings = settings) -> timedelta:
+    """Birinchi «sotildimi» DM uchun kutish. Takroriy tsikldan qisqa bo‘lishi mumkin."""
+    raw = _optional_positive_int("SALE_FOLLOWUP_FIRST_AFTER_MINUTES")
+    if raw is not None:
+        return min(interval, timedelta(minutes=max(1, raw)))
+    # Uzoq tsikl (≥2 soat): birinchi so‘rov ~1 soatdan keyin — aks holda foydalanuvchi 24 soat «hech narsa kemadi» deb qolardi.
+    if interval >= timedelta(hours=2):
+        return min(interval, timedelta(hours=1))
+    return interval
+
+
+def sale_followup_repeat_label(s: Settings = settings) -> str:
+    if s.sale_followup_interval_minutes is not None:
+        m = max(1, s.sale_followup_interval_minutes)
+        return f"har {m} daqiqada"
+    h = max(1, s.sale_followup_interval_hours)
+    return f"har {h} soatda"
+
+
+def sale_followup_retry_hint(s: Settings = settings) -> str:
+    if s.sale_followup_interval_minutes is not None:
+        m = max(1, s.sale_followup_interval_minutes)
+        return f"{m} daqiqadan so‘ng"
+    return f"{max(1, s.sale_followup_interval_hours)} soatdan so‘ng"

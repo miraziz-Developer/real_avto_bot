@@ -1,11 +1,31 @@
 import secrets
 import string
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, literal, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import AppMeta, User
+from bot.db.models import (
+    AppMeta,
+    Client,
+    ListingSubmission,
+    ListingSubmissionStatus,
+    ListingThread,
+    ListingThreadMessage,
+    User,
+    Wishlist,
+)
+
+
+def _brand_synonyms_lower(brand: str) -> frozenset[str]:
+    """Chevrolet/Daewoo (Nexia, Damas, Gentra…) uchun marka nomlari ekvivalent."""
+    b = (brand or "").strip().lower()
+    if not b:
+        return frozenset()
+    s = {b}
+    if b in ("chevrolet", "daewoo"):
+        s.update({"chevrolet", "daewoo"})
+    return frozenset(s)
 
 
 def _gen_referral_code() -> str:
@@ -157,11 +177,6 @@ class UserRepository:
         )
         return int(c or 0) + 1
 
-    async def list_all_tg_ids(self) -> list[int]:
-        r = await self.session.execute(select(User.tg_id))
-        return [row[0] for row in r.all()]
-
-
 class AppMetaRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -189,3 +204,441 @@ class AppMetaRepository:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         await self.set("next_leaderboard_at", dt.isoformat())
+
+
+class CrmRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def get_client_by_id(self, client_id: int) -> Client | None:
+        r = await self.session.execute(select(Client).where(Client.id == client_id))
+        return r.scalar_one_or_none()
+
+    async def get_or_create_client(
+        self,
+        *,
+        telegram_id: int,
+        full_name: str | None = None,
+        phone: str | None = None,
+    ) -> Client:
+        r = await self.session.execute(select(Client).where(Client.telegram_id == telegram_id))
+        client = r.scalar_one_or_none()
+        if client is None:
+            client = Client(telegram_id=telegram_id, full_name=full_name, phone=phone)
+            self.session.add(client)
+            await self.session.flush()
+            return client
+
+        if full_name:
+            client.full_name = full_name
+        if phone:
+            client.phone = phone
+        await self.session.flush()
+        return client
+
+    async def create_listing_submission(
+        self,
+        *,
+        client_id: int,
+        user_telegram_id: int,
+        seller_username: str | None = None,
+        brand: str,
+        model: str,
+        year: int,
+        mileage: int,
+        condition_key: str,
+        has_accident: bool,
+        price_ask_usd: int,
+        paint_status: str,
+        extra_details: str = "",
+        phone: str,
+        photo_file_ids: list[str],
+    ) -> ListingSubmission:
+        row = ListingSubmission(
+            client_id=client_id,
+            user_telegram_id=user_telegram_id,
+            seller_username=(
+                (seller_username or "").strip().lstrip("@")[:64] or None
+            ),
+            brand=brand,
+            model=model,
+            year=year,
+            mileage=mileage,
+            condition_key=condition_key,
+            has_accident=has_accident,
+            price_ask_usd=price_ask_usd,
+            paint_status=paint_status,
+            extra_details=extra_details or "",
+            phone=phone,
+            photo_file_ids=photo_file_ids,
+            status=ListingSubmissionStatus.PENDING,
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def get_listing_submission(self, listing_id: int) -> ListingSubmission | None:
+        r = await self.session.execute(select(ListingSubmission).where(ListingSubmission.id == listing_id))
+        return r.scalar_one_or_none()
+
+    async def try_mark_listing_approved(
+        self,
+        listing_id: int,
+        *,
+        channel_message_id: int | None,
+    ) -> ListingSubmission | None:
+        sub = await self.get_listing_submission(listing_id)
+        if sub is None or sub.status != ListingSubmissionStatus.PENDING:
+            return None
+        sub.status = ListingSubmissionStatus.APPROVED
+        sub.channel_message_id = channel_message_id
+        sub.listing_approved_at = datetime.now(timezone.utc)
+        sub.sale_status = "open"
+        sub.sale_last_prompt_at = None
+        await self.session.flush()
+        return sub
+
+    async def try_mark_listing_rejected(
+        self,
+        listing_id: int,
+        *,
+        reason: str,
+    ) -> ListingSubmission | None:
+        sub = await self.get_listing_submission(listing_id)
+        if sub is None or sub.status != ListingSubmissionStatus.PENDING:
+            return None
+        sub.status = ListingSubmissionStatus.REJECTED
+        sub.rejection_reason = reason
+        await self.session.flush()
+        return sub
+
+    async def create_wishlist(
+        self,
+        *,
+        client_id: int,
+        brand: str,
+        model: str | None,
+        year_min: int,
+        year_max: int,
+        budget_min: int | None,
+        budget_max: int,
+        condition_key: str | None,
+    ) -> Wishlist:
+        row = Wishlist(
+            client_id=client_id,
+            brand=(brand or "").strip()[:100],
+            model=(model or "").strip()[:100] or None,
+            year_min=year_min,
+            year_max=year_max,
+            budget_min=budget_min,
+            budget_max=budget_max,
+            condition_key=(condition_key or "").strip()[:50] or None,
+            is_active=True,
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def get_wishlist(self, wishlist_id: int) -> Wishlist | None:
+        r = await self.session.execute(select(Wishlist).where(Wishlist.id == wishlist_id))
+        return r.scalar_one_or_none()
+
+    async def deactivate_wishlist(self, wish: Wishlist) -> None:
+        wish.is_active = False
+        if wish.notified_at is None:
+            wish.notified_at = datetime.now(timezone.utc)
+        await self.session.flush()
+
+    async def count_active_wishlists(self, client_id: int) -> int:
+        r = await self.session.execute(
+            select(func.count(Wishlist.id)).where(
+                Wishlist.client_id == client_id,
+                Wishlist.is_active.is_(True),
+            )
+        )
+        return int(r.scalar_one() or 0)
+
+    async def list_active_wishlists(self, client_id: int, *, limit: int = 30) -> list[Wishlist]:
+        r = await self.session.execute(
+            select(Wishlist)
+            .where(Wishlist.client_id == client_id, Wishlist.is_active.is_(True))
+            .order_by(Wishlist.id.desc())
+            .limit(limit)
+        )
+        return list(r.scalars().all())
+
+    async def deactivate_wishlist_for_owner(self, wishlist_id: int, client_id: int) -> bool:
+        r = await self.session.execute(
+            select(Wishlist).where(
+                Wishlist.id == wishlist_id,
+                Wishlist.client_id == client_id,
+                Wishlist.is_active.is_(True),
+            )
+        )
+        w = r.scalar_one_or_none()
+        if w is None:
+            return False
+        await self.deactivate_wishlist(w)
+        return True
+
+    async def mark_wishlist_notified(self, wish: Wishlist) -> None:
+        """Oxirgi marta mos e'lon haqida xabar yuborilgan vaqt (qidiruv faol qoladi)."""
+        wish.notified_at = datetime.now(timezone.utc)
+        await self.session.flush()
+
+    async def find_wishlists_matching_listing(
+        self,
+        sub: ListingSubmission,
+    ) -> list[tuple[Wishlist, Client]]:
+        """E'lon (tasdiqlangan) qatoriga mos, faol wishlist + mijoz telegrami bor qatorlar."""
+        lm = func.lower
+        sb = (sub.brand or "").strip()
+        sm = (sub.model or "").strip()
+        brand_keys = _brand_synonyms_lower(sb) or frozenset({sb.lower()})
+        brand_match = or_(*[lm(Wishlist.brand) == lm(literal(bk)) for bk in sorted(brand_keys)])
+        wl_model = Wishlist.model
+        lm_sm = lm(literal(sm))
+        lm_wm = lm(wl_model)
+        model_match = or_(
+            wl_model.is_(None),
+            and_(wl_model.is_not(None), lm_sm.like(func.concat("%", lm_wm, "%"))),
+            and_(wl_model.is_not(None), lm_wm.like(func.concat("%", lm_sm, "%"))),
+        )
+        budget_hi = (Wishlist.budget_max * 11) // 10
+        price_ok = and_(
+            sub.price_ask_usd <= budget_hi,
+            or_(Wishlist.budget_min.is_(None), sub.price_ask_usd >= Wishlist.budget_min),
+        )
+        cond_ok = or_(
+            Wishlist.condition_key.is_(None),
+            Wishlist.condition_key == sub.condition_key,
+        )
+        year_ok = and_(Wishlist.year_min <= sub.year, Wishlist.year_max >= sub.year)
+        stmt = (
+            select(Wishlist, Client)
+            .join(Client, Client.id == Wishlist.client_id)
+            .where(
+                Wishlist.is_active.is_(True),
+                Wishlist.client_id != sub.client_id,
+                Client.telegram_id.is_not(None),
+                brand_match,
+                model_match,
+                year_ok,
+                price_ok,
+                cond_ok,
+            )
+        )
+        r = await self.session.execute(stmt)
+        return [(w, c) for w, c in r.all()]
+
+    async def get_active_contest_row(self) -> dict | None:
+        """Backend `contests` jadvalidagi oxirgi faol konkurs (bitta)."""
+        r = await self.session.execute(
+            text(
+                """
+                select id, title, prize, end_date, is_active
+                from contests
+                where is_active = true
+                order by id desc
+                limit 1
+                """
+            )
+        )
+        row = r.mappings().first()
+        return dict(row) if row else None
+
+    async def client_in_active_contest(self, contest_id: int, client_id: int) -> bool:
+        r = await self.session.execute(
+            text(
+                """
+                select 1 from contest_participants
+                where contest_id = :cid and client_id = :clid
+                limit 1
+                """
+            ),
+            {"cid": contest_id, "clid": client_id},
+        )
+        return r.first() is not None
+
+    async def join_active_contest(self, client_id: int) -> str:
+        """`joined` | `already` | `none` | `ended` — rasmiy konkurs qatnashuvchilari ro‘yxati."""
+        row = await self.get_active_contest_row()
+        if not row:
+            return "none"
+        cid = int(row["id"])
+        if await self.client_in_active_contest(cid, client_id):
+            return "already"
+
+        end = row.get("end_date")
+        if end is not None:
+            if isinstance(end, datetime):
+                end_dt = end
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt.replace(tzinfo=timezone.utc)
+            else:
+                raw = str(end).replace("Z", "+00:00")
+                end_dt = datetime.fromisoformat(raw)
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt.replace(tzinfo=timezone.utc)
+            if end_dt < datetime.now(timezone.utc):
+                return "ended"
+
+        ins = await self.session.execute(
+            text(
+                """
+                insert into contest_participants (contest_id, client_id)
+                values (:c_id, :cl_id)
+                on conflict (contest_id, client_id) do nothing
+                returning id
+                """
+            ),
+            {"c_id": cid, "cl_id": client_id},
+        )
+        if ins.scalar_one_or_none() is not None:
+            return "joined"
+        return "already"
+
+    async def get_approved_listing(self, listing_id: int) -> ListingSubmission | None:
+        r = await self.session.execute(
+            select(ListingSubmission).where(
+                ListingSubmission.id == listing_id,
+                ListingSubmission.status == ListingSubmissionStatus.APPROVED,
+            )
+        )
+        return r.scalar_one_or_none()
+
+    async def get_or_create_listing_thread(
+        self, listing_submission_id: int, buyer_telegram_id: int
+    ) -> ListingThread:
+        r = await self.session.execute(
+            select(ListingThread).where(
+                ListingThread.listing_submission_id == listing_submission_id,
+                ListingThread.buyer_telegram_id == buyer_telegram_id,
+            )
+        )
+        row = r.scalar_one_or_none()
+        if row is not None:
+            return row
+        row = ListingThread(
+            listing_submission_id=listing_submission_id,
+            buyer_telegram_id=buyer_telegram_id,
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def add_listing_thread_message(
+        self,
+        thread_id: int,
+        *,
+        is_from_seller: bool,
+        body_text: str | None,
+        voice_file_id: str | None,
+        in_reply_to: int | None = None,
+    ) -> ListingThreadMessage:
+        bt = (body_text or "").strip() or None
+        msg = ListingThreadMessage(
+            thread_id=thread_id,
+            is_from_seller=is_from_seller,
+            body_text=bt,
+            voice_file_id=(voice_file_id or None),
+            in_reply_to=in_reply_to,
+        )
+        self.session.add(msg)
+        await self.session.flush()
+        return msg
+
+    async def get_thread_with_listing(self, thread_id: int) -> tuple[ListingThread, ListingSubmission] | None:
+        r = await self.session.execute(select(ListingThread).where(ListingThread.id == thread_id))
+        th = r.scalar_one_or_none()
+        if th is None:
+            return None
+        sub = await self.get_listing_submission(th.listing_submission_id)
+        if sub is None:
+            return None
+        return th, sub
+
+    async def get_thread_message(self, message_id: int) -> ListingThreadMessage | None:
+        r = await self.session.execute(select(ListingThreadMessage).where(ListingThreadMessage.id == message_id))
+        return r.scalar_one_or_none()
+
+    async def listings_due_for_sale_followup(
+        self,
+        *,
+        now: datetime,
+        interval: timedelta,
+        first_after: timedelta,
+        limit: int = 25,
+    ) -> list[ListingSubmission]:
+        """Takroriy so‘rov: `interval`dan keyin; birinchi so‘rov: tasdiqdan `first_after` o‘tgach."""
+        due_repeat = now - interval
+        due_first = now - first_after
+        r = await self.session.execute(
+            select(ListingSubmission)
+            .where(
+                ListingSubmission.status == ListingSubmissionStatus.APPROVED,
+                ListingSubmission.sale_status == "open",
+                ListingSubmission.channel_message_id.is_not(None),
+                ListingSubmission.listing_approved_at.is_not(None),
+                or_(
+                    and_(
+                        ListingSubmission.sale_last_prompt_at.is_(None),
+                        ListingSubmission.listing_approved_at <= due_first,
+                    ),
+                    and_(
+                        ListingSubmission.sale_last_prompt_at.is_not(None),
+                        ListingSubmission.sale_last_prompt_at <= due_repeat,
+                    ),
+                ),
+            )
+            .order_by(ListingSubmission.listing_approved_at.asc())
+            .limit(limit)
+        )
+        return list(r.scalars().all())
+
+    async def mark_sale_prompt_sent(self, listing_id: int) -> None:
+        sub = await self.get_listing_submission(listing_id)
+        if sub is None:
+            return
+        sub.sale_last_prompt_at = datetime.now(timezone.utc)
+        await self.session.flush()
+
+    async def try_set_sale_feedback_pending(self, listing_id: int, *, user_telegram_id: int) -> ListingSubmission | None:
+        sub = await self.get_listing_submission(listing_id)
+        if sub is None or sub.user_telegram_id != user_telegram_id:
+            return None
+        if sub.status != ListingSubmissionStatus.APPROVED or sub.sale_status != "open":
+            return None
+        sub.sale_status = "feedback_pending"
+        await self.session.flush()
+        return sub
+
+    async def try_revert_sale_feedback_pending(self, listing_id: int, *, user_telegram_id: int) -> ListingSubmission | None:
+        sub = await self.get_listing_submission(listing_id)
+        if sub is None or sub.user_telegram_id != user_telegram_id:
+            return None
+        if sub.sale_status != "feedback_pending":
+            return None
+        sub.sale_status = "open"
+        await self.session.flush()
+        return sub
+
+    async def try_set_sale_not_sold(self, listing_id: int, *, user_telegram_id: int) -> ListingSubmission | None:
+        sub = await self.get_listing_submission(listing_id)
+        if sub is None or sub.user_telegram_id != user_telegram_id:
+            return None
+        if sub.status != ListingSubmissionStatus.APPROVED or sub.sale_status != "open":
+            return None
+        sub.sale_status = "not_sold"
+        await self.session.flush()
+        return sub
+
+    async def try_finalize_sale_sold(self, listing_id: int, *, user_telegram_id: int) -> ListingSubmission | None:
+        sub = await self.get_listing_submission(listing_id)
+        if sub is None or sub.user_telegram_id != user_telegram_id:
+            return None
+        if sub.status != ListingSubmissionStatus.APPROVED or sub.sale_status != "feedback_pending":
+            return None
+        sub.sale_status = "sold"
+        await self.session.flush()
+        return sub

@@ -1,0 +1,1 @@
+"""Loyiha ma'lumotlari (kataloglar)."""

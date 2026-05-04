@@ -1,6 +1,19 @@
 from datetime import datetime
+from enum import StrEnum
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -52,3 +65,164 @@ class AppMeta(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ClientSource(StrEnum):
+    TELEGRAM = "telegram"
+    INSTAGRAM = "instagram"
+    PHONE = "phone"
+    OFFICE = "office"
+
+
+class ClientStatus(StrEnum):
+    NEW = "new"
+    ACTIVE = "active"
+    VIP = "vip"
+    BLOCKED = "blocked"
+
+
+class CarCondition(StrEnum):
+    IDEAL = "ideal"
+    YAXSHI = "yaxshi"
+    QONIQARLI = "qoniqarli"
+    TAMIR = "tamir"
+
+
+class Client(Base):
+    __tablename__ = "clients"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    source: Mapped[ClientSource] = mapped_column(
+        Enum(ClientSource, name="client_source_enum"),
+        default=ClientSource.TELEGRAM,
+        nullable=False,
+    )
+    status: Mapped[ClientStatus] = mapped_column(
+        Enum(ClientStatus, name="client_status_enum"),
+        default=ClientStatus.NEW,
+        nullable=False,
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class ListingSubmissionStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class Wishlist(Base):
+    """Foydalanuvchi qidiruv parametrlari: kanalga yangi e'lon mos kelsa xabar."""
+
+    __tablename__ = "wishlist"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), index=True, nullable=False)
+    brand: Mapped[str] = mapped_column(String(100), nullable=False)
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    year_min: Mapped[int] = mapped_column(Integer, nullable=False)
+    year_max: Mapped[int] = mapped_column(Integer, nullable=False)
+    budget_min: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # USD, butun son
+    budget_max: Mapped[int] = mapped_column(BigInteger, nullable=False)  # USD, butun son
+    condition_key: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ListingThread(Base):
+    """E'lon bo'yicha xaridor ↔ sotuvchi (faqat bot orqali, anonim)."""
+
+    __tablename__ = "listing_threads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    listing_submission_id: Mapped[int] = mapped_column(
+        ForeignKey("listing_submissions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    buyer_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "listing_submission_id",
+            "buyer_telegram_id",
+            name="uq_listing_threads_listing_buyer",
+        ),
+    )
+
+
+class ListingThreadMessage(Base):
+    __tablename__ = "listing_thread_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    thread_id: Mapped[int] = mapped_column(
+        ForeignKey("listing_threads.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    is_from_seller: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    voice_file_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    in_reply_to: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("listing_thread_messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ListingSubmission(Base):
+    """Foydalanuvchi e'lonlari: admin tasdiqlaguncha kutish, keyin kanalga post."""
+
+    __tablename__ = "listing_submissions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True, nullable=False)
+    user_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    seller_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[ListingSubmissionStatus] = mapped_column(
+        Enum(ListingSubmissionStatus, name="listing_submission_status_enum"),
+        default=ListingSubmissionStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    brand: Mapped[str] = mapped_column(String(100), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    mileage: Mapped[int] = mapped_column(Integer, nullable=False)
+    condition_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    has_accident: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    price_ask_usd: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paint_status: Mapped[str] = mapped_column(String(120), nullable=False)
+    extra_details: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    photo_file_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    channel_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Tasdiqlangan e'lon: sotilish holati (Telegramdan so‘rov + kanalda «SOTILDI»).
+    listing_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # open | feedback_pending | sold | not_sold | None (pending/rejected e'lonlar)
+    sale_status: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    sale_last_prompt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )

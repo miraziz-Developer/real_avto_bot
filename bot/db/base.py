@@ -12,7 +12,14 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-def init_engine(database_url: str) -> async_sessionmaker[AsyncSession]:
+def init_engine(
+    database_url: str,
+    *,
+    pool_size: int = 20,
+    max_overflow: int = 40,
+    pool_recycle: int = 3600,
+    pool_timeout: int = 30,
+) -> async_sessionmaker[AsyncSession]:
     global _engine, _session_factory
     if _engine is not None:
         return _session_factory  # type: ignore[return-value]
@@ -21,8 +28,11 @@ def init_engine(database_url: str) -> async_sessionmaker[AsyncSession]:
         database_url,
         echo=False,
         pool_pre_ping=True,
-        pool_size=20,
-        max_overflow=40,
+        pool_size=max(1, pool_size),
+        max_overflow=max(0, max_overflow),
+        pool_recycle=max(300, pool_recycle),
+        pool_timeout=max(5, pool_timeout),
+        connect_args={"server_settings": {"application_name": "real_avto_bot"}},
     )
     _session_factory = async_sessionmaker(
         _engine,

@@ -37,8 +37,40 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="👥 Do‘stlarni taklif qilish", callback_data="invite")],
             [InlineKeyboardButton(text="📊 Mening statistikam", callback_data="stats")],
             [InlineKeyboardButton(text="📈 Reyting (TOP 15)", callback_data="ranks")],
+            [InlineKeyboardButton(text="🏆 Konkurs markazi", callback_data="open_contest")],
             [InlineKeyboardButton(text="✏️ TOP uchun taxallus", callback_data="alias_start")],
-            [InlineKeyboardButton(text="🏆 Musobaqa haqida", callback_data="about")],
+            [InlineKeyboardButton(text="ℹ️ Musobaqa haqida", callback_data="about")],
+            [InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="home_root")],
+        ]
+    )
+
+
+def contest_hub_keyboard(*, show_join: bool) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if show_join:
+        rows.append([InlineKeyboardButton(text="✅ Rasmiy konkursga yozilish", callback_data="contest_join")])
+    rows.extend(
+        [
+            [
+                InlineKeyboardButton(text="👥 Taklif havolasi", callback_data="invite"),
+                InlineKeyboardButton(text="📊 Mening statistikam", callback_data="stats"),
+            ],
+            [
+                InlineKeyboardButton(text="📈 Reyting (TOP 15)", callback_data="ranks"),
+                InlineKeyboardButton(text="ℹ️ Musobaqa haqida", callback_data="about"),
+            ],
+            [InlineKeyboardButton(text="◀️ Menyu", callback_data="home")],
+        ],
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def root_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Elon berish", callback_data="ad_start")],
+            [InlineKeyboardButton(text="🔍 Qidiruv saqlash", callback_data="wishlist_start")],
+            [InlineKeyboardButton(text="🏆 Konkurs markazi", callback_data="open_contest")],
         ]
     )
 

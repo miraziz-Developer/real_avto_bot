@@ -7,13 +7,23 @@ from aiogram.types import CallbackQuery
 from bot.config import settings
 from bot.db.repositories import UserRepository
 from bot.handlers.helpers import edit_or_answer
-from bot.handlers.render import invite_text, present_user_state
+from bot.handlers.render import invite_text, present_root_menu, present_user_state
 from bot.keyboards import back_home_keyboard, main_menu_keyboard
 from bot.services.leaderboard import LeaderboardService
 from bot.services.subscription import SubscriptionService
 from bot.utils import messages as msg
 
 router = Router(name="callbacks")
+
+
+@router.callback_query(F.data == "home_root")
+async def cb_home_root(cq: CallbackQuery, state: FSMContext) -> None:
+    if cq.message is None:
+        await cq.answer()
+        return
+
+    await state.clear()
+    await present_root_menu(callback=cq)
 
 
 @router.callback_query(F.data == "check_sub")
@@ -52,6 +62,8 @@ async def cb_check_sub(
         db_user=db_user,
         bot_username=bot_username,
         callback=cq,
+        bot=cq.bot,
+        users=users,
     )
 
 
@@ -85,6 +97,8 @@ async def cb_ig_ok(
         db_user=db_user,
         bot_username=bot_username,
         callback=cq,
+        bot=cq.bot,
+        users=users,
     )
 
 
@@ -111,6 +125,8 @@ async def cb_home(
             db_user=db_user,
             bot_username=bot_username,
             callback=cq,
+            bot=cq.bot,
+            users=users,
         )
         return
 

@@ -1,3 +1,10 @@
+ROOT_WELCOME = (
+    "🚘 <b>Real Avto botiga xush kelibsiz!</b>\n\n"
+    "📢 <b>Elon berish</b> — mashinangizni e‘lon qilish (moderatsiya, keyin kanal).\n"
+    "🔍 <b>Qidiruv saqlash</b> — parametrlar bo‘yicha mos e‘lon chiqqanda avtomatik xabar.\n"
+    "🏆 <b>Konkurs markazi</b> — referal havola, TOP va (bo‘lsa) rasmiy konkursga yozilish."
+)
+
 WELCOME = (
     "👋 <b>Assalomu alaykum!</b>\n\n"
     "Bu yerda <b>do‘stlaringizni taklif qilish</b> orqali real mukofotga "
@@ -78,4 +85,40 @@ ALIAS_CANCELLED = "Bekor qilindi. Bosh menyudan davom eting."
 REVERIFY_CHANNEL = (
     "⚠️ Kanal a’zoligi aniqlanmadi. Iltimos, qayta obuna bo‘ling va "
     "«Obunani tekshirish»dan foydalaning."
+)
+
+CONTEST_HUB_HEADER = (
+    "🏆 <b>Konkurs markazi</b>\n"
+    "<i>Rasmiy konkurs (omadan g‘olib) + referal reyting — bir joyda.</i>"
+)
+
+CONTEST_HUB_NO_ACTIVE = (
+    "\n\nHozircha <b>faol rasmiy konkurs</b> (ommadan g‘olib) e’lon qilinmagan.\n"
+    "Referallar bo‘yicha <b>TOP</b> va mukofotlar esa har doim ishlaydi — "
+    "pastdagi tugmalar orqali havola va statistikangizni oching."
+)
+
+CONTEST_HUB_ACTIVE = (
+    "\n\n<b>{title}</b>\n"
+    "🎁 Mukofot: <b>{prize}</b>\n"
+    "📅 Tugash: <code>{ends}</code>\n\n"
+    "{status_block}\n\n"
+    "<b>Referal (reyting uchun)</b>\n"
+    "Havola: <code>{link}</code>\n"
+    "Jami tasdiqlangan referallar: <b>{refs}</b> ta\n\n"
+    "<i>Rasmiy konkursda ishtirok alohida — u yerda ro‘yxatdan o‘tganlar orasidan "
+    "g‘olib tanlanadi (CRM). TOP esa eng ko‘p referal to‘plaganlar uchun.</i>"
+)
+
+CONTEST_JOIN_OK = "✅ Siz rasmiy konkurs ishtirokchilari ro‘yxatiga qo‘shildingiz."
+CONTEST_JOIN_ALREADY = "Siz allaqachon ushbu konkurs uchun ro‘yxatga olgansiz."
+CONTEST_JOIN_NONE = "Hozircha aktiv konkurs yo‘q — keyinroq urinib ko‘ring."
+CONTEST_JOIN_ENDED = "Bu konkurs muddati tugagan. Yangi bosqich e’lon qilinadi."
+CONTEST_JOIN_NEED_SETUP = "Avval kanal va Instagram bosqichlarini tugating."
+
+WISHLIST_LISTING_FOOTER = (
+    "⚡️ <b>Tezkor savdo va maslahat</b>\n\n"
+    "{phone_links}\n\n"
+    "<i>Mashina haqida savolingiz bo‘lsa — tugma orqali yozing; "
+    "sotib olish yoki ko‘rish uchun raqamlarga chiqishingiz mumkin.</i>"
 )
