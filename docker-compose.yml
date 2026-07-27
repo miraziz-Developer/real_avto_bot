@@ -14,7 +14,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: RvT^7pK!xL9@mQ$vB2n
+      POSTGRES_PASSWORD: 'RvT^7pK_xL9_mQ_vB2n_ZwQ8'
       POSTGRES_DB: real_avto_konkurs
     volumes:
       - pg_data:/var/lib/postgresql/data
