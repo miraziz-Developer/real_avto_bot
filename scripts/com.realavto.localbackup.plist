@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Har 6 soatda ishga tushirish (21600 soniya) -->
+    <!-- Birinchi ishga tushirish login dan keyin 60 soniyadan keyin -->
+
+    <key>Label</key>
+    <string>com.realavto.localbackup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/mirazizerkinaliyev_dev/scripts/local_backup.sh</string>
+    </array>
+
+    <!-- Har 6 soatda ishga tushadi -->
+    <key>StartInterval</key>
+    <integer>21600</integer>
+
+    <!-- Agar Mac 6 soatdan ko'proq uyqu rejimida bo'lsa, uyg'onganda ishga tushadi -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Standard output va error log -->
+    <key>StandardOutPath</key>
+    <string>/Users/mirazizerkinaliyev_dev/Desktop/RealAvto_Backups/backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mirazizerkinaliyev_dev/Desktop/RealAvto_Backups/backup_error.log</string>
+</dict>
+</plist>

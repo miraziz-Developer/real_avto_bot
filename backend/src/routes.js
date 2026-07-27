@@ -18,7 +18,17 @@ async function scalarCount(sql, params = []) {
 
 router.get('/health', (_req, res) => res.json({ ok: true }));
 
+router.get('/login', (req, res) => {
+  const host = req.headers.host?.replace(/:\d+$/, '') || '167.172.80.246';
+  res.redirect(`http://${host}:3000/login`);
+});
+
+router.get('/', (_req, res) => {
+  res.redirect('/login');
+});
+
 router.post('/auth/login', asyncHandler(async (req, res) => {
+
   const { username, password } = req.body || {};
   const r = await pool.query(
     "select id, username, role, password_hash, is_active from crm_users where username=$1 limit 1",
