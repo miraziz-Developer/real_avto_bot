@@ -14,6 +14,8 @@ from bot.db.base import create_tables, dispose_engine, get_engine, get_session_f
 from bot.db.migrate import (
     apply_contest_tables,
     apply_listing_extra_details_column,
+    apply_listing_location_column,
+    apply_listing_payment_screenshot_column,
     apply_listing_price_ask_usd_rename,
     apply_listing_sale_followup_columns,
     apply_listing_seller_username_column,
@@ -22,11 +24,13 @@ from bot.db.migrate import (
     apply_user_leaderboard_alias_column,
     apply_wishlist_table,
 )
+
+
 from bot.handlers import register_handlers
 from bot.middlewares.database import DbSessionMiddleware
 from bot.middlewares.errors import UnhandledErrorMiddleware
+from bot.middlewares.rate_limit import RateLimitMiddleware
 from bot.middlewares.workflow import BotUsernameMiddleware
-from bot.workers.leaderboard import leaderboard_loop
 from bot.workers.sale_followup import sale_followup_loop
 
 logger = logging.getLogger(__name__)
@@ -48,15 +52,15 @@ def _configure_logging() -> None:
 
 
 def _log_production_warnings() -> None:
-    """Ko‘p uchraydigan .env kamchiligi uchun ogohlantirish (bot ishga tushishni to‘xtatmaydi)."""
+    """Ko'p uchraydigan .env kamchiligi uchun ogohlantirish (bot ishga tushishni to'xtatmaydi)."""
     if not settings.admin_telegram_ids:
         logger.warning(
-            "ADMIN_TELEGRAM_IDS bo'sh — yangi e'lonlar moderatsiyaga tushmaydi. "
+            "ADMIN_TELEGRAM_IDS bo'sh -- yangi e'lonlar moderatsiyaga tushmaydi. "
             ".env ga admin Telegram ID qo'shing."
         )
     if not (os.getenv("SALES_PHONE") or "").strip():
         logger.warning(
-            "SALES_PHONE .env da ko'rsatilmagan — kanalda standart test raqami chiqadi; prod uchun to'ldiring."
+            "SALES_PHONE .env da ko'rsatilmagan -- kanalda standart test raqami chiqadi; prod uchun to'ldiring."
         )
 
 
@@ -81,6 +85,10 @@ async def _bootstrap_database() -> None:
             await apply_listing_thread_tables(get_engine())
             await apply_listing_sale_followup_columns(get_engine())
             await apply_performance_indexes(get_engine())
+            await apply_listing_payment_screenshot_column(get_engine())
+            await apply_listing_location_column(get_engine())
+
+
             return
         except BaseException as e:
             last_exc = e
@@ -96,7 +104,7 @@ async def _bootstrap_database() -> None:
 
 async def _fsm_storage():
     if not settings.redis_url:
-        logger.info("REDIS_URL yo'q — FSM xotirasi jarayon ichida (restartda FSM yo'qoladi).")
+        logger.info("REDIS_URL yo'q -- FSM xotirasi jarayon ichida (restartda FSM yo'qoladi).")
         return MemoryStorage()
     try:
         from aiogram.fsm.storage.redis import RedisStorage
@@ -112,12 +120,12 @@ async def _fsm_storage():
         logger.info("FSM saqlash: Redis")
         return storage
     except Exception:
-        logger.exception("Redis ga ulanib bo'lmadi — FSM uchun xotira ishlatiladi.")
+        logger.exception("Redis ga ulanib bo'lmadi -- FSM uchun xotira ishlatiladi.")
         return MemoryStorage()
 
 
 async def _verify_bot_chat(bot: Bot, *, env_var: str, chat_ref: str, purpose: str) -> None:
-    """Kanal/superguruh — bot a'zo/admin bo'lishi kerak."""
+    """Kanal/superguruh -- bot a'zo/admin bo'lishi kerak."""
     try:
         chat = await bot.get_chat(chat_ref)
         logger.info(
@@ -129,7 +137,7 @@ async def _verify_bot_chat(bot: Bot, *, env_var: str, chat_ref: str, purpose: st
     except TelegramBadRequest as e:
         logger.error(
             "%s: bot ushbu chatni topa olmadi yoki a'zo emas: %s=%r. Xato: %s. "
-            ".env da -100… yoki @username; botni kanalga admin qilib qo'shing.",
+            ".env da -100... yoki @username; botni kanalga admin qilib qo'shing.",
             purpose,
             env_var,
             chat_ref,
@@ -172,7 +180,8 @@ async def _run() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     await _verify_listings_post_channel(bot)
-    await _verify_leaderboard_channel(bot)
+    # LEADERBOARD MUZLATILDI - Foydalanuvchi botdan chiqdi
+    # await _verify_leaderboard_channel(bot)
     await _verify_reviews_channel(bot)
 
     storage = await _fsm_storage()
@@ -181,22 +190,24 @@ async def _run() -> None:
 
     dp.update.middleware(BotUsernameMiddleware())
     dp.update.middleware(DbSessionMiddleware(session_factory))
+    dp.update.middleware(RateLimitMiddleware())
     register_handlers(dp)
     dp.update.middleware(UnhandledErrorMiddleware())
 
     await bot.delete_webhook(drop_pending_updates=True)
 
-    worker_lb = asyncio.create_task(leaderboard_loop(bot, session_factory))
+    # LEADERBOARD LOOP MUZLATILDI - Foydalanuvchi botdan chiqdi
+    # worker_lb = asyncio.create_task(leaderboard_loop(bot, session_factory))
     worker_sale = asyncio.create_task(sale_followup_loop(bot, session_factory))
     try:
         await dp.start_polling(bot, handle_signals=True)
     finally:
-        worker_lb.cancel()
+        # worker_lb.cancel()
         worker_sale.cancel()
-        try:
-            await worker_lb
-        except asyncio.CancelledError:
-            pass
+        # try:
+        #     await worker_lb
+        # except asyncio.CancelledError:
+        #     pass
         try:
             await worker_sale
         except asyncio.CancelledError:

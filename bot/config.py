@@ -125,9 +125,13 @@ class Settings:
     db_pool_timeout: int
     log_level: str
     reviews_channel_id: str
+    listing_price_uzs: int
+    payment_card: str
+    payment_card_holder: str
     sale_followup_interval_hours: int
     sale_followup_interval_minutes: int | None
     parking_location_text: str
+
 
 
 settings = Settings(
@@ -149,6 +153,10 @@ settings = Settings(
     db_pool_timeout=_int("DB_POOL_TIMEOUT", 30),
     log_level=_log_level(),
     reviews_channel_id=_reviews_channel_id(),
+    listing_price_uzs=_int("LISTING_PRICE_UZS", 50000),
+    payment_card=(os.getenv("PAYMENT_CARD", "") or "").strip(),
+    payment_card_holder=(os.getenv("PAYMENT_CARD_HOLDER", "") or "").strip(),
+
     sale_followup_interval_hours=_int("SALE_FOLLOWUP_INTERVAL_HOURS", 24),
     sale_followup_interval_minutes=_optional_positive_int("SALE_FOLLOWUP_INTERVAL_MINUTES"),
     parking_location_text=_parking_location_text(),

@@ -328,3 +328,40 @@ async def apply_user_leaderboard_alias_column(engine: AsyncEngine) -> None:
                 """
             )
         )
+
+
+async def apply_listing_payment_screenshot_column(engine: AsyncEngine) -> None:
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    ALTER TABLE listing_submissions
+                        ADD COLUMN payment_screenshot_file_id VARCHAR(256);
+                EXCEPTION
+                    WHEN duplicate_column THEN NULL;
+                END $$;
+                """
+            )
+        )
+
+
+async def apply_listing_location_column(engine: AsyncEngine) -> None:
+    """E'lon uchun hudud (location) ustuni."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    ALTER TABLE listing_submissions
+                        ADD COLUMN location VARCHAR(200);
+                EXCEPTION
+                    WHEN duplicate_column THEN NULL;
+                END $$;
+                """
+            )
+        )
+
+

@@ -130,11 +130,8 @@ async def cb_home(
         )
         return
 
-    await edit_or_answer(
-        cq,
-        msg.MAIN_READY,
-        main_menu_keyboard(),
-    )
+    # Konkurs menusi muzlatilgan — asosiy ish menyuga yo'naltirish
+    await present_root_menu(callback=cq)
 
 
 @router.callback_query(F.data == "invite")
@@ -143,28 +140,8 @@ async def cb_invite(
     users: UserRepository,
     bot_username: str,
 ) -> None:
-    if cq.from_user is None:
-        await cq.answer()
-        return
-
-    db_user = await users.get_by_tg_id(cq.from_user.id)
-    if db_user is None or not (db_user.channel_ok and db_user.instagram_ok):
-        await cq.answer("Avval ro‘yxatdan o‘ting", show_alert=True)
-        return
-
-    ok = await SubscriptionService.is_channel_member(
-        cq.bot,
-        settings.channel_id,
-        cq.from_user.id,
-    )
-    if not ok:
-        await cq.answer()
-        if cq.message:
-            await cq.message.answer(msg.REVERIFY_CHANNEL)
-        return
-
-    text = invite_text(db_user, bot_username)
-    await edit_or_answer(cq, text, back_home_keyboard())
+    _ = (users, bot_username)  # signature saqlanadi
+    await cq.answer("🚧 Taklif qilish funksiyasi vaqtincha o'chirilgan", show_alert=True)
 
 
 @router.callback_query(F.data == "stats")
@@ -173,40 +150,8 @@ async def cb_stats(
     users: UserRepository,
     bot_username: str,
 ) -> None:
-    if cq.from_user is None:
-        await cq.answer()
-        return
-
-    db_user = await users.get_by_tg_id(cq.from_user.id)
-    if db_user is None or not (db_user.channel_ok and db_user.instagram_ok):
-        await cq.answer("Avval ro‘yxatdan o‘ting", show_alert=True)
-        return
-
-    ok = await SubscriptionService.is_channel_member(
-        cq.bot,
-        settings.channel_id,
-        cq.from_user.id,
-    )
-    if not ok:
-        await cq.answer()
-        if cq.message:
-            await cq.message.answer(msg.REVERIFY_CHANNEL)
-        return
-
-    if db_user.leaderboard_alias:
-        alias_block = f"🏷 TOP taxallusi: <b>{html.escape(db_user.leaderboard_alias)}</b>"
-    else:
-        alias_block = (
-            "🏷 TOP taxallusi: <i>yo‘q — «TOP uchun taxallus»dan qo‘shing "
-            "(kanalda aniqroq chiqasiz)</i>"
-        )
-    text = msg.STATS.format(
-        code=db_user.referral_code,
-        count=db_user.referrals_count,
-        alias_block=alias_block,
-        tg_id=db_user.tg_id,
-    )
-    await edit_or_answer(cq, text, back_home_keyboard())
+    _ = (users, bot_username)  # signature saqlanadi
+    await cq.answer("🚧 Statistika funksiyasi vaqtincha o'chirilgan", show_alert=True)
 
 
 @router.callback_query(F.data == "ranks")
@@ -214,53 +159,11 @@ async def cb_ranks(
     cq: CallbackQuery,
     users: UserRepository,
 ) -> None:
-    if cq.from_user is None:
-        await cq.answer()
-        return
-
-    db_user = await users.get_by_tg_id(cq.from_user.id)
-    if db_user is None or not (db_user.channel_ok and db_user.instagram_ok):
-        await cq.answer("Avval ro‘yxatdan o‘ting", show_alert=True)
-        return
-
-    ok = await SubscriptionService.is_channel_member(
-        cq.bot,
-        settings.channel_id,
-        cq.from_user.id,
-    )
-    if not ok:
-        await cq.answer()
-        if cq.message:
-            await cq.message.answer(msg.REVERIFY_CHANNEL)
-        return
-
-    top = await users.top_referrers(15)
-    total = await users.count_users()
-    rank = await users.rank_position(db_user)
-    text = LeaderboardService.format_bot_ranks_preview(
-        db_user,
-        top,
-        rank,
-        total,
-        settings.prize_usd,
-    )
-    await edit_or_answer(cq, text, back_home_keyboard())
-    await cq.answer()
+    _ = users  # signature saqlanadi
+    await cq.answer("🚧 Reyting funksiyasi vaqtincha o'chirilgan", show_alert=True)
 
 
 @router.callback_query(F.data == "about")
 async def cb_about(cq: CallbackQuery, users: UserRepository) -> None:
-    if cq.from_user is None:
-        await cq.answer()
-        return
-
-    db_user = await users.get_by_tg_id(cq.from_user.id)
-    if db_user is None or not (db_user.channel_ok and db_user.instagram_ok):
-        await cq.answer("Avval ro‘yxatdan o‘ting", show_alert=True)
-        return
-
-    text = msg.ABOUT.format(
-        days=settings.leaderboard_interval_days,
-        prize=settings.prize_usd,
-    )
-    await edit_or_answer(cq, text, back_home_keyboard())
+    _ = users  # signature saqlanadi
+    await cq.answer("🚧 Bu bo'lim vaqtincha o'chirilgan", show_alert=True)

@@ -251,9 +251,12 @@ class CrmRepository:
         price_ask_usd: int,
         paint_status: str,
         extra_details: str = "",
+        location: str | None = None,
         phone: str,
         photo_file_ids: list[str],
+        payment_screenshot_file_id: str | None = None,
     ) -> ListingSubmission:
+
         row = ListingSubmission(
             client_id=client_id,
             user_telegram_id=user_telegram_id,
@@ -269,13 +272,17 @@ class CrmRepository:
             price_ask_usd=price_ask_usd,
             paint_status=paint_status,
             extra_details=extra_details or "",
+            location=location,
             phone=phone,
+
             photo_file_ids=photo_file_ids,
+            payment_screenshot_file_id=payment_screenshot_file_id,
             status=ListingSubmissionStatus.PENDING,
         )
         self.session.add(row)
         await self.session.flush()
         return row
+
 
     async def get_listing_submission(self, listing_id: int) -> ListingSubmission | None:
         r = await self.session.execute(select(ListingSubmission).where(ListingSubmission.id == listing_id))

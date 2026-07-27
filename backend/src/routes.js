@@ -2,7 +2,7 @@ import express from "express";
 import { pool } from "./db.js";
 import { signAccessToken } from "./auth.js";
 import { requireAuth, requireRole } from "./middleware.js";
-import { asyncHandler, sha256 } from "./utils.js";
+import { asyncHandler, getPagination, sha256 } from "./utils.js";
 
 export const router = express.Router();
 
@@ -68,12 +68,20 @@ router.get('/stats', asyncHandler(async (_req, res) => {
 router.get('/clients', asyncHandler(async (req, res) => {
   const q = String(req.query.q || '').trim();
   const status = String(req.query.status || '').trim();
+  const { limit, offset, page } = getPagination(req, { defaultLimit: 50, maxLimit: 200 });
   const args = [];
   let where = 'where 1=1';
   if (q) { args.push(`%${q}%`); where += ` and (coalesce(full_name,'') ilike $${args.length} or coalesce(phone,'') ilike $${args.length})`; }
   if (status) { args.push(status); where += ` and status = $${args.length}`; }
-  const r = await pool.query(`select * from clients ${where} order by created_at desc limit 500`, args);
-  res.json(r.rows);
+  const countArgs = [...args];
+  const countRes = await pool.query(`select count(*) from clients ${where}`, countArgs);
+  const total = Number.parseInt(countRes.rows[0].count, 10);
+  args.push(limit, offset);
+  const r = await pool.query(
+    `select * from clients ${where} order by created_at desc limit $${args.length - 1} offset $${args.length}`,
+    args,
+  );
+  res.json({ items: r.rows, total, page, limit });
 }));
 
 router.patch('/clients/:id', requireRole('admin', 'manager'), asyncHandler(async (req, res) => {
@@ -128,10 +136,13 @@ router.get('/clients/:id/detail', asyncHandler(async (req, res) => {
 }));
 
 /** Botdagi «Saqlangan qidiruv» (wishlist) — barcha mijozlar. */
-router.get('/wishlists', asyncHandler(async (_req, res) => {
+router.get('/wishlists', asyncHandler(async (req, res) => {
+  const { limit, offset, page } = getPagination(req, { defaultLimit: 50, maxLimit: 200 });
   try {
-    const r = await pool.query(`
-      select w.*,
+    const countRes = await pool.query('select count(*) from wishlist');
+    const total = Number.parseInt(countRes.rows[0].count, 10);
+    const r = await pool.query(
+      `select w.*,
              cl.id as client_db_id,
              cl.full_name as client_name,
              cl.phone as client_phone,
@@ -139,11 +150,12 @@ router.get('/wishlists', asyncHandler(async (_req, res) => {
       from wishlist w
       left join clients cl on cl.id = w.client_id
       order by w.id desc
-      limit 400
-    `);
-    res.json(r.rows);
+      limit $1 offset $2`,
+      [limit, offset],
+    );
+    res.json({ items: r.rows, total, page, limit });
   } catch {
-    res.json([]);
+    res.json({ items: [], total: 0, page, limit });
   }
 }));
 
@@ -189,6 +201,7 @@ router.post('/contest/:id/pick-winner', requireRole('admin'), asyncHandler(async
 
 router.get('/listings', asyncHandler(async (req, res) => {
   const status = String(req.query.status || '').trim().toLowerCase();
+  const { limit, offset, page } = getPagination(req, { defaultLimit: 50, maxLimit: 200 });
   const args = [];
   let where = 'where 1=1';
   if (status && ['pending', 'approved', 'rejected'].includes(status)) {
@@ -196,18 +209,21 @@ router.get('/listings', asyncHandler(async (req, res) => {
     where += ` and lower(ls.status::text) = $${args.length}`;
   }
   try {
+    const countRes = await pool.query(`select count(*) from listing_submissions ls ${where}`, args);
+    const total = Number.parseInt(countRes.rows[0].count, 10);
+    args.push(limit, offset);
     const r = await pool.query(
       `select ls.*, cl.id as client_db_id, cl.full_name as client_name, cl.phone as client_phone, cl.telegram_id as client_telegram_id
        from listing_submissions ls
        left join clients cl on cl.id = ls.client_id
        ${where}
        order by ls.created_at desc
-       limit 400`,
+       limit $${args.length - 1} offset $${args.length}`,
       args,
     );
-    res.json(r.rows);
+    res.json({ items: r.rows, total, page, limit });
   } catch {
-    res.json([]);
+    res.json({ items: [], total: 0, page, limit });
   }
 }));
 
@@ -229,8 +245,11 @@ router.get('/listings/:id', asyncHandler(async (req, res) => {
   }
 }));
 
-router.get('/contest-participants', asyncHandler(async (_req, res) => {
+router.get('/contest-participants', asyncHandler(async (req, res) => {
+  const { limit, offset, page } = getPagination(req, { defaultLimit: 50, maxLimit: 200 });
   try {
+    const countRes = await pool.query('select count(*) from contest_participants');
+    const total = Number.parseInt(countRes.rows[0].count, 10);
     const r = await pool.query(
       `select cp.id, cp.contest_id, cp.client_id, cp.joined_at, cp.is_winner,
               ct.title as contest_title, ct.prize, ct.is_active as contest_active,
@@ -239,10 +258,11 @@ router.get('/contest-participants', asyncHandler(async (_req, res) => {
        join contests ct on ct.id = cp.contest_id
        left join clients cl on cl.id = cp.client_id
        order by cp.joined_at desc
-       limit 800`,
+       limit $1 offset $2`,
+      [limit, offset],
     );
-    res.json(r.rows);
+    res.json({ items: r.rows, total, page, limit });
   } catch {
-    res.json([]);
+    res.json({ items: [], total: 0, page, limit });
   }
 }));

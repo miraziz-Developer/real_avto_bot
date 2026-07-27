@@ -1,4 +1,4 @@
-"""Rasmiy konkurs + referal markazi (aktiv konkurs, ro‘yxatdan o‘tish)."""
+"""Rasmiy konkurs + referal markazi (aktiv konkurs, ro'yxatdan o'tish)."""
 
 from __future__ import annotations
 
@@ -82,15 +82,15 @@ async def _send_contest_hub(
     registered = await crm.client_in_active_contest(cid, client.id)
 
     if registered:
-        status_block = "✅ <b>Rasmiy konkurs:</b> siz ro‘yxatga olgansiz."
+        status_block = "✅ <b>Rasmiy konkurs:</b> siz ro'yxatga olgansiz."
         show_join = False
     elif ended:
-        status_block = "⏹ <b>Rasmiy konkurs</b> muddati tugagan. Yangi bosqich e’lon qilinadi."
+        status_block = "⏹ <b>Rasmiy konkurs</b> muddati tugagan. Yangi bosqich e'lon qilinadi."
         show_join = False
     else:
         status_block = (
             "📋 <b>Rasmiy konkurs:</b> omadli tanlovda ishtirok etish uchun "
-            "«Rasmiy konkursga yozilish»ni bosing (CRM ro‘yxati)."
+            "«Rasmiy konkursga yozilish»ni bosing (CRM ro'yxati)."
         )
         show_join = True
 
@@ -112,39 +112,8 @@ async def cb_open_contest(
     crm: CrmRepository,
     bot_username: str,
 ) -> None:
-    if cq.from_user is None or cq.message is None:
-        await cq.answer()
-        return
-
-    db_user = await users.get_by_tg_id(cq.from_user.id)
-    if db_user is None:
-        await cq.answer("Qayta /start bosing", show_alert=True)
-        return
-
-    if not (db_user.channel_ok and db_user.instagram_ok):
-        await present_user_state(
-            db_user=db_user,
-            bot_username=bot_username,
-            callback=cq,
-            bot=cq.bot,
-            users=users,
-        )
-        await cq.answer()
-        return
-
-    ok = await SubscriptionService.is_channel_member(
-        cq.bot,
-        settings.channel_id,
-        cq.from_user.id,
-    )
-    if not ok:
-        await cq.answer()
-        if cq.message:
-            await cq.message.answer(msg.REVERIFY_CHANNEL)
-        return
-
-    await _send_contest_hub(cq, users=users, crm=crm, bot_username=bot_username)
-    await cq.answer()
+    _ = (users, crm, bot_username)  # signature saqlanadi
+    await cq.answer("Konkurs markazi vaqtincha to'xtatilgan", show_alert=True)
 
 
 @router.callback_query(F.data == "contest_join")
@@ -154,42 +123,5 @@ async def cb_contest_join(
     crm: CrmRepository,
     bot_username: str,
 ) -> None:
-    if cq.from_user is None or cq.message is None:
-        await cq.answer()
-        return
-
-    db_user = await users.get_by_tg_id(cq.from_user.id)
-    if db_user is None or not (db_user.channel_ok and db_user.instagram_ok):
-        await cq.answer(msg.CONTEST_JOIN_NEED_SETUP, show_alert=True)
-        return
-
-    ok = await SubscriptionService.is_channel_member(
-        cq.bot,
-        settings.channel_id,
-        cq.from_user.id,
-    )
-    if not ok:
-        await cq.answer()
-        if cq.message:
-            await cq.message.answer(msg.REVERIFY_CHANNEL)
-        return
-
-    client = await crm.get_or_create_client(
-        telegram_id=cq.from_user.id,
-        full_name=" ".join(
-            filter(None, [cq.from_user.first_name, cq.from_user.last_name]),
-        )
-        or None,
-    )
-    result = await crm.join_active_contest(client.id)
-
-    if result == "joined":
-        await cq.answer(msg.CONTEST_JOIN_OK, show_alert=True)
-    elif result == "already":
-        await cq.answer(msg.CONTEST_JOIN_ALREADY, show_alert=True)
-    elif result == "ended":
-        await cq.answer(msg.CONTEST_JOIN_ENDED, show_alert=True)
-    else:
-        await cq.answer(msg.CONTEST_JOIN_NONE, show_alert=True)
-
-    await _send_contest_hub(cq, users=users, crm=crm, bot_username=bot_username)
+    _ = (users, crm, bot_username)  # signature saqlanadi
+    await cq.answer("Konkurs yozilishi vaqtincha to'xtatilgan", show_alert=True)

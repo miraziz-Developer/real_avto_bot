@@ -36,12 +36,6 @@ function statusBadge(status) {
   return <span className={`badge ${cls}`}>{s || "—"}</span>;
 }
 
-function includesAny(items, query) {
-  if (!query) return true;
-  const q = query.toLowerCase();
-  return items.some((x) => String(x || "").toLowerCase().includes(q));
-}
-
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem("crm_token") || "");
   const [user, setUser] = useState(() => {
@@ -54,14 +48,22 @@ export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [query, setQuery] = useState("");
   const [listingFilter, setListingFilter] = useState("");
+
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // pagination state per tab
+  const [pages, setPages] = useState({
+    clients: { page: 1, limit: 50, total: 0, items: [] },
+    listings: { page: 1, limit: 50, total: 0, items: [], filter: "" },
+    wishlists: { page: 1, limit: 50, total: 0, items: [] },
+    participants: { page: 1, limit: 50, total: 0, items: [] },
+  });
+
   const [state, setState] = useState({
     stats: null,
-    clients: [],
-    wishlists: [],
     contests: [],
-    listings: [],
-    participants: [],
   });
+
   const [error, setError] = useState("");
   const [clientSheetId, setClientSheetId] = useState(null);
   const [clientDetail, setClientDetail] = useState(null);
@@ -78,25 +80,40 @@ export default function App() {
 
   const canEdit = user?.role === "admin" || user?.role === "manager";
 
+  const loadPaginated = useCallback(
+    async (key, endpoint, opts = {}) => {
+      const { page = 1, limit = 50, filterKey, filterValue } = opts;
+      const params = { page, limit };
+      if (filterKey && filterValue) params[filterKey] = filterValue;
+      if (query) params.q = query;
+      const { data } = await api.get(endpoint, { params });
+      return data;
+    },
+    [api, query],
+  );
+
   const load = useCallback(async () => {
     if (!token) return;
     try {
-      const [stats, clients, wishlists, contests, listings, participants] = await Promise.all([
+      const [stats, contests] = await Promise.all([
         api.get("/stats"),
-        api.get("/clients"),
-        api.get("/wishlists").catch(() => ({ data: [] })),
         api.get("/contest/history"),
-        api.get("/listings").catch(() => ({ data: [] })),
-        api.get("/contest-participants").catch(() => ({ data: [] })),
       ]);
-      setState({
-        stats: stats.data,
-        clients: clients.data,
-        wishlists: wishlists.data || [],
-        contests: contests.data,
-        listings: listings.data || [],
-        participants: participants.data || [],
-      });
+
+      const [clientsData, listingsData, wishlistsData, participantsData] = await Promise.all([
+        loadPaginated("clients", "/clients", { page: pages.clients.page, limit: pages.clients.limit }),
+        loadPaginated("listings", "/listings", { page: pages.listings.page, limit: pages.listings.limit, filterKey: "status", filterValue: listingFilter }),
+        loadPaginated("wishlists", "/wishlists", { page: pages.wishlists.page, limit: pages.wishlists.limit }),
+        loadPaginated("participants", "/contest-participants", { page: pages.participants.page, limit: pages.participants.limit }),
+      ]);
+
+      setState({ stats: stats.data, contests: contests.data });
+      setPages((prev) => ({
+        clients: { ...prev.clients, items: clientsData.items || [], total: clientsData.total ?? 0 },
+        listings: { ...prev.listings, items: listingsData.items || [], total: listingsData.total ?? 0 },
+        wishlists: { ...prev.wishlists, items: wishlistsData.items || [], total: wishlistsData.total ?? 0 },
+        participants: { ...prev.participants, items: participantsData.items || [], total: participantsData.total ?? 0 },
+      }));
       setError("");
     } catch (e) {
       const status = e?.response?.status;
@@ -110,12 +127,12 @@ export default function App() {
       }
       setError(e?.message || "Server xatosi.");
     }
-  }, [token, api]);
+  }, [token, api, loadPaginated, pages.clients.page, pages.listings.page, pages.wishlists.page, pages.participants.page, pages.clients.limit, pages.listings.limit, pages.wishlists.limit, pages.participants.limit, listingFilter]);
 
   useEffect(() => {
     load();
     if (!token) return;
-    const t = setInterval(load, 20000);
+    const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [token, load]);
 
@@ -141,6 +158,10 @@ export default function App() {
       cancel = true;
     };
   }, [token, clientSheetId, api]);
+
+  const setPage = useCallback((key, page) => {
+    setPages((prev) => ({ ...prev, [key]: { ...prev[key], page } }));
+  }, []);
 
   async function login(e) {
     e.preventDefault();
@@ -196,29 +217,6 @@ export default function App() {
     }
   }
 
-  const filtered = useMemo(() => {
-    const q = query;
-    return {
-      clients: state.clients.filter((x) => includesAny([x.full_name, x.phone, x.source, x.status], q)),
-      wishlists: state.wishlists.filter((x) =>
-        includesAny(
-          [x.client_name, x.brand, x.model, x.client_phone, String(x.client_telegram_id || "")],
-          q,
-        ),
-      ),
-      listings: state.listings.filter((x) => {
-        if (listingFilter && String(x.status || "").toLowerCase() !== listingFilter) return false;
-        return includesAny(
-          [x.brand, x.model, x.status, x.client_name, x.client_phone, String(x.user_telegram_id)],
-          q,
-        );
-      }),
-      participants: state.participants.filter((x) =>
-        includesAny([x.full_name, x.contest_title, x.phone, String(x.telegram_id)], q),
-      ),
-    };
-  }, [state, query, listingFilter]);
-
   if (!token) {
     return (
       <div className="authPage">
@@ -238,13 +236,21 @@ export default function App() {
 
   return (
     <div className="layout">
-      <aside className="sidebar">
+      <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
         <div className="brand">
           <div className="logo">RA</div>
           <div>
             <strong>Real Avto</strong>
             <span>CRM · Premium</span>
           </div>
+          <button
+            type="button"
+            className="hamburger ghost"
+            aria-label="Menyu"
+            onClick={() => setMobileOpen((v) => !v)}
+          >
+            ☰
+          </button>
         </div>
         <nav>
           {TABS.map((t) => (
@@ -252,7 +258,10 @@ export default function App() {
               key={t.id}
               type="button"
               className={`navBtn ${tab === t.id ? "active" : ""}`}
-              onClick={() => setTab(t.id)}
+              onClick={() => {
+                setTab(t.id);
+                setMobileOpen(false);
+              }}
             >
               <span className="ic">{t.ic}</span>
               {t.label}
@@ -274,7 +283,8 @@ export default function App() {
               className="searchInput"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Qidiruv: ism, telefon, marka, status…"
+              onKeyDown={(e) => e.key === "Enter" && load()}
+              placeholder="Qidiruv: ism, telefon, marka, status… (Enter)"
             />
             <button type="button" className="ghost" onClick={load}>
               Yangilash
@@ -295,16 +305,39 @@ export default function App() {
         </header>
 
         {tab === "dashboard" && (
-          <Dashboard stats={state.stats} wishlists={state.wishlists} listings={state.listings} />
+          <Dashboard stats={state.stats} wishlists={pages.wishlists.items} listings={pages.listings.items} />
         )}
         {tab === "clients" && (
-          <ClientsTable rows={filtered.clients} onOpen={(id) => setClientSheetId(id)} />
+          <PaginatedTable
+            title="Mijozlar"
+            headers={["ID", "Ism", "Telefon", "Telegram ID", "Manba", "Holat"]}
+            rows={pages.clients.items.map((r) => [
+              <span className="mono">{r.id}</span>,
+              r.full_name || "—",
+              <span className="mono">{r.phone || "—"}</span>,
+              <span className="mono">{r.telegram_id ?? "—"}</span>,
+              statusBadge(r.source),
+              statusBadge(r.status),
+            ])}
+            onRowClick={(i) => setClientSheetId(pages.clients.items[i].id)}
+            page={pages.clients.page}
+            limit={pages.clients.limit}
+            total={pages.clients.total}
+            onPageChange={(p) => setPage("clients", p)}
+          />
         )}
         {tab === "listings" && (
           <ListingsPage
-            rows={filtered.listings}
+            rows={pages.listings.items}
+            total={pages.listings.total}
+            page={pages.listings.page}
+            limit={pages.listings.limit}
             filter={listingFilter}
-            onFilter={setListingFilter}
+            onFilter={(f) => {
+              setListingFilter(f);
+              setPage("listings", 1);
+            }}
+            onPageChange={(p) => setPage("listings", p)}
             onOpenClient={(cid) => {
               setTab("clients");
               setClientSheetId(cid);
@@ -313,7 +346,11 @@ export default function App() {
         )}
         {tab === "wishlists" && (
           <WishlistsPage
-            rows={filtered.wishlists}
+            rows={pages.wishlists.items}
+            total={pages.wishlists.total}
+            page={pages.wishlists.page}
+            limit={pages.wishlists.limit}
+            onPageChange={(p) => setPage("wishlists", p)}
             onOpenClient={(cid) => {
               setTab("clients");
               setClientSheetId(cid);
@@ -323,7 +360,11 @@ export default function App() {
         {tab === "contest" && (
           <ContestPage
             rows={state.contests}
-            participants={filtered.participants}
+            participants={pages.participants.items}
+            participantsTotal={pages.participants.total}
+            participantsPage={pages.participants.page}
+            participantsLimit={pages.participants.limit}
+            onParticipantsPageChange={(p) => setPage("participants", p)}
             onCreate={createContest}
             onPickWinner={pickContestWinner}
             isAdmin={user?.role === "admin"}
@@ -375,9 +416,7 @@ function Dashboard({ stats, wishlists, listings }) {
       </div>
       <div className="split2">
         <div className="panel">
-          <div className="panelHead">
-            <h3>So‘nggi qidiruvlar (bot)</h3>
-          </div>
+          <div className="panelHead"><h3>So‘nggi qidiruvlar (bot)</h3></div>
           <MiniTable
             headers={["ID", "Mijoz", "Mashina", "Byudjet", "Faol"]}
             rows={recentWishlists.map((r) => [
@@ -390,9 +429,7 @@ function Dashboard({ stats, wishlists, listings }) {
           />
         </div>
         <div className="panel">
-          <div className="panelHead">
-            <h3>So‘nggi e’lonlar (Telegram)</h3>
-          </div>
+          <div className="panelHead"><h3>So‘nggi e’lonlar (Telegram)</h3></div>
           <MiniTable
             headers={["ID", "Mashina", "Narx", "Holat"]}
             rows={recentListings.map((r) => [
@@ -413,26 +450,14 @@ function MiniTable({ headers, rows }) {
     <div className="tableWrap">
       <table className="data">
         <thead>
-          <tr>
-            {headers.map((h) => (
-              <th key={h}>{h}</th>
-            ))}
-          </tr>
+          <tr>{headers.map((h) => (<th key={h}>{h}</th>))}</tr>
         </thead>
         <tbody>
           {rows.length === 0 ? (
-            <tr>
-              <td colSpan={headers.length} style={{ color: "var(--muted)" }}>
-                Ma’lumot yo‘q
-              </td>
-            </tr>
+            <tr><td colSpan={headers.length} style={{ color: "var(--muted)" }}>Ma’lumot yo‘q</td></tr>
           ) : (
             rows.map((r, i) => (
-              <tr key={i}>
-                {r.map((c, j) => (
-                  <td key={j}>{c}</td>
-                ))}
-              </tr>
+              <tr key={i}>{r.map((c, j) => (<td key={j}>{c}</td>))}</tr>
             ))
           )}
         </tbody>
@@ -441,44 +466,75 @@ function MiniTable({ headers, rows }) {
   );
 }
 
-function ClientsTable({ rows, onOpen }) {
+function Pagination({ page, limit, total, onPageChange }) {
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  if (totalPages <= 1) return null;
+  const pages = [];
+  for (let i = 1; i <= totalPages; i++) {
+    if (i === 1 || i === totalPages || (i >= page - 1 && i <= page + 1)) {
+      pages.push(i);
+    } else if (pages[pages.length - 1] !== "...") {
+      pages.push("...");
+    }
+  }
   return (
-    <div className="panel">
-      <div className="panelHead">
-        <h3>Mijozlar ({rows.length})</h3>
-        <span style={{ color: "var(--muted)", fontSize: 12 }}>Qatorni bosing — to‘liq profil, e’lonlar, qidiruvlar</span>
+    <div className="pagination">
+      <button type="button" className="ghost" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
+        ← Oldingi
+      </button>
+      <div className="pageNums">
+        {pages.map((p, idx) =>
+          p === "..." ? (
+            <span key={`dots-${idx}`} className="dots">…</span>
+          ) : (
+            <button
+              key={p}
+              type="button"
+              className={p === page ? "active" : ""}
+              onClick={() => onPageChange(p)}
+            >
+              {p}
+            </button>
+          ),
+        )}
       </div>
-      <div className="tableWrap">
-        <table className="data">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Ism</th>
-              <th>Telefon</th>
-              <th>Telegram ID</th>
-              <th>Manba</th>
-              <th>Holat</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} className="clickable" onClick={() => onOpen(r.id)}>
-                <td className="mono">{r.id}</td>
-                <td>{r.full_name || "—"}</td>
-                <td className="mono">{r.phone || "—"}</td>
-                <td className="mono">{r.telegram_id ?? "—"}</td>
-                <td>{statusBadge(r.source)}</td>
-                <td>{statusBadge(r.status)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <button type="button" className="ghost" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>
+        Keyingi →
+      </button>
+      <span className="info">Jami {total} ta</span>
     </div>
   );
 }
 
-function ListingsPage({ rows, filter, onFilter, onOpenClient }) {
+function PaginatedTable({ title, headers, rows, onRowClick, page, limit, total, onPageChange }) {
+  return (
+    <div className="panel">
+      <div className="panelHead">
+        <h3>{title} ({total})</h3>
+        <span style={{ color: "var(--muted)", fontSize: 12 }}>Qatorni bosing — to‘liq profil, e’lonlar, qidiruvlar</span>
+      </div>
+      <div className="tableWrap">
+        <table className="data">
+          <thead><tr>{headers.map((h) => (<th key={h}>{h}</th>))}</tr></thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={headers.length} style={{ color: "var(--muted)" }}>Ma’lumot yo‘q</td></tr>
+            ) : (
+              rows.map((r, i) => (
+                <tr key={i} className={onRowClick ? "clickable" : ""} onClick={() => onRowClick && onRowClick(i)}>
+                  {r.map((c, j) => (<td key={j}>{c}</td>))}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+      <Pagination page={page} limit={limit} total={total} onPageChange={onPageChange} />
+    </div>
+  );
+}
+
+function ListingsPage({ rows, total, page, limit, filter, onFilter, onPageChange, onOpenClient }) {
   const chips = [
     { id: "", label: "Hammasi" },
     { id: "pending", label: "Moderatsiya" },
@@ -488,7 +544,7 @@ function ListingsPage({ rows, filter, onFilter, onOpenClient }) {
   return (
     <div className="panel">
       <div className="panelHead">
-        <h3>Telegram e’lonlari ({rows.length})</h3>
+        <h3>Telegram e’lonlari ({total})</h3>
         <div className="chips">
           {chips.map((c) => (
             <button key={c.id || "all"} type="button" className={`chip ${filter === c.id ? "on" : ""}`} onClick={() => onFilter(c.id)}>
@@ -501,14 +557,7 @@ function ListingsPage({ rows, filter, onFilter, onOpenClient }) {
         <table className="data">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Mijoz</th>
-              <th>Mashina</th>
-              <th>Yil</th>
-              <th>Narx (USD)</th>
-              <th>Holat</th>
-              <th>Sana</th>
-              <th></th>
+              <th>ID</th><th>Mijoz</th><th>Mashina</th><th>Yil</th><th>Narx (USD)</th><th>Holat</th><th>Sana</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -517,22 +566,16 @@ function ListingsPage({ rows, filter, onFilter, onOpenClient }) {
                 <td className="mono">{r.id}</td>
                 <td>
                   {r.client_name || "—"}
-                  <div className="mono" style={{ opacity: 0.75, marginTop: 2 }}>
-                    {r.client_phone || ""}
-                  </div>
+                  <div className="mono" style={{ opacity: 0.75, marginTop: 2 }}>{r.client_phone || ""}</div>
                 </td>
                 <td>
-                  <strong>
-                    {r.brand} {r.model}
-                  </strong>
+                  <strong>{r.brand} {r.model}</strong>
                   <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 2 }}>{r.mileage != null ? `${r.mileage} km` : ""}</div>
                 </td>
                 <td>{r.year}</td>
                 <td className="mono">{formatUsd(r.price_ask_usd)}</td>
                 <td>{statusBadge(r.status)}</td>
-                <td className="mono" style={{ fontSize: 12 }}>
-                  {formatDate(r.created_at)}
-                </td>
+                <td className="mono" style={{ fontSize: 12 }}>{formatDate(r.created_at)}</td>
                 <td>
                   {r.client_db_id != null && (
                     <button type="button" className="ghost" style={{ padding: "6px 10px", fontSize: 12 }} onClick={() => onOpenClient(r.client_db_id)}>
@@ -545,15 +588,16 @@ function ListingsPage({ rows, filter, onFilter, onOpenClient }) {
           </tbody>
         </table>
       </div>
+      <Pagination page={page} limit={limit} total={total} onPageChange={onPageChange} />
     </div>
   );
 }
 
-function WishlistsPage({ rows, onOpenClient }) {
+function WishlistsPage({ rows, total, page, limit, onPageChange, onOpenClient }) {
   return (
     <div className="panel">
       <div className="panelHead">
-        <h3>Saqlangan qidiruvlar — bot ({rows.length})</h3>
+        <h3>Saqlangan qidiruvlar — bot ({total})</h3>
         <span style={{ color: "var(--muted)", fontSize: 12 }}>
           Foydalanuvchi kanalga mos e’lon bo‘lganda xabar oladi; CRMdan mijoz profiliga o‘tish mumkin.
         </span>
@@ -562,14 +606,7 @@ function WishlistsPage({ rows, onOpenClient }) {
         <table className="data">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Mijoz</th>
-              <th>Marka / model</th>
-              <th>Yil</th>
-              <th>Byudjet (USD)</th>
-              <th>Holat</th>
-              <th>Sana</th>
-              <th></th>
+              <th>ID</th><th>Mijoz</th><th>Marka / model</th><th>Yil</th><th>Byudjet (USD)</th><th>Holat</th><th>Sana</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -582,19 +619,11 @@ function WishlistsPage({ rows, onOpenClient }) {
                     {r.client_phone || ""} {r.client_telegram_id != null ? `· tg ${r.client_telegram_id}` : ""}
                   </div>
                 </td>
-                <td>
-                  <strong>{r.brand}</strong> {r.model || ""}
-                </td>
-                <td className="mono">
-                  {r.year_min}–{r.year_max}
-                </td>
-                <td className="mono">
-                  {r.budget_min != null ? formatUsd(r.budget_min) : "—"} … {formatUsd(r.budget_max)}
-                </td>
+                <td><strong>{r.brand}</strong> {r.model || ""}</td>
+                <td className="mono">{r.year_min}–{r.year_max}</td>
+                <td className="mono">{r.budget_min != null ? formatUsd(r.budget_min) : "—"} … {formatUsd(r.budget_max)}</td>
                 <td>{r.is_active ? <span className="badge b-approved">faol</span> : <span className="badge b-muted">yopilgan</span>}</td>
-                <td className="mono" style={{ fontSize: 12 }}>
-                  {formatDate(r.created_at)}
-                </td>
+                <td className="mono" style={{ fontSize: 12 }}>{formatDate(r.created_at)}</td>
                 <td>
                   {r.client_db_id != null && (
                     <button type="button" className="ghost" style={{ padding: "6px 10px", fontSize: 12 }} onClick={() => onOpenClient(r.client_db_id)}>
@@ -607,11 +636,12 @@ function WishlistsPage({ rows, onOpenClient }) {
           </tbody>
         </table>
       </div>
+      <Pagination page={page} limit={limit} total={total} onPageChange={onPageChange} />
     </div>
   );
 }
 
-function ContestPage({ rows, participants, onCreate, onPickWinner, isAdmin }) {
+function ContestPage({ rows, participants, participantsTotal, participantsPage, participantsLimit, onParticipantsPageChange, onCreate, onPickWinner, isAdmin }) {
   const countByContest = useMemo(() => {
     const m = new Map();
     for (const p of participants || []) {
@@ -642,13 +672,7 @@ function ContestPage({ rows, participants, onCreate, onPickWinner, isAdmin }) {
           <table className="data">
             <thead>
               <tr>
-                <th>ID</th>
-                <th>Sarlavha</th>
-                <th>Mukofot</th>
-                <th>Tugash</th>
-                <th>Ishtirokchilar</th>
-                <th>G‘olib</th>
-                <th>Holat</th>
+                <th>ID</th><th>Sarlavha</th><th>Mukofot</th><th>Tugash</th><th>Ishtirokchilar</th><th>G‘olib</th><th>Holat</th>
                 {isAdmin && <th>Amallar</th>}
               </tr>
             </thead>
@@ -668,25 +692,17 @@ function ContestPage({ rows, participants, onCreate, onPickWinner, isAdmin }) {
                         <>
                           {r.winner_name}
                           {r.winner_telegram_id != null ? (
-                            <span className="mono" style={{ display: "block", fontSize: 12 }}>
-                              tg: {r.winner_telegram_id}
-                            </span>
+                            <span className="mono" style={{ display: "block", fontSize: 12 }}>tg: {r.winner_telegram_id}</span>
                           ) : null}
                         </>
-                      ) : (
-                        "—"
-                      )}
+                      ) : "—"}
                     </td>
                     <td>{statusBadge(active ? "active" : "closed")}</td>
                     {isAdmin && (
                       <td>
                         {active && n > 0 ? (
-                          <button type="button" className="ghost" onClick={() => onPickWinner(r.id)}>
-                            G‘olib tanlash
-                          </button>
-                        ) : (
-                          "—"
-                        )}
+                          <button type="button" className="ghost" onClick={() => onPickWinner(r.id)}>G‘olib tanlash</button>
+                        ) : "—"}
                       </td>
                     )}
                   </tr>
@@ -697,20 +713,11 @@ function ContestPage({ rows, participants, onCreate, onPickWinner, isAdmin }) {
         </div>
       </div>
       <div className="panel">
-        <div className="panelHead">
-          <h3>Qatnashuvchilar ({participants.length})</h3>
-        </div>
+        <div className="panelHead"><h3>Qatnashuvchilar ({participantsTotal})</h3></div>
         <div className="tableWrap">
           <table className="data">
             <thead>
-              <tr>
-                <th>ID</th>
-                <th>Konkurs</th>
-                <th>Mijoz</th>
-                <th>Telegram</th>
-                <th>Sana</th>
-                <th>G‘olib</th>
-              </tr>
+              <tr><th>ID</th><th>Konkurs</th><th>Mijoz</th><th>Telegram</th><th>Sana</th><th>G‘olib</th></tr>
             </thead>
             <tbody>
               {participants.map((p) => (
@@ -726,6 +733,7 @@ function ContestPage({ rows, participants, onCreate, onPickWinner, isAdmin }) {
             </tbody>
           </table>
         </div>
+        <Pagination page={participantsPage} limit={participantsLimit} total={participantsTotal} onPageChange={onParticipantsPageChange} />
       </div>
     </div>
   );
@@ -751,9 +759,7 @@ function ClientSheet({ id, loading, data, onClose, canEdit, onUpdateClient }) {
               {loading ? "Yuklanmoqda…" : c ? `${c.full_name || "—"} · ${c.phone || "—"}` : "Topilmadi"}
             </p>
           </div>
-          <button type="button" className="ghost" onClick={onClose}>
-            Yopish
-          </button>
+          <button type="button" className="ghost" onClick={onClose}>Yopish</button>
         </div>
         <div className="sheetBody">
           {!loading && !c && <p style={{ color: "var(--muted)" }}>Ma’lumot yo‘q.</p>}
@@ -761,28 +767,21 @@ function ClientSheet({ id, loading, data, onClose, canEdit, onUpdateClient }) {
             <>
               <div className="sectionTitle">Asosiy</div>
               <dl className="kv">
-                <dt>Telegram ID</dt>
-                <dd>{c.telegram_id ?? "—"}</dd>
-                <dt>Manba</dt>
-                <dd>{c.source || "—"}</dd>
-                <dt>Ro‘yxatdan</dt>
-                <dd>{formatDate(c.created_at)}</dd>
+                <dt>Telegram ID</dt><dd>{c.telegram_id ?? "—"}</dd>
+                <dt>Manba</dt><dd>{c.source || "—"}</dd>
+                <dt>Ro‘yxatdan</dt><dd>{formatDate(c.created_at)}</dd>
               </dl>
               {canEdit && (
                 <div style={{ marginTop: 14, display: "grid", gap: 10, maxWidth: 480 }}>
                   <label style={{ fontSize: 12, color: "var(--muted)" }}>Holat</label>
                   <select value={statusDraft} onChange={(e) => setStatusDraft(e.target.value)}>
                     {["new", "active", "vip", "blocked"].map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
+                      <option key={s} value={s}>{s}</option>
                     ))}
                   </select>
                   <label style={{ fontSize: 12, color: "var(--muted)" }}>Eslatmalar</label>
                   <textarea rows={3} value={notesDraft} onChange={(e) => setNotesDraft(e.target.value)} placeholder="Mijoz haqida…" />
-                  <button type="button" onClick={() => onUpdateClient(id, { status: statusDraft, notes: notesDraft })}>
-                    Saqlash
-                  </button>
+                  <button type="button" onClick={() => onUpdateClient(id, { status: statusDraft, notes: notesDraft })}>Saqlash</button>
                 </div>
               )}
 
@@ -790,17 +789,11 @@ function ClientSheet({ id, loading, data, onClose, canEdit, onUpdateClient }) {
                 <>
                   <div className="sectionTitle">Telegram bot (users)</div>
                   <dl className="kv">
-                    <dt>Taxallus</dt>
-                    <dd>@{data.telegram_user.username || "—"}</dd>
-                    <dt>Takliflar soni</dt>
-                    <dd>{data.telegram_user.referrals_count ?? 0}</dd>
+                    <dt>Taxallus</dt><dd>@{data.telegram_user.username || "—"}</dd>
+                    <dt>Takliflar soni</dt><dd>{data.telegram_user.referrals_count ?? 0}</dd>
                     <dt>Kanal / IG</dt>
-                    <dd>
-                      {data.telegram_user.channel_ok ? "kanal ✓" : "kanal —"} ·{" "}
-                      {data.telegram_user.instagram_ok ? "IG ✓" : "IG —"}
-                    </dd>
-                    <dt>TOP taxallus</dt>
-                    <dd>{data.telegram_user.leaderboard_alias || "—"}</dd>
+                    <dd>{data.telegram_user.channel_ok ? "kanal ✓" : "kanal —"} · {data.telegram_user.instagram_ok ? "IG ✓" : "IG —"}</dd>
+                    <dt>TOP taxallus</dt><dd>{data.telegram_user.leaderboard_alias || "—"}</dd>
                   </dl>
                 </>
               )}
@@ -809,11 +802,7 @@ function ClientSheet({ id, loading, data, onClose, canEdit, onUpdateClient }) {
               <MiniTable
                 headers={["#", "Mashina", "Narx", "Holat", "Sana"]}
                 rows={(data.listings || []).map((x) => [
-                  x.id,
-                  `${x.brand} ${x.model}`,
-                  formatUsd(x.price_ask_usd),
-                  statusBadge(x.status),
-                  formatDate(x.created_at),
+                  x.id, `${x.brand} ${x.model}`, formatUsd(x.price_ask_usd), statusBadge(x.status), formatDate(x.created_at),
                 ])}
               />
 
@@ -821,12 +810,8 @@ function ClientSheet({ id, loading, data, onClose, canEdit, onUpdateClient }) {
               <MiniTable
                 headers={["#", "Marka", "Model", "Yil", "Byudjet USD", "Faol"]}
                 rows={(data.wishlists || []).map((w) => [
-                  w.id,
-                  w.brand,
-                  w.model || "—",
-                  `${w.year_min}–${w.year_max}`,
-                  `${w.budget_min != null ? formatUsd(w.budget_min) : "—"} … ${formatUsd(w.budget_max)}`,
-                  w.is_active ? "ha" : "yo‘q",
+                  w.id, w.brand, w.model || "—", `${w.year_min}–${w.year_max}`,
+                  `${w.budget_min != null ? formatUsd(w.budget_min) : "—"} … ${formatUsd(w.budget_max)}`, w.is_active ? "ha" : "yo‘q",
                 ])}
               />
 
@@ -834,9 +819,7 @@ function ClientSheet({ id, loading, data, onClose, canEdit, onUpdateClient }) {
               <MiniTable
                 headers={["Konkurs", "Sana", "G‘olib"]}
                 rows={(data.contest_participations || []).map((p) => [
-                  p.contest_title,
-                  formatDate(p.joined_at),
-                  p.is_winner ? "⭐" : "—",
+                  p.contest_title, formatDate(p.joined_at), p.is_winner ? "⭐" : "—",
                 ])}
               />
             </>

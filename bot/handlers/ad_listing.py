@@ -66,7 +66,9 @@ class AdListingStates(StatesGroup):
     listing_model_variant = State()
     listing_custom_model = State()
     listing_year = State()
+    listing_location = State()
     listing_mileage = State()
+
     listing_condition = State()
     listing_accident = State()
     listing_price_usd = State()
@@ -74,6 +76,7 @@ class AdListingStates(StatesGroup):
     listing_extra = State()
     listing_photos = State()
     listing_phone = State()
+    listing_payment = State()
     listing_confirm = State()
 
 
@@ -252,14 +255,17 @@ def listing_album_caption_public(
     model: str,
     year: int,
     mileage: int,
+    location: str | None = None,
     condition_key: str,
     has_accident: bool,
     price_usd: int,
     paint_status: str,
     extra_details: str,
     contact_phones: list[str] | None = None,
+    seller_phone: str | None = None,
+    seller_tg_username: str | None = None,
 ) -> str:
-    """Kanal va admin «jamoaga ko‘rinadigan» qism: Real Avto aloqa raqamlari."""
+    """Kanal va admin «jamoaga ko‘rinadigan» qism: Real Avto + sotuvchi aloqa raqamlari."""
     emo, cond_name = _CONDITION_CAPTION.get(condition_key, _CONDITION_CAPTION["yaxshi"])
     extra = (extra_details or "").strip()
     extra_block = ""
@@ -268,10 +274,21 @@ def listing_album_caption_public(
     price_txt = fmt_usd(price_usd)
     phones = contact_phones if contact_phones is not None else sales_phone_entries()
     phone_lines = "\n".join(f"📞 {phone_link_html(p)}" for p in phones)
+    # Sotuvchi aloqa qismi
+    seller_contact_block = ""
+    if seller_phone or seller_tg_username:
+        seller_contact_block_lines: list[str] = ["<b>Sotuvchi bilan aloqa:</b>"]
+        if seller_phone:
+            seller_contact_block_lines.append(f"📞 {phone_link_html(seller_phone)}")
+        if seller_tg_username:
+            seller_contact_block_lines.append(f"💬 <a href='https://t.me/{html.escape(seller_tg_username)}'>@{html.escape(seller_tg_username)}</a>")
+        seller_contact_block = "\n" + "\n".join(seller_contact_block_lines)
+    loc_line = f"📍 <b>hudud:</b> {html.escape(location)}\n" if location else ""
     acc = "bor" if has_accident else "yo'q"
     return (
         "🚘 <b>REAL AVTO</b> · <b>E'LON</b>\n\n"
         f"<b>{html.escape(brand)} {html.escape(model)}</b> · <code>{year}</code>\n"
+        f"{loc_line}"
         f"🛣 <b>yurgani:</b> <code>{mileage:,}</code> km ·\n"
         f"{emo} <b>holati:</b> {html.escape(cond_name)} · <b>avariya</b> {acc}\n"
         f"🎨 {html.escape(paint_status)}\n"
@@ -279,6 +296,7 @@ def listing_album_caption_public(
         f"{extra_block}\n\n"
         "<b>Aloqa uchun:</b>\n"
         f"{phone_lines}"
+        f"{seller_contact_block}"
     )
 
 
@@ -290,6 +308,7 @@ def listing_album_caption_moderation(
     model: str,
     year: int,
     mileage: int,
+    location: str | None = None,
     condition_key: str,
     has_accident: bool,
     price_usd: int,
@@ -313,6 +332,7 @@ def listing_album_caption_moderation(
         model=model,
         year=year,
         mileage=mileage,
+        location=location,
         condition_key=condition_key,
         has_accident=has_accident,
         price_usd=price_usd,
@@ -324,18 +344,21 @@ def listing_album_caption_moderation(
 
 
 def listing_caption_from_sub_public(sub) -> str:
-    """Kanal uchun: faqat Real Avto aloqa; sotuvchi ismi / lichkasi chiqmaydi."""
+    """Kanal uchun: Real Avto + sotuvchi aloqa raqamlari chiqadi."""
     return listing_album_caption_public(
         brand=sub.brand,
         model=sub.model,
         year=sub.year,
         mileage=sub.mileage,
+        location=getattr(sub, "location", None) or None,
         condition_key=sub.condition_key,
         has_accident=sub.has_accident,
         price_usd=sub.price_ask_usd,
         paint_status=sub.paint_status,
         extra_details=getattr(sub, "extra_details", None) or "",
         contact_phones=sales_phone_entries(),
+        seller_phone=sub.phone or None,
+        seller_tg_username=sub.seller_username or None,
     )
 
 
@@ -350,6 +373,7 @@ async def send_admin_listing_album_with_actions(
     model: str,
     year: int,
     mileage: int,
+    location: str | None = None,
     condition_key: str,
     has_accident: bool,
     price_ask_usd: int,
@@ -359,6 +383,7 @@ async def send_admin_listing_album_with_actions(
     seller_username: str | None,
     photo_file_ids: list[str],
     mod_kb: InlineKeyboardMarkup,
+    payment_screenshot_file_id: str | None = None,
 ) -> None:
     cap = listing_album_caption_moderation(
         lid,
@@ -367,6 +392,7 @@ async def send_admin_listing_album_with_actions(
         model=model,
         year=year,
         mileage=mileage,
+        location=location,
         condition_key=condition_key,
         has_accident=has_accident,
         price_usd=price_ask_usd,
@@ -380,6 +406,15 @@ async def send_admin_listing_album_with_actions(
     media = [InputMediaPhoto(media=photo_file_ids[0], caption=cap, parse_mode="HTML")]
     media.extend(InputMediaPhoto(media=p) for p in photo_file_ids[1:])
     msgs = await bot.send_media_group(admin_chat_id, media)
+    # To'lov skrinshoti adminlarga
+    if payment_screenshot_file_id:
+        await bot.send_photo(
+            admin_chat_id,
+            photo=payment_screenshot_file_id,
+            caption=f"💳 E'lon <b>#{lid}</b> to'lov skrinshoti.",
+            reply_to_message_id=msgs[0].message_id,
+            parse_mode=ParseMode.HTML,
+        )
     await bot.send_message(
         admin_chat_id,
         f"🛎 E'lon <b>#{lid}</b> — yuqoridagi to'plam bo'yicha tasdiqlang yoki rad eting.",
@@ -394,6 +429,7 @@ def _summary_text(data: dict) -> str:
     model = str(data.get("model") or "")
     year = int(data.get("year") or 0)
     mileage = int(data.get("mileage") or 0)
+    location = str(data.get("location") or "").strip()
     ck = str(data.get("condition_key") or "yaxshi")
     _, cond = AD_CONDITIONS.get(ck, AD_CONDITIONS["yaxshi"])
     has_acc = bool(data.get("has_accident"))
@@ -413,6 +449,7 @@ def _summary_text(data: dict) -> str:
     return (
         "📋 <b>E'lon xulosasi</b>\n\n"
         f"🚘 {html.escape(brand)} {html.escape(model)}, <b>{year}</b> yil\n"
+        f"📍 Hudud: <b>{html.escape(location) if location else '—'}</b>\n"
         f"🛣 Yurish: <b>{mileage:,}</b> km\n"
         f"⚙️ Holat: <b>{html.escape(cond.value)}</b>\n"
         f"⚠️ Avariya: <b>{'Ha' if has_acc else 'Yo`q'}</b>\n"
@@ -630,6 +667,21 @@ async def ad_year(message: Message, state: FSMContext) -> None:
         await message.answer(f"Yil {CAR_YEAR_MIN}–{CAR_YEAR_MAX} oralig'ida bo'lsin.")
         return
     await state.update_data(year=year)
+    await state.set_state(AdListingStates.listing_location)
+    await message.answer("📍 Mashina joylashgan hududni kiriting (masalan: Toshkent, Samarqand):")
+
+
+@router.message(StateFilter(AdListingStates.listing_location), F.text)
+async def ad_location(message: Message, state: FSMContext) -> None:
+    raw = (message.text or "").strip()
+    # oddiy validatsiya — minimal uzunlik va maksimal uzunlik
+    if len(raw) < 2:
+        await message.answer("Hudud nomi juda qisqa.")
+        return
+    if len(raw) > 120:
+        await message.answer("Hudud nomi 120 belgidan uzun bo'lmasligi kerak.")
+        return
+    await state.update_data(location=raw)
     await state.set_state(AdListingStates.listing_mileage)
     await message.answer("🛣 Yurish masofasi (km):")
 
@@ -785,11 +837,30 @@ async def ad_photo_fallback(message: Message, state: FSMContext) -> None:
     )
 
 
-async def _go_confirm_after_phone(message: Message, state: FSMContext) -> None:
+async def _go_payment_after_phone(message: Message, state: FSMContext) -> None:
+    await state.set_state(AdListingStates.listing_payment)
+    lines = [
+        f"💳 <b>E'lon uchun to'lov: {settings.listing_price_uzs:,} so'm</b>",
+        "",
+        f"💳 Karta: <code>{html.escape(settings.payment_card)}</code>",
+        f"👤 Egasi: {html.escape(settings.payment_card_holder)}",
+        "",
+        "To'lovni amalga oshirib, skrinshot yuboring (rasm sifatida).",
+    ]
+    await message.answer("💳 To'lov ma'lumotlari:", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+
+async def _go_confirm_after_payment(message: Message, state: FSMContext) -> None:
     await state.set_state(AdListingStates.listing_confirm)
     data = await state.get_data()
     await message.answer("📋 E'lon xulosasi:", reply_markup=ReplyKeyboardRemove())
     await message.answer(_summary_text(data), reply_markup=_confirm_kb(), parse_mode=ParseMode.HTML)
+
 
 
 @router.message(StateFilter(AdListingStates.listing_phone), F.contact)
@@ -799,7 +870,8 @@ async def ad_phone_contact(message: Message, state: FSMContext) -> None:
     phone = message.contact.phone_number
     un = message.from_user.username or ""
     await state.update_data(phone=phone, preview_username=un)
-    await _go_confirm_after_phone(message, state)
+    await _go_payment_after_phone(message, state)
+
 
 
 @router.message(StateFilter(AdListingStates.listing_phone), F.text)
@@ -813,12 +885,29 @@ async def ad_phone_text(message: Message, state: FSMContext) -> None:
         return
     un = (message.from_user.username or "") if message.from_user else ""
     await state.update_data(phone=parsed, preview_username=un)
-    await _go_confirm_after_phone(message, state)
+    await _go_payment_after_phone(message, state)
+
 
 
 @router.message(StateFilter(AdListingStates.listing_phone))
 async def ad_phone_fallback_msg(message: Message) -> None:
     await message.answer("Kontakt yoki telefon raqamini matn bilan yuboring.", reply_markup=_phone_kb())
+
+
+@router.message(StateFilter(AdListingStates.listing_payment), F.photo)
+async def ad_payment_screenshot(message: Message, state: FSMContext) -> None:
+    file_id = message.photo[-1].file_id
+    await state.update_data(payment_screenshot_file_id=file_id)
+    await _go_confirm_after_payment(message, state)
+
+
+@router.message(StateFilter(AdListingStates.listing_payment))
+async def ad_payment_fallback(message: Message) -> None:
+    await message.answer(
+        "Iltimos, to'lov skrinshotini rasm sifatida yuboring.",
+    )
+
+
 
 
 @router.callback_query(StateFilter(AdListingStates.listing_confirm), F.data == "ad_confirm_no")
@@ -846,12 +935,18 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
     extra_details = str(data.get("extra_details") or "")
     photos = list(data.get("photos") or [])
     phone = str(data.get("phone") or "")
+    location = str(data.get("location") or "").strip()
+    payment_screenshot_file_id = data.get("payment_screenshot_file_id")
+    if not location or len(location) < 2:
+        await cq.answer("Hudud ma'lumotlari yetarli emas. Iltimos, qayta yuboring.", show_alert=True)
+        return
     if len(photos) < MIN_PHOTOS or len(photos) > MAX_PHOTOS:
         await cq.answer("Rasm soni noto'g'ri", show_alert=True)
         return
 
     # Tugma "yuklanmoqda" holatini yopish — adminlarga media yuborish uzoq davom etishi mumkin.
     await cq.answer()
+
 
     try:
         client = await crm.get_or_create_client(
@@ -872,9 +967,12 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
             price_ask_usd=price_ask,
             paint_status=paint_status,
             extra_details=extra_details,
+            location=location or None,
             phone=phone,
             photo_file_ids=photos,
+            payment_screenshot_file_id=payment_screenshot_file_id,
         )
+
         lid = row.id
     except Exception:
         logging.exception("ad_confirm_yes: DB yoki saqlash")
@@ -906,6 +1004,7 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
                     model=model,
                     year=year,
                     mileage=mileage,
+                    location=location or None,
                     condition_key=condition_key,
                     has_accident=has_accident,
                     price_ask_usd=price_ask,
@@ -915,7 +1014,9 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
                     seller_username=seller_un,
                     photo_file_ids=photos,
                     mod_kb=mod_kb,
+                    payment_screenshot_file_id=payment_screenshot_file_id,
                 )
+
             except Exception:
                 logging.exception("Admin #%s ga e'lon yuborish muvaffaqiyatsiz", aid)
                 continue

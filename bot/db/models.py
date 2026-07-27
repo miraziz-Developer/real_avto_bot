@@ -211,9 +211,13 @@ class ListingSubmission(Base):
     price_ask_usd: Mapped[int] = mapped_column(BigInteger, nullable=False)
     paint_status: Mapped[str] = mapped_column(String(120), nullable=False)
     extra_details: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    location: Mapped[str | None] = mapped_column(String(200), nullable=True)
     phone: Mapped[str] = mapped_column(String(32), nullable=False)
+
     photo_file_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    payment_screenshot_file_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     channel_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # Tasdiqlangan e'lon: sotilish holati (Telegramdan so‘rov + kanalda «SOTILDI»).
     listing_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

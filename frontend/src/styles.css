@@ -499,7 +499,126 @@ table.data tr.clickable {
   margin-bottom: 14px;
 }
 
-@media (max-width: 1024px) {
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 0;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.pagination .ghost {
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+.pagination .pageNums {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.pagination .pageNums button {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pagination .pageNums button.active {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #bae6fd;
+  font-weight: 700;
+}
+
+.pagination .pageNums .dots {
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+.pagination .info {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.hamburger {
+  display: none;
+  margin-left: auto;
+  padding: 8px 10px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+@media (max-width: 768px) {
+  .hamburger {
+    display: inline-flex;
+  }
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: var(--sidebar-w);
+    z-index: 50;
+    transform: translateX(-110%);
+    transition: transform 0.22s ease;
+    flex-direction: column;
+    flex-wrap: nowrap;
+  }
+  .sidebar.open {
+    transform: translateX(0);
+  }
+  .sidebar nav {
+    flex-direction: column;
+    flex-wrap: nowrap;
+  }
+  .navBtn {
+    flex: 0 0 auto;
+    justify-content: flex-start;
+  }
+  .content {
+    padding: 14px;
+  }
+  .topbar h2 {
+    font-size: 1.2rem;
+  }
+  .searchInput {
+    min-width: 100%;
+  }
+  .gridStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .split2 {
+    grid-template-columns: 1fr;
+  }
+  .sheet {
+    width: 100%;
+    border-radius: 0;
+    max-height: 100vh;
+  }
+  .sheetTop {
+    position: sticky;
+    top: 0;
+  }
+  .pagination {
+    justify-content: center;
+  }
+  .pagination .info {
+    width: 100%;
+    text-align: center;
+    margin-top: 6px;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 1024px) and (min-width: 769px) {
   .layout {
     grid-template-columns: 1fr;
   }
@@ -517,6 +636,9 @@ table.data tr.clickable {
     flex: 1 1 auto;
     min-width: 120px;
     justify-content: center;
+  }
+  .hamburger {
+    display: none;
   }
   .split2 {
     grid-template-columns: 1fr;
