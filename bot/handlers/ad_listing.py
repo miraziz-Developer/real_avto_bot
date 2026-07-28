@@ -285,6 +285,13 @@ def listing_album_caption_public(
         seller_contact_block = "\n" + "\n".join(seller_contact_block_lines)
     loc_line = f"📍 <b>hudud:</b> {html.escape(location)}\n" if location else ""
     acc = "bor" if has_accident else "yo'q"
+    disclaimer = (
+        "\n\n"
+        "⚠️ <b>Diqqat!</b>\n"
+        "Kanal ma'muriyati mashinaning texnik holati va narxi uchun javobgar emas. "
+        "Sotib olishdan oldin albatta ustangizga (diagnostika) ko'rsating yoki Real Avtoga murojat qiling. "
+        "Hech qachon mashinani ko'rmasdan oldindan zaklad o'tkazmang!"
+    )
     return (
         "🚘 <b>REAL AVTO</b> · <b>E'LON</b>\n\n"
         f"<b>{html.escape(brand)} {html.escape(model)}</b> · <code>{year}</code>\n"
@@ -297,7 +304,9 @@ def listing_album_caption_public(
         "<b>Aloqa uchun:</b>\n"
         f"{phone_lines}"
         f"{seller_contact_block}"
+        f"{disclaimer}"
     )
+
 
 
 def listing_album_caption_moderation(
