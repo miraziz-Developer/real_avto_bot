@@ -31,6 +31,8 @@ from bot.middlewares.database import DbSessionMiddleware
 from bot.middlewares.errors import UnhandledErrorMiddleware
 from bot.middlewares.rate_limit import RateLimitMiddleware
 from bot.middlewares.workflow import BotUsernameMiddleware
+from bot.services.ai_sales import close_ai_client
+from bot.webhooks.inbound import start_inbound_server
 from bot.workers.sale_followup import sale_followup_loop
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,10 @@ def _log_production_warnings() -> None:
         logger.warning(
             "SALES_PHONE .env da ko'rsatilmagan -- kanalda standart test raqami chiqadi; prod uchun to'ldiring."
         )
+    if settings.ai_enabled:
+        logger.info("AI maslahatchi yoqilgan: model=%s", settings.ai_model)
+    else:
+        logger.warning("AI_API_KEY bo'sh -- AI maslahatchi o'chirilgan (bot avvalgidek ishlaydi).")
 
 
 async def _bootstrap_database() -> None:
@@ -199,6 +205,17 @@ async def _run() -> None:
     # LEADERBOARD LOOP MUZLATILDI - Foydalanuvchi botdan chiqdi
     # worker_lb = asyncio.create_task(leaderboard_loop(bot, session_factory))
     worker_sale = asyncio.create_task(sale_followup_loop(bot, session_factory))
+    inbound_runner = None
+    if settings.ai_enabled and settings.inbound_webhook_secret:
+        try:
+            inbound_runner = await start_inbound_server(
+                bot=bot,
+                session_factory=session_factory,
+                secret=settings.inbound_webhook_secret,
+                port=settings.inbound_webhook_port,
+            )
+        except Exception:
+            logger.exception("Inbound webhook serverini ishga tushirib bo'lmadi")
     try:
         await dp.start_polling(bot, handle_signals=True)
     finally:
@@ -212,6 +229,9 @@ async def _run() -> None:
             await worker_sale
         except asyncio.CancelledError:
             pass
+        if inbound_runner is not None:
+            await inbound_runner.cleanup()
+        await close_ai_client()
         try:
             await storage.close()
         except Exception:

@@ -15,6 +15,10 @@ from bot.keyboards import (
 from bot.utils import messages as msg
 
 
+def _root_welcome() -> str:
+    return msg.ROOT_WELCOME + (msg.ROOT_AI_LINE if settings.ai_enabled else "")
+
+
 async def present_root_menu(
     *,
     message: Message | None = None,
@@ -23,12 +27,12 @@ async def present_root_menu(
     if callback and callback.message:
         from bot.handlers.helpers import edit_or_answer
 
-        await edit_or_answer(callback, msg.ROOT_WELCOME, root_menu_keyboard())
+        await edit_or_answer(callback, _root_welcome(), root_menu_keyboard())
         return
 
     if message:
         await message.answer(
-            msg.ROOT_WELCOME,
+            _root_welcome(),
             reply_markup=root_menu_keyboard(),
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,

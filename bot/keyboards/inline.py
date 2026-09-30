@@ -50,12 +50,16 @@ def contest_hub_keyboard(*, show_join: bool) -> InlineKeyboardMarkup:
 
 
 def root_menu_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📢 E’lon berish", callback_data="ad_start")],
-            [InlineKeyboardButton(text="🔍 Qidiruv saqlash", callback_data="wishlist_start")],
-        ]
-    )
+    from bot.config import settings
+
+    rows = []
+    if settings.ai_enabled:
+        rows.append([InlineKeyboardButton(text="🤖 Mashina tanlashda yordam (AI)", callback_data="ai_start")])
+    rows += [
+        [InlineKeyboardButton(text="📢 E’lon berish", callback_data="ad_start")],
+        [InlineKeyboardButton(text="🔍 Qidiruv saqlash", callback_data="wishlist_start")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def alias_prompt_keyboard() -> InlineKeyboardMarkup:

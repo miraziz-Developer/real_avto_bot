@@ -1,4 +1,6 @@
-ROOT_WELCOME = (
+ROOT_ROOT_AI_LINE = "\n🤖 <b>AI yordamchi</b> — qanday mashina kerakligini yozing, bazadan darhol topib beradi (24/7)."
+
+WELCOME = (
     "🚘 <b>Real Avto botiga xush kelibsiz!</b>\n\n"
     "📢 <b>Elon berish</b> — mashinangizni e‘lon qilish (moderatsiya, keyin kanal).\n"
     "🔍 <b>Qidiruv saqlash</b> — parametrlar bo‘yicha mos e‘lon chiqqanda avtomatik xabar."

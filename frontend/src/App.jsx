@@ -6,6 +6,8 @@ const publicApi = axios.create({ baseURL });
 
 const TABS = [
   { id: "dashboard", label: "Boshqaruv", ic: "◆" },
+  { id: "leads", label: "Issiq mijozlar", ic: "🔥" },
+  { id: "conversations", label: "AI suhbatlar", ic: "🤖" },
   { id: "clients", label: "Mijozlar", ic: "◎" },
   { id: "listings", label: "E'lonlar (TG)", ic: "▣" },
   { id: "wishlists", label: "Qidiruvlar (TG)", ic: "◇" },
@@ -33,6 +35,10 @@ function statusBadge(status) {
   if (s === "approved" || s === "active" || s === "interested") cls = "b-approved";
   if (s === "rejected" || s === "not_interested") cls = "b-rejected";
   if (s === "closed" || s === "false") cls = "b-muted";
+  if (s === "new") cls = "b-pending";
+  if (s === "contacted") cls = "b-approved";
+  if (s === "won") cls = "b-approved";
+  if (s === "lost") cls = "b-rejected";
   return <span className={`badge ${cls}`}>{s || "—"}</span>;
 }
 
@@ -48,6 +54,8 @@ export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [query, setQuery] = useState("");
   const [listingFilter, setListingFilter] = useState("");
+  const [leadFilter, setLeadFilter] = useState("new");
+  const [conversationId, setConversationId] = useState(null);
 
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -57,6 +65,8 @@ export default function App() {
     listings: { page: 1, limit: 50, total: 0, items: [], filter: "" },
     wishlists: { page: 1, limit: 50, total: 0, items: [] },
     participants: { page: 1, limit: 50, total: 0, items: [] },
+    leads: { page: 1, limit: 50, total: 0, items: [] },
+    conversations: { page: 1, limit: 50, total: 0, items: [] },
   });
 
   const [state, setState] = useState({
@@ -100,11 +110,13 @@ export default function App() {
         api.get("/contest/history"),
       ]);
 
-      const [clientsData, listingsData, wishlistsData, participantsData] = await Promise.all([
+      const [clientsData, listingsData, wishlistsData, participantsData, leadsData, conversationsData] = await Promise.all([
         loadPaginated("clients", "/clients", { page: pages.clients.page, limit: pages.clients.limit }),
         loadPaginated("listings", "/listings", { page: pages.listings.page, limit: pages.listings.limit, filterKey: "status", filterValue: listingFilter }),
         loadPaginated("wishlists", "/wishlists", { page: pages.wishlists.page, limit: pages.wishlists.limit }),
         loadPaginated("participants", "/contest-participants", { page: pages.participants.page, limit: pages.participants.limit }),
+        loadPaginated("leads", "/leads", { page: pages.leads.page, limit: pages.leads.limit, filterKey: "status", filterValue: leadFilter }),
+        loadPaginated("conversations", "/conversations", { page: pages.conversations.page, limit: pages.conversations.limit }),
       ]);
 
       setState({ stats: stats.data, contests: contests.data });
@@ -113,6 +125,8 @@ export default function App() {
         listings: { ...prev.listings, items: listingsData.items || [], total: listingsData.total ?? 0 },
         wishlists: { ...prev.wishlists, items: wishlistsData.items || [], total: wishlistsData.total ?? 0 },
         participants: { ...prev.participants, items: participantsData.items || [], total: participantsData.total ?? 0 },
+        leads: { ...prev.leads, items: leadsData.items || [], total: leadsData.total ?? 0 },
+        conversations: { ...prev.conversations, items: conversationsData.items || [], total: conversationsData.total ?? 0 },
       }));
       setError("");
     } catch (e) {
@@ -127,7 +141,7 @@ export default function App() {
       }
       setError(e?.message || "Server xatosi.");
     }
-  }, [token, api, loadPaginated, pages.clients.page, pages.listings.page, pages.wishlists.page, pages.participants.page, pages.clients.limit, pages.listings.limit, pages.wishlists.limit, pages.participants.limit, listingFilter]);
+  }, [token, api, loadPaginated, pages.clients.page, pages.listings.page, pages.wishlists.page, pages.participants.page, pages.clients.limit, pages.listings.limit, pages.wishlists.limit, pages.participants.limit, pages.leads.page, pages.leads.limit, pages.conversations.page, pages.conversations.limit, listingFilter, leadFilter]);
 
   useEffect(() => {
     load();
@@ -189,6 +203,12 @@ export default function App() {
       const r = await api.get(`/clients/${id}/detail`);
       setClientDetail(r.data);
     }
+  }
+
+  async function updateLead(id, patch) {
+    if (!canEdit) return;
+    await api.patch(`/leads/${id}`, patch);
+    await load();
   }
 
   async function createContest(e) {
@@ -307,6 +327,33 @@ export default function App() {
         {tab === "dashboard" && (
           <Dashboard stats={state.stats} wishlists={pages.wishlists.items} listings={pages.listings.items} />
         )}
+        {tab === "leads" && (
+          <LeadsPage
+            rows={pages.leads.items}
+            total={pages.leads.total}
+            page={pages.leads.page}
+            limit={pages.leads.limit}
+            filter={leadFilter}
+            onFilter={(f) => {
+              setLeadFilter(f);
+              setPage("leads", 1);
+            }}
+            onPageChange={(p) => setPage("leads", p)}
+            canEdit={canEdit}
+            onUpdate={updateLead}
+            onOpenConversation={setConversationId}
+          />
+        )}
+        {tab === "conversations" && (
+          <ConversationsPage
+            rows={pages.conversations.items}
+            total={pages.conversations.total}
+            page={pages.conversations.page}
+            limit={pages.conversations.limit}
+            onPageChange={(p) => setPage("conversations", p)}
+            onOpen={setConversationId}
+          />
+        )}
         {tab === "clients" && (
           <PaginatedTable
             title="Mijozlar"
@@ -374,6 +421,10 @@ export default function App() {
         {error && <p className="error">{error}</p>}
       </main>
 
+      {conversationId !== null && (
+        <ConversationSheet id={conversationId} api={api} onClose={() => setConversationId(null)} />
+      )}
+
       {clientSheetId !== null && (
         <ClientSheet
           id={clientSheetId}
@@ -393,6 +444,10 @@ export default function App() {
 
 function Dashboard({ stats, wishlists, listings }) {
   const cards = [
+    { k: "🔥 Yangi issiq mijozlar", v: stats?.leadsNew, c: "c4" },
+    { k: "Bugungi leadlar (AI)", v: stats?.leadsToday, c: "c2" },
+    { k: "Sotildi (lead → savdo)", v: stats?.leadsWon, c: "c2" },
+    { k: "AI suhbatlar (bugun / jami)", v: stats ? `${stats.aiConversationsToday ?? 0} / ${stats.aiConversations ?? 0}` : null, c: "c1" },
     { k: "Mijozlar", v: stats?.clients, c: "c0" },
     { k: "E'lon: moderatsiya", v: stats?.listingsPending, c: "c0" },
     { k: "E'lon: kanalda", v: stats?.listingsApproved, c: "c2" },
@@ -506,12 +561,12 @@ function Pagination({ page, limit, total, onPageChange }) {
   );
 }
 
-function PaginatedTable({ title, headers, rows, onRowClick, page, limit, total, onPageChange }) {
+function PaginatedTable({ title, hint = "Qatorni bosing — to‘liq profil, e’lonlar, qidiruvlar", headers, rows, onRowClick, page, limit, total, onPageChange }) {
   return (
     <div className="panel">
       <div className="panelHead">
         <h3>{title} ({total})</h3>
-        <span style={{ color: "var(--muted)", fontSize: 12 }}>Qatorni bosing — to‘liq profil, e’lonlar, qidiruvlar</span>
+        <span style={{ color: "var(--muted)", fontSize: 12 }}>{hint}</span>
       </div>
       <div className="tableWrap">
         <table className="data">
@@ -822,6 +877,175 @@ function ClientSheet({ id, loading, data, onClose, canEdit, onUpdateClient }) {
                   p.contest_title, formatDate(p.joined_at), p.is_winner ? "⭐" : "—",
                 ])}
               />
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const LEAD_STATUS_LABELS = { new: "Yangi", contacted: "Bog‘lanildi", won: "Sotildi", lost: "Yo‘qotildi" };
+
+function platformLabel(p) {
+  if (p === "telegram") return "Telegram";
+  if (p === "instagram") return "Instagram";
+  return p || "—";
+}
+
+function LeadsPage({ rows, total, page, limit, filter, onFilter, onPageChange, canEdit, onUpdate, onOpenConversation }) {
+  const chips = [{ id: "", label: "Hammasi" }, ...Object.entries(LEAD_STATUS_LABELS).map(([id, label]) => ({ id, label }))];
+  return (
+    <div className="panel">
+      <div className="panelHead">
+        <h3>Issiq mijozlar — AI saralagan ({total})</h3>
+        <div className="chips">
+          {chips.map((c) => (
+            <button key={c.id || "all"} type="button" className={`chip ${filter === c.id ? "on" : ""}`} onClick={() => onFilter(c.id)}>
+              {c.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="tableWrap">
+        <table className="data">
+          <thead>
+            <tr>
+              <th>ID</th><th>Mijoz</th><th>Telefon</th><th>Mashina</th><th>To‘lov / byudjet</th><th>Izoh</th><th>Holat</th><th>Sana</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan={9} style={{ color: "var(--muted)" }}>Hozircha yo‘q. AI mijoz raqamini olganda shu yerda paydo bo‘ladi.</td></tr>
+            )}
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td className="mono">{r.id}</td>
+                <td>
+                  {r.client_name || "—"}
+                  <div className="mono" style={{ opacity: 0.75, marginTop: 2, fontSize: 11 }}>
+                    {platformLabel(r.platform)}{r.client_username ? ` · @${r.client_username}` : ""}
+                  </div>
+                </td>
+                <td className="mono"><a className="phoneLink" href={`tel:${r.phone}`}>{r.phone}</a></td>
+                <td>
+                  {r.listing_brand ? (
+                    <>
+                      <strong>{r.listing_brand} {r.listing_model}</strong> {r.listing_year}
+                      <div className="mono" style={{ fontSize: 11, opacity: 0.75 }}>
+                        #{r.listing_submission_id} · {formatUsd(r.listing_price_usd)}{r.listing_sale_status === "sold" ? " · sotilgan" : ""}
+                      </div>
+                    </>
+                  ) : (r.car_text || "—")}
+                </td>
+                <td>
+                  {r.payment_type || "—"}
+                  {r.budget_usd != null && <div className="mono" style={{ fontSize: 11 }}>{formatUsd(r.budget_usd)}</div>}
+                </td>
+                <td style={{ maxWidth: 240, fontSize: 12 }}>{r.note || "—"}</td>
+                <td>
+                  {canEdit ? (
+                    <select value={r.status} onChange={(e) => onUpdate(r.id, { status: e.target.value })}>
+                      {Object.entries(LEAD_STATUS_LABELS).map(([id, label]) => (
+                        <option key={id} value={id}>{label}</option>
+                      ))}
+                    </select>
+                  ) : statusBadge(r.status)}
+                </td>
+                <td className="mono" style={{ fontSize: 12 }}>{formatDate(r.created_at)}</td>
+                <td>
+                  {r.conversation_id != null && (
+                    <button type="button" className="ghost" style={{ padding: "6px 10px", fontSize: 12 }} onClick={() => onOpenConversation(r.conversation_id)}>
+                      Suhbat
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Pagination page={page} limit={limit} total={total} onPageChange={onPageChange} />
+    </div>
+  );
+}
+
+function ConversationsPage({ rows, total, page, limit, onPageChange, onOpen }) {
+  return (
+    <PaginatedTable
+      title="AI maslahatchi suhbatlari (Telegram + Instagram)"
+      hint="Qatorni bosing — to‘liq yozishma va leadlar"
+      headers={["ID", "Mijoz", "Platforma", "Xabarlar", "Oxirgi javob", "Lead", "Yangilangan"]}
+      rows={rows.map((r) => [
+        <span className="mono">{r.id}</span>,
+        <>
+          {r.client_name || "—"}
+          {r.client_username && <div className="mono" style={{ fontSize: 11, opacity: 0.75 }}>@{r.client_username}</div>}
+        </>,
+        platformLabel(r.platform),
+        <span className="mono">{r.messages_count}</span>,
+        <span style={{ fontSize: 12 }}>{(r.last_message || "").slice(0, 90) || "—"}</span>,
+        r.has_lead ? <span className="badge b-approved">🔥 bor</span> : <span className="badge b-muted">—</span>,
+        <span className="mono" style={{ fontSize: 12 }}>{formatDate(r.updated_at)}</span>,
+      ])}
+      onRowClick={(i) => onOpen(rows[i].id)}
+      page={page}
+      limit={limit}
+      total={total}
+      onPageChange={onPageChange}
+    />
+  );
+}
+
+function ConversationSheet({ id, api, onClose }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancel = false;
+    setLoading(true);
+    api
+      .get(`/conversations/${id}`)
+      .then((r) => !cancel && setData(r.data))
+      .catch(() => !cancel && setData(null))
+      .finally(() => !cancel && setLoading(false));
+    return () => {
+      cancel = true;
+    };
+  }, [id, api]);
+  const conv = data?.conversation;
+  return (
+    <div className="sheetBackdrop" role="presentation" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="sheet" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+        <div className="sheetTop">
+          <div>
+            <h2 style={{ margin: 0, fontSize: "1.25rem" }}>AI suhbat #{id}</h2>
+            <p style={{ margin: "6px 0 0", color: "var(--muted)", fontSize: 13 }}>
+              {loading ? "Yuklanmoqda…" : conv ? `${conv.client_name || "—"} · ${platformLabel(conv.platform)}${conv.client_username ? ` · @${conv.client_username}` : ""}` : "Topilmadi"}
+            </p>
+          </div>
+          <button type="button" className="ghost" onClick={onClose}>Yopish</button>
+        </div>
+        <div className="sheetBody">
+          {!loading && conv && (
+            <>
+              {data.leads?.length > 0 && (
+                <>
+                  <div className="sectionTitle">Leadlar</div>
+                  <MiniTable
+                    headers={["ID", "Telefon", "Mashina", "Holat"]}
+                    rows={data.leads.map((l) => [l.id, l.phone, l.car_text || "—", statusBadge(l.status)])}
+                  />
+                </>
+              )}
+              <div className="sectionTitle">Yozishma (oxirgi {conv.message_history?.length || 0} ta xabar)</div>
+              <div className="chatLog">
+                {(conv.message_history || []).map((m, i) => (
+                  <div key={i} className={`chatMsg ${m.role === "user" ? "fromUser" : "fromAi"}`}>
+                    <div className="chatWho">{m.role === "user" ? "Mijoz" : "AI"}</div>
+                    {m.content}
+                  </div>
+                ))}
+              </div>
             </>
           )}
         </div>

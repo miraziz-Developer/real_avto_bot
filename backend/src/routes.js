@@ -53,6 +53,12 @@ router.get('/stats', asyncHandler(async (_req, res) => {
     listingThreads,
     contestParticipants,
     usersTg,
+    leadsNew,
+    leadsTotal,
+    leadsToday,
+    leadsWon,
+    aiConversations,
+    aiConversationsToday,
   ] = await Promise.all([
     pool.query('select count(*)::int as count from clients'),
     scalarCount("select count(*)::int as count from listing_submissions where lower(status::text)='pending'"),
@@ -62,6 +68,12 @@ router.get('/stats', asyncHandler(async (_req, res) => {
     scalarCount('select count(*)::int as count from listing_threads'),
     scalarCount('select count(*)::int as count from contest_participants'),
     scalarCount('select count(*)::int as count from users'),
+    scalarCount("select count(*)::int as count from leads where status = 'new'"),
+    scalarCount('select count(*)::int as count from leads'),
+    scalarCount("select count(*)::int as count from leads where created_at >= date_trunc('day', now())"),
+    scalarCount("select count(*)::int as count from leads where status = 'won'"),
+    scalarCount('select count(*)::int as count from ai_conversations'),
+    scalarCount("select count(*)::int as count from ai_conversations where updated_at >= date_trunc('day', now())"),
   ]);
   res.json({
     clients: clients.rows[0].count,
@@ -72,7 +84,113 @@ router.get('/stats', asyncHandler(async (_req, res) => {
     listingThreads,
     contestParticipants,
     usersTg,
+    leadsNew,
+    leadsTotal,
+    leadsToday,
+    leadsWon,
+    aiConversations,
+    aiConversationsToday,
   });
+}));
+
+const LEAD_STATUSES = ['new', 'contacted', 'won', 'lost'];
+
+/** AI saralagan issiq mijozlar (bot jadvali: leads). */
+router.get('/leads', asyncHandler(async (req, res) => {
+  const status = String(req.query.status || '').trim().toLowerCase();
+  const q = String(req.query.q || '').trim();
+  const { limit, offset, page } = getPagination(req, { defaultLimit: 50, maxLimit: 200 });
+  const args = [];
+  let where = 'where 1=1';
+  if (LEAD_STATUSES.includes(status)) {
+    args.push(status);
+    where += ` and l.status = $${args.length}`;
+  }
+  if (q) {
+    args.push(`%${q}%`);
+    where += ` and (coalesce(l.client_name,'') ilike $${args.length} or l.phone ilike $${args.length} or coalesce(l.car_text,'') ilike $${args.length})`;
+  }
+  try {
+    const countRes = await pool.query(`select count(*) from leads l ${where}`, args);
+    const total = Number.parseInt(countRes.rows[0].count, 10);
+    args.push(limit, offset);
+    const r = await pool.query(
+      `select l.*,
+              ls.brand as listing_brand, ls.model as listing_model, ls.year as listing_year,
+              ls.price_ask_usd as listing_price_usd, ls.sale_status as listing_sale_status
+       from leads l
+       left join listing_submissions ls on ls.id = l.listing_submission_id
+       ${where}
+       order by (l.status = 'new') desc, l.created_at desc
+       limit $${args.length - 1} offset $${args.length}`,
+      args,
+    );
+    res.json({ items: r.rows, total, page, limit });
+  } catch {
+    res.json({ items: [], total: 0, page, limit });
+  }
+}));
+
+router.patch('/leads/:id', requireRole('admin', 'manager'), asyncHandler(async (req, res) => {
+  const id = Number.parseInt(String(req.params.id), 10);
+  if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: 'invalid_id' });
+  const { status, note } = req.body || {};
+  if (status != null && !LEAD_STATUSES.includes(status)) return res.status(400).json({ error: 'invalid_status' });
+  const r = await pool.query(
+    'update leads set status=coalesce($1,status), note=coalesce($2,note), updated_at=now() where id=$3 returning *',
+    [status ?? null, note ?? null, id],
+  );
+  if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
+  res.json(r.rows[0]);
+}));
+
+/** AI maslahatchi bilan yozishmalar (Telegram / Instagram). */
+router.get('/conversations', asyncHandler(async (req, res) => {
+  const platform = String(req.query.platform || '').trim().toLowerCase();
+  const q = String(req.query.q || '').trim();
+  const { limit, offset, page } = getPagination(req, { defaultLimit: 50, maxLimit: 200 });
+  const args = [];
+  let where = 'where 1=1';
+  if (platform) {
+    args.push(platform);
+    where += ` and c.platform = $${args.length}`;
+  }
+  if (q) {
+    args.push(`%${q}%`);
+    where += ` and (coalesce(c.client_name,'') ilike $${args.length} or coalesce(c.client_username,'') ilike $${args.length})`;
+  }
+  try {
+    const countRes = await pool.query(`select count(*) from ai_conversations c ${where}`, args);
+    const total = Number.parseInt(countRes.rows[0].count, 10);
+    args.push(limit, offset);
+    const r = await pool.query(
+      `select c.id, c.platform, c.client_social_id, c.client_name, c.client_username,
+              c.messages_count, c.created_at, c.updated_at,
+              c.message_history -> -1 ->> 'content' as last_message,
+              exists(select 1 from leads l where l.conversation_id = c.id) as has_lead
+       from ai_conversations c
+       ${where}
+       order by c.updated_at desc
+       limit $${args.length - 1} offset $${args.length}`,
+      args,
+    );
+    res.json({ items: r.rows, total, page, limit });
+  } catch {
+    res.json({ items: [], total: 0, page, limit });
+  }
+}));
+
+router.get('/conversations/:id', asyncHandler(async (req, res) => {
+  const id = Number.parseInt(String(req.params.id), 10);
+  if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: 'invalid_id' });
+  try {
+    const r = await pool.query('select * from ai_conversations where id = $1', [id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'not_found' });
+    const leads = await pool.query('select * from leads where conversation_id = $1 order by id desc', [id]);
+    res.json({ conversation: r.rows[0], leads: leads.rows });
+  } catch {
+    res.status(404).json({ error: 'not_found' });
+  }
 }));
 
 router.get('/clients', asyncHandler(async (req, res) => {

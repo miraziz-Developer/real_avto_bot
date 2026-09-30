@@ -93,6 +93,27 @@ def _reviews_channel_id() -> str:
     return _normalize_chat_id("@real_avto_otzivlar")
 
 
+def _ai_business_info() -> str:
+    """AI uchun biznes ma'lumotlari. To‘liq override: AI_BUSINESS_INFO (\\n — yangi qator)."""
+    raw = (os.getenv("AI_BUSINESS_INFO") or "").strip()
+    if raw:
+        return raw.replace("\\n", "\n")
+    map_url = (os.getenv("REAL_AVTO_MAP_URL") or "").strip() or _REAL_AVTO_MAP_DEFAULT
+    channel = (os.getenv("CHANNEL_USERNAME") or "").strip().lstrip("@")
+    insta = (os.getenv("INSTAGRAM_USERNAME") or "").strip().lstrip("@")
+    lines = [
+        "Real Avto — mashina oldi-sotdi platformasi (Telegram kanal va Instagram).",
+        f"Menejer telefonlari: {', '.join(sales_phone_entries())}.",
+        f"Mashinalarni ko'rish joyi (parking), xarita: {map_url}",
+        "Kredit va barter: har bir mashina bo'yicha menejer bilan alohida kelishiladi.",
+    ]
+    if channel:
+        lines.append(f"Telegram kanal: https://t.me/{channel}")
+    if insta:
+        lines.append(f"Instagram: https://instagram.com/{insta}")
+    return "\n".join(lines)
+
+
 def _log_level() -> str:
     return (os.getenv("LOG_LEVEL", "INFO") or "INFO").strip().upper()
 
@@ -131,7 +152,19 @@ class Settings:
     sale_followup_interval_hours: int
     sale_followup_interval_minutes: int | None
     parking_location_text: str
+    # --- AI savdo maslahatchisi ---
+    ai_api_key: str
+    ai_model: str
+    ai_base_url: str
+    ai_business_info: str
+    ai_daily_limit: int
+    leads_chat_id: str | None
+    inbound_webhook_secret: str | None
+    inbound_webhook_port: int
 
+    @property
+    def ai_enabled(self) -> bool:
+        return bool(self.ai_api_key)
 
 
 settings = Settings(
@@ -160,6 +193,14 @@ settings = Settings(
     sale_followup_interval_hours=_int("SALE_FOLLOWUP_INTERVAL_HOURS", 24),
     sale_followup_interval_minutes=_optional_positive_int("SALE_FOLLOWUP_INTERVAL_MINUTES"),
     parking_location_text=_parking_location_text(),
+    ai_api_key=(os.getenv("AI_API_KEY", "") or "").strip(),
+    ai_model=(os.getenv("AI_MODEL", "") or "").strip() or "gpt-4o-mini",
+    ai_base_url=(os.getenv("AI_BASE_URL", "") or "").strip() or "https://api.openai.com/v1",
+    ai_business_info=_ai_business_info(),
+    ai_daily_limit=_int("AI_DAILY_LIMIT", 80),
+    leads_chat_id=_normalize_chat_id(os.getenv("LEADS_CHAT_ID", "")) or None,
+    inbound_webhook_secret=(os.getenv("INBOUND_WEBHOOK_SECRET", "") or "").strip() or None,
+    inbound_webhook_port=_int("INBOUND_WEBHOOK_PORT", 8080),
 )
 
 

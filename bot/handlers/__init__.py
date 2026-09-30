@@ -3,6 +3,7 @@ from aiogram import Dispatcher
 from bot.handlers import (
     ad_admin,
     ad_listing,
+    ai_chat,
     callbacks,
     contest,
     listing_chat,
@@ -26,3 +27,5 @@ def register_handlers(dp: Dispatcher) -> None:
     dp.include_router(contest.router)
     dp.include_router(profile_alias.router)
     dp.include_router(callbacks.router)
+    # AI maslahatchi oxirida: holatsiz oddiy matnni (boshqa oqimlar ushlamagan) AI ga yo‘naltiradi.
+    dp.include_router(ai_chat.router)

@@ -89,6 +89,9 @@ services:
     environment:
       REDIS_URL: redis://redis:6379/0
     init: true
+    # Instagram (Make.com / ManyChat) → AI webhook; faqat INBOUND_WEBHOOK_SECRET berilganda tinglaydi.
+    ports:
+      - "8080:8080"
     depends_on:
       db:
         condition: service_healthy
