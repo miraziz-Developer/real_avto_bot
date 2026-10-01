@@ -13,6 +13,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.config import sale_followup_retry_hint, settings
+from bot.db.cars_repo import CarRepository
+from bot.db.models import CarStatus
 from bot.db.repositories import CrmRepository
 from bot.handlers.ad_listing import listing_caption_from_sub_public, truncate_caption_html
 from bot.utils.contact_html import sales_phones_links_html
@@ -188,7 +190,9 @@ _ALLOWED_REVIEW = frozenset(
 
 
 @router.message(StateFilter(ListingSaleReviewStates.waiting_review))
-async def listing_sale_in_review_state(message: Message, state: FSMContext, crm: CrmRepository) -> None:
+async def listing_sale_in_review_state(
+    message: Message, state: FSMContext, crm: CrmRepository, cars: CarRepository
+) -> None:
     if message.content_type not in _ALLOWED_REVIEW:
         try:
             await message.answer(
@@ -214,6 +218,10 @@ async def listing_sale_in_review_state(message: Message, state: FSMContext, crm:
         except TelegramBadRequest:
             pass
         return
+
+    car = await cars.find_by_listing(lid)
+    if car is not None:
+        await cars.set_status(car, CarStatus.SOLD, actor=uid)
 
     await _forward_review_to_channel(message.bot, from_chat_id=message.chat.id, message=message, listing_id=lid)
     await _append_sold_to_channel_caption(message.bot, sub)

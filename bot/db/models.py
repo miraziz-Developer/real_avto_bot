@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -13,7 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -230,3 +231,92 @@ class ListingSubmission(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+class CarStatus(StrEnum):
+    REVIEW = "review"  # AI ma'lumotni to'liq ajrata olmadi — admin tekshiruvi kerak
+    ACTIVE = "active"  # sotuvda
+    RESERVED = "reserved"  # bron qilingan
+    SOLD = "sold"
+    ARCHIVED = "archived"  # e'lon emas / o'chirilgan
+
+
+class CarSource(StrEnum):
+    CHANNEL = "channel"  # jamoa kanalga o'zi tashlagan post
+    BOT = "bot"  # foydalanuvchi bot orqali bergan e'lon (listing_submissions)
+    ADMIN = "admin"
+    IMPORT = "import"  # Telegram Desktop eksportidan
+
+
+class Car(Base):
+    """Bitta mashina — bitta yozuv, qayerdan kelganidan qat'i nazar. Savdo agenti shu jadvaldan javob beradi."""
+
+    __tablename__ = "cars"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    status: Mapped[str] = mapped_column(String(20), default=CarStatus.REVIEW, nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(20), default=CarSource.CHANNEL, nullable=False, index=True)
+
+    brand: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    mileage_km: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    price_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    color: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    transmission: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    fuel: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    position: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    paint_status: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    has_accident: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    location: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)  # AI qisqa xulosasi (holat, kamchiliklar)
+
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False, default="")  # post matni + ovoz transkripti
+    photo_file_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
+    video_file_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
+
+    channel_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Albomdagi barcha xabarlar (tahrir/reply qaysi biriga kelsa ham topish uchun)
+    channel_message_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), nullable=False, default=list)
+    listing_submission_id: Mapped[int | None] = mapped_column(
+        ForeignKey("listing_submissions.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+    )
+
+    # Biz o'zimiz sotib olgan mashina bo'lsa — foyda hisobi uchun
+    is_own: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    purchase_price_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    expenses_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sold_price_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    ai_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    stale_prompted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    @property
+    def title(self) -> str:
+        name = " ".join(p for p in (self.brand, self.model) if p) or "Mashina"
+        return f"{name} {self.year}" if self.year else name
+
+
+class CarEvent(Base):
+    """Mashina tarixi: yaratildi, narx o'zgardi, status o'zgardi — statistika va narx tarixi shu yerdan."""
+
+    __tablename__ = "car_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    car_id: Mapped[int] = mapped_column(ForeignKey("cars.id", ondelete="CASCADE"), index=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    actor_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

@@ -365,3 +365,11 @@ async def apply_listing_location_column(engine: AsyncEngine) -> None:
         )
 
 
+
+
+async def apply_car_indexes(engine: AsyncEngine) -> None:
+    """Kanal tahriri/reply qaysi albom xabariga kelsa ham mashinani tez topish uchun GIN indeks."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_cars_channel_message_ids ON cars USING GIN (channel_message_ids)")
+        )

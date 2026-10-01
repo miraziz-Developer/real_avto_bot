@@ -21,9 +21,11 @@ from aiogram.types import (
 from aiogram.exceptions import TelegramBadRequest
 
 from bot.config import settings
+from bot.db.cars_repo import CarRepository
 from bot.db.models import ListingSubmissionStatus
 from bot.db.repositories import CrmRepository
 from bot.handlers.ad_listing import listing_caption_from_sub_public, truncate_caption_html
+from bot.services.car_cards import car_from_approved_listing
 from bot.services.wishlist_notify import notify_wishlist_matches
 
 router = Router(name="ad_admin")
@@ -40,7 +42,7 @@ def _is_admin(uid: int | None) -> bool:
 
 
 @router.callback_query(F.data.startswith("lad_a:"))
-async def listing_approve(cq: CallbackQuery, crm: CrmRepository) -> None:
+async def listing_approve(cq: CallbackQuery, crm: CrmRepository, cars: CarRepository) -> None:
     if cq.from_user is None or not _is_admin(cq.from_user.id):
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
@@ -159,6 +161,19 @@ async def listing_approve(cq: CallbackQuery, crm: CrmRepository) -> None:
         )
     except TelegramBadRequest:
         pass
+
+    # Mashinalar bazasiga ham yozamiz — savdo agenti va statistika shu bazadan ishlaydi
+    # Savepoint: xato bo'lsa ham e'lon tasdig'i (shu sessiyada) bekor bo'lmaydi
+    try:
+        async with cars.session.begin_nested():
+            await car_from_approved_listing(
+                cars,
+                updated,
+                channel_chat_id=msgs[0].chat.id if msgs else None,
+                channel_message_ids=[m.message_id for m in msgs],
+            )
+    except Exception:
+        logging.exception("Tasdiqlangan e'lon #%s mashinalar bazasiga yozilmadi", lid)
 
     await notify_wishlist_matches(cq.bot, crm, updated)
 

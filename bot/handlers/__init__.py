@@ -4,6 +4,8 @@ from bot.handlers import (
     ad_admin,
     ad_listing,
     callbacks,
+    car_admin,
+    channel_watch,
     contest,
     listing_chat,
     listing_sale_followup,
@@ -19,6 +21,9 @@ def register_handlers(dp: Dispatcher) -> None:
     dp.include_router(start.router)
     # Admin (/cancel moderatsiya va h.k.) state ichidagi umumiy handlerlardan OLDIN ishlashi kerak.
     dp.include_router(ad_admin.router)
+    dp.include_router(car_admin.router)
+    # Faqat channel_post / edited_channel_post — boshqa routerlar bilan to'qnashmaydi
+    dp.include_router(channel_watch.router)
     dp.include_router(listing_sale_followup.router)
     dp.include_router(listing_chat.router)
     dp.include_router(ad_listing.router)

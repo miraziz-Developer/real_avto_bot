@@ -136,6 +136,10 @@ class Settings:
     listing_price_uzs: int
     payment_card: str
     payment_card_holder: str
+    groq_api_key: str
+    groq_model: str
+    groq_stt_model: str
+    car_stale_days: int
     sale_followup_interval_hours: int
     sale_followup_interval_minutes: int | None
     parking_location_text: str
@@ -166,7 +170,12 @@ settings = Settings(
     listing_price_uzs=_int("LISTING_PRICE_UZS", 50000),
     payment_card=(os.getenv("PAYMENT_CARD", "") or "").strip(),
     payment_card_holder=(os.getenv("PAYMENT_CARD_HOLDER", "") or "").strip(),
-
+    # AI (kanal postlarini tahlil, ovoz/dumaloq video → matn). Kalit bo'lmasa faqat regex parser ishlaydi.
+    groq_api_key=(os.getenv("GROQ_API_KEY", "") or "").strip(),
+    groq_model=(os.getenv("GROQ_MODEL", "") or "llama-3.3-70b-versatile").strip(),
+    groq_stt_model=(os.getenv("GROQ_STT_MODEL", "") or "whisper-large-v3").strip(),
+    # Shuncha kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi
+    car_stale_days=_int("CAR_STALE_DAYS", 14),
     sale_followup_interval_hours=_int("SALE_FOLLOWUP_INTERVAL_HOURS", 24),
     sale_followup_interval_minutes=_optional_positive_int("SALE_FOLLOWUP_INTERVAL_MINUTES"),
     parking_location_text=_parking_location_text(),
