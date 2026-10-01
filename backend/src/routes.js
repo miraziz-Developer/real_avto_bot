@@ -2,7 +2,7 @@ import express from "express";
 import { pool } from "./db.js";
 import { signAccessToken } from "./auth.js";
 import { requireAuth, requireRole } from "./middleware.js";
-import { asyncHandler, getPagination, sha256 } from "./utils.js";
+import { asyncHandler, getPagination, verifyPassword } from "./utils.js";
 import { carsRouter } from "./cars.js";
 
 export const router = express.Router();
@@ -36,7 +36,7 @@ router.post('/auth/login', asyncHandler(async (req, res) => {
     [username],
   );
   const u = r.rows[0];
-  if (!u || !u.is_active || u.password_hash !== sha256(password || "")) {
+  if (!u || !u.is_active || !verifyPassword(password, u.password_hash)) {
     return res.status(401).json({ error: 'invalid_credentials' });
   }
   return res.json({ token: signAccessToken({ id: u.id, username: u.username, role: u.role }), user: { id: u.id, username: u.username, role: u.role } });

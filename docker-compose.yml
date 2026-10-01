@@ -14,7 +14,8 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 'RvT^7pK_xL9_mQ_vB2n_ZwQ8'
+      # Parol kodda emas — ildiz .env dagi POSTGRES_PASSWORD (DATABASE_URL lardagi parol bilan bir xil bo'lsin)
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ildiz .env da POSTGRES_PASSWORD kerak}
       POSTGRES_DB: real_avto_konkurs
     volumes:
       - pg_data:/var/lib/postgresql/data

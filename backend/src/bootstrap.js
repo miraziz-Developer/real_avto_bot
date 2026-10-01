@@ -1,6 +1,6 @@
 import { pool } from "./db.js";
 import { config } from "./config.js";
-import { sha256 } from "./utils.js";
+import { hashPassword, verifyPassword } from "./utils.js";
 
 export async function bootstrapDatabase() {
   await pool.query(`
@@ -47,12 +47,15 @@ export async function bootstrapDatabase() {
   `);
 
   const username = config.adminUser;
-  const passwordHash = sha256(config.adminPassword);
+  const existing = await pool.query("select password_hash from crm_users where username=$1", [username]);
+  const current = existing.rows[0]?.password_hash;
+  // .env dagi parol o'zgarmagan va xesh allaqachon scrypt bo'lsa — qayta yozmaymiz
+  if (current && current.startsWith("scrypt$") && verifyPassword(config.adminPassword, current)) return;
   await pool.query(
     `insert into crm_users (username, password_hash, role)
      values ($1,$2,'admin')
      on conflict (username)
      do update set password_hash=excluded.password_hash`,
-    [username, passwordHash],
+    [username, hashPassword(config.adminPassword)],
   );
 }

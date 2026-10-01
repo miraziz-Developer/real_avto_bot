@@ -2,7 +2,7 @@
 
 Bu qo‘llanma **barcha stack**ni bir serverda ko‘tarish uchun: PostgreSQL, Redis, Node backend (CRM API), Nginx+React frontend, Python Telegram bot.
 
-**Ishlab chiqarishda albatta**: ildiz `.env` da `ADMIN_TELEGRAM_IDS`, `SALES_PHONE`, haqiqiy `BOT_TOKEN` / kanallar; `backend/.env` da kuchli `JWT_SECRET`, `CRM_ADMIN_PASSWORD`, `NODE_ENV=production` va kerak bo‘lsa `CORS_ORIGIN`; Postgres `POSTGRES_PASSWORD` ni `docker-compose.yml` yoki override bilan almashtiring.
+**Ishlab chiqarishda albatta**: ildiz `.env` da `ADMIN_TELEGRAM_IDS`, `SALES_PHONE`, haqiqiy `BOT_TOKEN` / kanallar; `backend/.env` da kuchli `JWT_SECRET`, `CRM_ADMIN_PASSWORD`, `NODE_ENV=production` va kerak bo‘lsa `CORS_ORIGIN`; Postgres paroli ildiz `.env` dagi `POSTGRES_PASSWORD` dan olinadi (kodda saqlanmaydi) — u `DATABASE_URL` lardagi parol bilan bir xil bo‘lishi kerak.
 
 ## 1. Server talablari
 
