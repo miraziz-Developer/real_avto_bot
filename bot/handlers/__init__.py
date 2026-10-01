@@ -3,8 +3,10 @@ from aiogram import Dispatcher
 from bot.handlers import (
     ad_admin,
     ad_listing,
+    business_agent,
     callbacks,
     car_admin,
+    channel_comments,
     channel_watch,
     lead_admin,
     contest,
@@ -28,6 +30,10 @@ def register_handlers(dp: Dispatcher) -> None:
     dp.include_router(car_admin.router)
     # Faqat channel_post / edited_channel_post — boshqa routerlar bilan to'qnashmaydi
     dp.include_router(channel_watch.router)
+    # Telegram Business (shaxsiy akkaunt chatlari) — faqat business_* hodisalar
+    dp.include_router(business_agent.router)
+    # Kanal muhokama guruhi — faqat group/supergroup xabarlari
+    dp.include_router(channel_comments.router)
     dp.include_router(listing_sale_followup.router)
     dp.include_router(listing_chat.router)
     dp.include_router(ad_listing.router)

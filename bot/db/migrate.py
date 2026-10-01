@@ -373,3 +373,10 @@ async def apply_car_indexes(engine: AsyncEngine) -> None:
         await conn.execute(
             text("CREATE INDEX IF NOT EXISTS ix_cars_channel_message_ids ON cars USING GIN (channel_message_ids)")
         )
+
+
+async def apply_lead_business_columns(engine: AsyncEngine) -> None:
+    """leads jadvali Telegram Business ustunlaridan oldin yaratilgan bo'lsa — qo'shish."""
+    async with engine.begin() as conn:
+        await conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS human_until TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS business_connection_id VARCHAR(100)"))

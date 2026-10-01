@@ -147,6 +147,9 @@ class Settings:
     business_hours: str
     map_url: str
     lead_reminder_minutes: int
+    business_enabled: bool
+    business_owner_pause_hours: int
+    comments_enabled: bool
     sale_followup_interval_hours: int
     sale_followup_interval_minutes: int | None
     parking_location_text: str
@@ -193,6 +196,12 @@ settings = Settings(
     map_url=(os.getenv("REAL_AVTO_MAP_URL", "") or _REAL_AVTO_MAP_DEFAULT).strip(),
     # Adminga topshirilgan lead shuncha daqiqada olinmasa — barcha adminlarga qayta eslatma
     lead_reminder_minutes=_int("LEAD_REMINDER_MINUTES", 5),
+    # Telegram Business: agent akkaunt egasining shaxsiy chatlarida javob beradi
+    business_enabled=_bool("BUSINESS_ENABLED", True),
+    # Akkaunt egasi mijozga o'zi yozsa — AI shu mijoz bilan shuncha soat jim turadi
+    business_owner_pause_hours=_int("BUSINESS_OWNER_PAUSE_HOURS", 6),
+    # Kanal kommentlaridagi savollarga bazadan qisqa javob + botga havola
+    comments_enabled=_bool("COMMENTS_ENABLED", True),
     sale_followup_interval_hours=_int("SALE_FOLLOWUP_INTERVAL_HOURS", 24),
     sale_followup_interval_minutes=_optional_positive_int("SALE_FOLLOWUP_INTERVAL_MINUTES"),
     parking_location_text=_parking_location_text(),

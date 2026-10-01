@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import Car, CarEvent, CarSource, CarStatus
+from bot.db.models import Car, CarEvent, CarSource, CarStatus, ChannelThread
 from bot.services.car_parser import ParsedCar, detect_brand_model, normalize_text
 
 # ParsedCar → Car ga ko'chiriladigan maydonlar
@@ -52,6 +52,36 @@ class CarRepository:
 
     async def add_event(self, car: Car, kind: str, data: dict | None = None) -> None:
         await self._event(car, kind, data)
+
+    async def remember_thread(
+        self, *, group_chat_id: int, thread_message_id: int, channel_chat_id: int, channel_message_id: int
+    ) -> None:
+        """Muhokama guruhidagi avto-forward xabar qaysi kanal postiga tegishli — kommentlar uchun."""
+        exists = await self.session.execute(
+            select(ChannelThread.id).where(
+                ChannelThread.group_chat_id == group_chat_id, ChannelThread.thread_message_id == thread_message_id
+            )
+        )
+        if exists.first() is None:
+            self.session.add(
+                ChannelThread(
+                    group_chat_id=group_chat_id,
+                    thread_message_id=thread_message_id,
+                    channel_chat_id=channel_chat_id,
+                    channel_message_id=channel_message_id,
+                )
+            )
+            await self.session.flush()
+
+    async def channel_post_for_thread(self, group_chat_id: int, thread_message_id: int) -> tuple[int, int] | None:
+        row = (
+            await self.session.execute(
+                select(ChannelThread.channel_chat_id, ChannelThread.channel_message_id).where(
+                    ChannelThread.group_chat_id == group_chat_id, ChannelThread.thread_message_id == thread_message_id
+                )
+            )
+        ).first()
+        return (int(row[0]), int(row[1])) if row else None
 
     async def get(self, car_id: int) -> Car | None:
         return await self.session.get(Car, car_id)

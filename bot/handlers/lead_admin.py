@@ -48,10 +48,34 @@ async def _refresh_card(cq: CallbackQuery, lead: Lead, leads: LeadRepository, ca
 
 
 async def _notify_customer(bot: Bot, lead: Lead, text: str) -> None:
+    if lead.business_connection_id:
+        return  # Business chatda mijoz egasi bilan gaplashyapti deb biladi — tizim xabari kerak emas
     try:
         await bot.send_message(lead.telegram_id, text, parse_mode=None)
     except (TelegramBadRequest, TelegramForbiddenError) as e:
         logger.warning("Lead #%s mijoziga xabar yuborilmadi: %s", lead.id, e)
+
+
+class UnsupportedRelay(Exception):
+    pass
+
+
+async def send_admin_message_to_customer(bot: Bot, lead: Lead, message: Message) -> None:
+    """Menejer javobini mijozga: oddiy chatda nusxa, Business chatda — egasi nomidan (copyMessage u yerda ishlamaydi)."""
+    bc = lead.business_connection_id
+    if not bc:
+        await bot.copy_message(lead.telegram_id, from_chat_id=message.chat.id, message_id=message.message_id)
+        return
+    if message.text:
+        await bot.send_message(lead.telegram_id, message.text, business_connection_id=bc, parse_mode=None)
+    elif message.photo:
+        await bot.send_photo(
+            lead.telegram_id, message.photo[-1].file_id, caption=message.caption, business_connection_id=bc, parse_mode=None
+        )
+    elif message.voice:
+        await bot.send_voice(lead.telegram_id, message.voice.file_id, business_connection_id=bc)
+    else:
+        raise UnsupportedRelay()
 
 
 @router.callback_query(F.data.startswith("lead:"))
@@ -123,7 +147,10 @@ async def admin_reply_relay(message: Message, bot: Bot, leads: LeadRepository) -
     if lead is None:
         raise SkipHandler()
     try:
-        await bot.copy_message(lead.telegram_id, from_chat_id=message.chat.id, message_id=message.message_id)
+        await send_admin_message_to_customer(bot, lead, message)
+    except UnsupportedRelay:
+        await message.reply("Business chatga faqat matn, rasm yoki ovoz yuboriladi.", parse_mode=None)
+        return
     except (TelegramBadRequest, TelegramForbiddenError) as e:
         await message.reply(f"❌ Mijozga yuborilmadi: {html.escape(str(e))}", parse_mode=ParseMode.HTML)
         return

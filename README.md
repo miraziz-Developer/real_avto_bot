@@ -70,3 +70,17 @@ Botga yozilgan har qanday savolga (matn yoki ovoz) agent **faqat mashinalar baza
 **Sozlamalar** (`.env`): `AGENT_ENABLED`, `GROQ_API_KEY`, `GROQ_AGENT_MODEL`, `BUSINESS_NAME`, `BUSINESS_ADDRESS`, `BUSINESS_HOURS` (bo'sh bo'lsa agent ish vaqtini aytmaydi), `REAL_AVTO_MAP_URL`, `LEAD_REMINDER_MINUTES`.
 
 **Kanaldan botga yo'naltirish**: istalgan mashina uchun havola `https://t.me/<bot>?start=car_<ID>` — mijoz shu mashina rasmlari va ma'lumoti bilan suhbatni boshlaydi.
+
+### Telegram Business (Ikrom akaning shaxsiy akkaunti) va kanal kommentlari
+
+**Business** — mijoz shaxsiy akkauntga yozsa ham agent javob beradi (akkaunt nomidan):
+1. Akkaunt egasi (Telegram **Premium** kerak) → *Sozlamalar → Telegram Business → Chatbotlar* → bot username'ini kiritadi.
+2. «Xabarlarga javob berish» ruxsatini yoqadi.
+3. ⚠️ **«Chatlar» bo'limida kontaktlarni chiqarib tashlang** (yoki faqat «yangi chatlar»ni tanlang) — aks holda AI oila va do'stlarga ham javob beradi.
+4. Ulanganda adminlarga «✅ Telegram Business ulandi» xabari keladi.
+
+Egasi mijozga **o'zi yozsa** — AI shu mijoz bilan `BUSINESS_OWNER_PAUSE_HOURS` (6) soat jim turadi. Business chatda tugmalar yuborilmaydi (Telegram cheklovi); menejer javobi ham akkaunt nomidan ketadi.
+
+**Kommentlar** — kanal postiga «narxi qancha?», «bormi?», «kredit bormi?» kabi savol yozilsa, bot bazadan qisqa javob beradi (sotuvda/bron/sotilgan, narx, probeg) va «🤖 Botda batafsil» tugmasini qo'yadi. Ochiq joyda AI ishlatilmaydi — faqat bazadagi faktlar. Xarid niyati bo'lsa («olaman», «kredit», «raqam») — adminlarga signal.
+- Talab: bot kanalga ulangan **muhokama guruhida admin** bo'lishi kerak.
+- Bir mijozga bitta post bo'yicha 10 daqiqada bir marta javob (guruh to'lib ketmasligi uchun). O'chirish: `COMMENTS_ENABLED=false`.

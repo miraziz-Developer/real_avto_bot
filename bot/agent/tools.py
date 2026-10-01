@@ -172,6 +172,7 @@ class AgentContext:
     cars: CarRepository
     leads: LeadRepository
     crm: CrmRepository
+    business_connection_id: str | None = None  # Telegram Business chati bo'lsa — javoblar egasi nomidan
     shown_car_ids: list[int] = field(default_factory=list)
     handed_off: bool = False
 
@@ -250,10 +251,11 @@ class AgentContext:
         caption = " — ".join(p for p in (car.title, price) if p)
         media = [InputMediaPhoto(media=photos[0], caption=caption)] + [InputMediaPhoto(media=p) for p in photos[1:]]
         try:
+            bc = self.business_connection_id
             if len(media) == 1:
-                await self.bot.send_photo(self.chat_id, photos[0], caption=caption)
+                await self.bot.send_photo(self.chat_id, photos[0], caption=caption, business_connection_id=bc)
             else:
-                await self.bot.send_media_group(self.chat_id, media)
+                await self.bot.send_media_group(self.chat_id, media, business_connection_id=bc)
         except (TelegramBadRequest, TelegramForbiddenError) as e:
             logger.warning("Rasm yuborilmadi (car #%s): %s", car.id, e)
             return {"sent": 0, "error": "rasm yuborib bo'lmadi"}

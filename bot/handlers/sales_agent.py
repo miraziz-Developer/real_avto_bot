@@ -60,11 +60,25 @@ def _full_name(u: User) -> str | None:
     return " ".join(p for p in (u.first_name, u.last_name) if p) or None
 
 
-async def open_lead(user: User, leads: LeadRepository, crm: CrmRepository) -> Lead:
+async def open_lead(
+    user: User,
+    leads: LeadRepository,
+    crm: CrmRepository,
+    *,
+    channel: str = "bot",
+    business_connection_id: str | None = None,
+) -> Lead:
     client = await crm.get_or_create_client(telegram_id=user.id, full_name=_full_name(user))
     lead, _ = await leads.get_or_create_open(
-        user.id, name=_full_name(user), username=user.username, client_id=client.id
+        user.id, name=_full_name(user), username=user.username, client_id=client.id, channel=channel
     )
+    if business_connection_id:
+        # Mijoz endi Business chatda yozyapti — javoblar shu ulanish orqali ketadi
+        lead.business_connection_id = business_connection_id
+        lead.channel = "business"
+    elif channel == "bot" and lead.business_connection_id:
+        lead.business_connection_id = None
+        lead.channel = "bot"
     return lead
 
 
@@ -99,22 +113,32 @@ async def handle_customer_text(
     leads: LeadRepository,
     cars: CarRepository,
     crm: CrmRepository,
+    business_connection_id: str | None = None,
 ) -> None:
     user = message.from_user
     if user is None:
         return
+    channel = "business" if business_connection_id else "bot"
     async with _user_lock(user.id):
-        lead = await open_lead(user, leads, crm)
+        lead = await open_lead(user, leads, crm, channel=channel, business_connection_id=business_connection_id)
         await leads.add_message(lead, "user", text)
 
-        if lead.human_mode:
+        if leads.is_human(lead):
             await _forward_to_manager(bot, leads, lead, message, text)
             await leads.session.commit()
             return
 
-        ctx = AgentContext(bot=bot, chat_id=user.id, lead=lead, cars=cars, leads=leads, crm=crm)
+        ctx = AgentContext(
+            bot=bot,
+            chat_id=user.id,
+            lead=lead,
+            cars=cars,
+            leads=leads,
+            crm=crm,
+            business_connection_id=business_connection_id,
+        )
         try:
-            await bot.send_chat_action(user.id, ChatAction.TYPING)
+            await bot.send_chat_action(user.id, ChatAction.TYPING, business_connection_id=business_connection_id)
         except TelegramBadRequest:
             pass
         kb = None
@@ -158,7 +182,7 @@ async def on_customer_voice(
     if not settings.agent_enabled or message.from_user is None:
         return
     lead = await leads.get_open(message.from_user.id)
-    if lead is not None and lead.human_mode:
+    if lead is not None and leads.is_human(lead):
         await leads.add_message(lead, "user", "[ovozli xabar]")
         await _forward_to_manager(bot, leads, lead, message, None)
         return
@@ -189,7 +213,7 @@ async def on_customer_media(message: Message, bot: Bot, leads: LeadRepository, c
     await leads.add_message(lead, "user", note)
     # AI rasmni ko'rmaydi — menejerga uzatamiz (masalan trade-in uchun mijoz o'z mashinasi rasmini yuborgan)
     await _forward_to_manager(bot, leads, lead, message, None)
-    if not lead.human_mode:
+    if not leads.is_human(lead):
         await message.answer(
             "Rasm uchun rahmat! Menejerimiz ko'rib chiqadi. Savolingiz bo'lsa yozing 🙂", parse_mode=None
         )

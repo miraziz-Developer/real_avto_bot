@@ -24,7 +24,16 @@ def _fmt_usd(n: int | None) -> str:
     return f"${n:,}".replace(",", " ") if n else "narx so'rang"
 
 
-async def fallback_reply(ctx: AgentContext, text: str) -> tuple[str, InlineKeyboardMarkup]:
+async def fallback_reply(ctx: AgentContext, text: str) -> tuple[str, InlineKeyboardMarkup | None]:
+    reply, kb = await _fallback_reply(ctx, text)
+    if ctx.business_connection_id:
+        # Business chatda tugmalar yuborib bo'lmaydi — egasi chatni ko'rib turadi, o'zi javob beradi
+        reply = reply.replace(" 👇", "").rstrip() + "\nMenejerimiz ham tez orada javob beradi."
+        return reply, None
+    return reply, kb
+
+
+async def _fallback_reply(ctx: AgentContext, text: str) -> tuple[str, InlineKeyboardMarkup]:
     p = parse_car_text(text, usd_rate_uzs=settings.usd_rate_uzs)
     if not (p.brand or p.model or p.price_usd):
         return (

@@ -357,6 +357,9 @@ class Lead(Base):
     handoff_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
     human_mode: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # admin oldi — AI javob bermaydi
+    # Business akkaunt egasi o'zi yozdi — shu vaqtgacha AI jim (keyin avtomatik qaytadi)
+    human_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    business_connection_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     assigned_admin_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     handed_off_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -395,4 +398,38 @@ class LeadRelay(Base):
 
     __table_args__ = (
         UniqueConstraint("admin_chat_id", "admin_message_id", name="uq_lead_relays_admin_msg"),
+    )
+
+
+class BusinessConnection(Base):
+    """Telegram Business: akkaunt egasi botni «chatbot» qilib ulagan (Sozlamalar → Telegram Business → Chatbotlar)."""
+
+    __tablename__ = "business_connections"
+
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    owner_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    can_reply: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class ChannelThread(Base):
+    """Muhokama guruhidagi avto-forward xabar → kanal posti (kommentni qaysi mashinaga yozilganini bilish uchun)."""
+
+    __tablename__ = "channel_threads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    thread_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    channel_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    channel_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("group_chat_id", "thread_message_id", name="uq_channel_threads_group_msg"),
     )

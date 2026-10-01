@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import OPEN_LEAD_STATUSES, AgentMessage, Lead, LeadRelay, LeadStatus
+from bot.db.models import OPEN_LEAD_STATUSES, AgentMessage, BusinessConnection, Lead, LeadRelay, LeadStatus
 
 # Suhbat tarixidan AI kontekstiga beriladigan oxirgi xabarlar soni
 HISTORY_LIMIT = 20
@@ -105,7 +105,42 @@ class LeadRepository:
 
     async def back_to_ai(self, lead: Lead) -> None:
         lead.human_mode = False
+        lead.human_until = None
         lead.status = LeadStatus.ACTIVE
+
+    @staticmethod
+    def is_human(lead: Lead) -> bool:
+        """AI jim turishi kerakmi: admin olgan yoki business egasi yaqinda o'zi yozgan."""
+        if lead.human_mode:
+            return True
+        return bool(lead.human_until and lead.human_until > _now())
+
+    async def pause_for_owner(self, lead: Lead, *, hours: int) -> None:
+        """Business akkaunt egasi mijozga o'zi yozdi — AI vaqtincha jim."""
+        lead.human_until = _now() + timedelta(hours=max(1, hours))
+
+    async def upsert_business_connection(
+        self,
+        *,
+        connection_id: str,
+        owner_user_id: int,
+        owner_name: str | None,
+        can_reply: bool,
+        is_enabled: bool,
+    ) -> BusinessConnection:
+        row = await self.session.get(BusinessConnection, connection_id)
+        if row is None:
+            row = BusinessConnection(id=connection_id, owner_user_id=owner_user_id)
+            self.session.add(row)
+        row.owner_user_id = owner_user_id
+        row.owner_name = owner_name
+        row.can_reply = can_reply
+        row.is_enabled = is_enabled
+        await self.session.flush()
+        return row
+
+    async def get_business_connection(self, connection_id: str) -> BusinessConnection | None:
+        return await self.session.get(BusinessConnection, connection_id)
 
     async def close(self, lead: Lead, status: str) -> None:
         lead.status = status

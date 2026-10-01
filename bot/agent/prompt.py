@@ -53,6 +53,11 @@ def lead_context(lead: Lead, car: Car | None) -> str:
         known.append(f"kelish vaqti: {lead.visit_time}")
     if lead.phone:
         known.append(f"telefon: {lead.phone}")
+    if lead.business_connection_id:
+        known.append(
+            f"suhbat {settings.business_name} akkauntining shaxsiy chatida — akkaunt nomidan yozyapsan; "
+            "mijoz so'rasa, yordamchi (bot) ekaningni ochiq ayt"
+        )
     if lead.status == "handed_off":
         known.append("menejerga allaqachon topshirilgan — mijoz kutmoqda, qayta topshirish shart emas")
     if not known:

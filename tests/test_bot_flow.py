@@ -15,7 +15,16 @@ from aiogram.client.session.base import BaseSession
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.methods import CopyMessage, GetMe, SendMessage
-from aiogram.types import CallbackQuery, Chat, Message, MessageId, Update, User
+from aiogram.types import (
+    BusinessConnection,
+    CallbackQuery,
+    Chat,
+    Message,
+    MessageId,
+    MessageOriginChannel,
+    Update,
+    User,
+)
 from sqlalchemy import select, text
 
 from bot import config
@@ -115,7 +124,10 @@ async def env():
     await apply_car_indexes(db_base.get_engine())
     async with db_base.get_engine().begin() as conn:
         await conn.execute(
-            text("TRUNCATE lead_relays, agent_messages, leads, car_events, cars, wishlist, clients RESTART IDENTITY CASCADE")
+            text(
+                "TRUNCATE lead_relays, agent_messages, leads, car_events, cars, wishlist, clients, "
+                "business_connections, channel_threads RESTART IDENTITY CASCADE"
+            )
         )
     async with factory() as s:
         await CarRepository(s).create_from_parsed(
@@ -223,3 +235,134 @@ async def test_agent_does_not_hijack_listing_form(env):
             assert (await s.execute(select(Lead))).scalars().all() == []
     finally:
         await storage.set_state(key, None)
+
+
+# --- Telegram Business ------------------------------------------------------------------
+
+OWNER_ID = 777
+BIZ_CUSTOMER_ID = 6006
+
+
+def _biz_msg(from_id: int, text_: str, *, from_bot: bool = False) -> Update:
+    return Update(
+        update_id=next(_ids),
+        business_message=Message(
+            message_id=next(_ids),
+            date=datetime.now(timezone.utc),
+            chat=Chat(id=BIZ_CUSTOMER_ID, type="private"),
+            from_user=User(id=from_id, is_bot=False, first_name="Ikrom aka" if from_id == OWNER_ID else "Bobur"),
+            text=text_,
+            business_connection_id="bc1",
+            sender_business_bot=User(id=BOT_ID, is_bot=True, first_name="Bot") if from_bot else None,
+        ),
+    )
+
+
+async def test_business_chat_ai_replies_and_owner_takes_over(env):
+    dp, bot, session, factory, _ = env
+    await dp.feed_update(
+        bot,
+        Update(
+            update_id=next(_ids),
+            business_connection=BusinessConnection(
+                id="bc1",
+                user=User(id=OWNER_ID, is_bot=False, first_name="Ikrom aka"),
+                user_chat_id=OWNER_ID,
+                date=datetime.now(timezone.utc),
+                can_reply=True,
+                is_enabled=True,
+            ),
+        ),
+    )
+    assert "Business ulandi" in session.sent(SendMessage, ADMIN_ID)[-1].text
+
+    # Mijoz egasining shaxsiy akkauntiga yozadi → AI egasi nomidan (business_connection_id bilan) javob beradi
+    await dp.feed_update(bot, _biz_msg(BIZ_CUSTOMER_ID, "kobalt bormi?"))
+    replies = session.sent(SendMessage, BIZ_CUSTOMER_ID)
+    assert replies and replies[-1].business_connection_id == "bc1"
+    assert "Cobalt" in replies[-1].text and replies[-1].reply_markup is None  # business'da tugmasiz
+    async with factory() as s:
+        lead = (await s.execute(select(Lead).where(Lead.telegram_id == BIZ_CUSTOMER_ID))).scalar_one()
+        assert lead.channel == "business" and lead.business_connection_id == "bc1"
+
+    # Botning o'zi yuborgan xabari qaytib kelsa — e'tiborsiz
+    before = len(session.requests)
+    await dp.feed_update(bot, _biz_msg(OWNER_ID, "AI javobi", from_bot=True))
+    assert len(session.requests) == before
+
+    # Egasi o'zi yozdi → AI shu mijoz bilan jim
+    await dp.feed_update(bot, _biz_msg(OWNER_ID, "Ha, ertaga keling"))
+    async with factory() as s:
+        lead = (await s.execute(select(Lead).where(Lead.telegram_id == BIZ_CUSTOMER_ID))).scalar_one()
+        assert lead.human_until is not None
+    n_customer = len(session.sent(SendMessage, BIZ_CUSTOMER_ID))
+    await dp.feed_update(bot, _biz_msg(BIZ_CUSTOMER_ID, "Soat nechida?"))
+    assert len(session.sent(SendMessage, BIZ_CUSTOMER_ID)) == n_customer  # AI javob bermadi
+    assert "Soat nechida" in session.sent(SendMessage, ADMIN_ID)[-1].text  # menejerga uzatildi
+
+
+# --- Kanal kommentlari ----------------------------------------------------------------------
+
+GROUP_ID = -100555
+CHANNEL_CHAT = Chat(id=-1001234, type="channel", username="x")  # testlarda CHANNEL_ID=@x
+
+
+async def test_channel_comments_answer_questions_from_db(env):
+    dp, bot, session, factory, _ = env
+    async with factory() as s:
+        car = await CarRepository(s).create_from_parsed(
+            ParsedCar(brand="Chevrolet", model="Gentra", year=2019, mileage_km=120000, price_usd=9800),
+            source=CarSource.CHANNEL,
+            raw_text="",
+            channel_chat_id=CHANNEL_CHAT.id,
+            channel_message_ids=[55, 56],
+        )
+        await s.commit()
+        car_id = car.id
+
+    # Kanal posti muhokama guruhiga avto-forward bo'ldi
+    auto_id = next(_ids)
+    await dp.feed_update(
+        bot,
+        Update(
+            update_id=next(_ids),
+            message=Message(
+                message_id=auto_id,
+                date=datetime.now(timezone.utc),
+                chat=Chat(id=GROUP_ID, type="supergroup"),
+                sender_chat=CHANNEL_CHAT,
+                is_automatic_forward=True,
+                forward_origin=MessageOriginChannel(date=datetime.now(timezone.utc), chat=CHANNEL_CHAT, message_id=55),
+                text="Gentra 2019 ...",
+            ),
+        ),
+    )
+
+    def comment(uid: int, text_: str) -> Update:
+        return Update(
+            update_id=next(_ids),
+            message=Message(
+                message_id=next(_ids),
+                date=datetime.now(timezone.utc),
+                chat=Chat(id=GROUP_ID, type="supergroup"),
+                from_user=User(id=uid, is_bot=False, first_name="Sardor"),
+                text=text_,
+                message_thread_id=auto_id,
+            ),
+        )
+
+    await dp.feed_update(bot, comment(9001, "zo'r mashina 👍"))
+    assert session.sent(SendMessage, GROUP_ID) == []  # savol emas — javob yo'q
+
+    await dp.feed_update(bot, comment(9001, "narxi qancha?"))
+    replies = session.sent(SendMessage, GROUP_ID)
+    assert len(replies) == 1
+    assert "hali sotuvda" in replies[0].text and "$9 800" in replies[0].text
+    assert replies[0].reply_markup.inline_keyboard[0][0].url.endswith(f"start=car_{car_id}")
+
+    await dp.feed_update(bot, comment(9001, "probegi qancha?"))
+    assert len(session.sent(SendMessage, GROUP_ID)) == 1  # 10 daqiqalik cheklov
+
+    # Xarid niyati → menejerga signal
+    await dp.feed_update(bot, comment(9002, "kredit bilan olsam bo'ladimi?"))
+    assert "xarid niyati" in session.sent(SendMessage, ADMIN_ID)[-1].text

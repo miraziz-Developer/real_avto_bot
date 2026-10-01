@@ -13,6 +13,7 @@ from bot.config import settings
 from bot.db.base import create_tables, dispose_engine, get_engine, get_session_factory, init_engine
 from bot.db.migrate import (
     apply_car_indexes,
+    apply_lead_business_columns,
     apply_contest_tables,
     apply_listing_extra_details_column,
     apply_listing_location_column,
@@ -92,6 +93,7 @@ async def _bootstrap_database() -> None:
             await apply_listing_payment_screenshot_column(get_engine())
             await apply_listing_location_column(get_engine())
             await apply_car_indexes(get_engine())
+            await apply_lead_business_columns(get_engine())
 
 
             return
