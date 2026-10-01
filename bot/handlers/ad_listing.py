@@ -846,6 +846,14 @@ async def ad_photo_fallback(message: Message, state: FSMContext) -> None:
     )
 
 
+async def _go_next_after_phone(message: Message, state: FSMContext) -> None:
+    """Telefondan keyin: pullik rejimda to'lov bosqichi, aks holda darhol xulosa."""
+    if settings.listing_payment_enabled:
+        await _go_payment_after_phone(message, state)
+    else:
+        await _go_confirm_after_payment(message, state)
+
+
 async def _go_payment_after_phone(message: Message, state: FSMContext) -> None:
     await state.set_state(AdListingStates.listing_payment)
     lines = [
@@ -879,7 +887,7 @@ async def ad_phone_contact(message: Message, state: FSMContext) -> None:
     phone = message.contact.phone_number
     un = message.from_user.username or ""
     await state.update_data(phone=phone, preview_username=un)
-    await _go_payment_after_phone(message, state)
+    await _go_next_after_phone(message, state)
 
 
 
@@ -894,7 +902,7 @@ async def ad_phone_text(message: Message, state: FSMContext) -> None:
         return
     un = (message.from_user.username or "") if message.from_user else ""
     await state.update_data(phone=parsed, preview_username=un)
-    await _go_payment_after_phone(message, state)
+    await _go_next_after_phone(message, state)
 
 
 

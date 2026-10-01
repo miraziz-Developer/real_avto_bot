@@ -97,6 +97,13 @@ def _log_level() -> str:
     return (os.getenv("LOG_LEVEL", "INFO") or "INFO").strip().upper()
 
 
+def _bool(name: str, default: bool) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _optional_positive_int(name: str) -> int | None:
     raw = (os.getenv(name) or "").strip()
     if not raw:
@@ -125,6 +132,7 @@ class Settings:
     db_pool_timeout: int
     log_level: str
     reviews_channel_id: str
+    listing_payment_enabled: bool
     listing_price_uzs: int
     payment_card: str
     payment_card_holder: str
@@ -153,6 +161,8 @@ settings = Settings(
     db_pool_timeout=_int("DB_POOL_TIMEOUT", 30),
     log_level=_log_level(),
     reviews_channel_id=_reviews_channel_id(),
+    # Hozircha e'lon bepul; pullik rejimga qaytish uchun LISTING_PAYMENT_ENABLED=true
+    listing_payment_enabled=_bool("LISTING_PAYMENT_ENABLED", False),
     listing_price_uzs=_int("LISTING_PRICE_UZS", 50000),
     payment_card=(os.getenv("PAYMENT_CARD", "") or "").strip(),
     payment_card_holder=(os.getenv("PAYMENT_CARD_HOLDER", "") or "").strip(),
