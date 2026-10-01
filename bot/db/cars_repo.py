@@ -9,7 +9,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Car, CarEvent, CarSource, CarStatus
-from bot.services.car_parser import ParsedCar
+from bot.services.car_parser import ParsedCar, detect_brand_model, normalize_text
 
 # ParsedCar → Car ga ko'chiriladigan maydonlar
 PARSED_FIELDS = (
@@ -28,6 +28,9 @@ PARSED_FIELDS = (
     "notes",
 )
 
+# Savdo agenti mijozga taklif qila oladigan holatlar (sotilgan/arxiv hech qachon)
+OFFERABLE_STATUSES = (CarStatus.ACTIVE, CarStatus.RESERVED)
+
 # Admin qo'lda tahrirlay oladigan maydonlar
 EDITABLE_FIELDS = frozenset(PARSED_FIELDS) | {"purchase_price_usd", "expenses_usd", "sold_price_usd", "is_own"}
 
@@ -42,6 +45,13 @@ class CarRepository:
 
     async def _event(self, car: Car, kind: str, data: dict | None = None, actor: int | None = None) -> None:
         self.session.add(CarEvent(car_id=car.id, kind=kind, data=data, actor_telegram_id=actor))
+
+    async def has_event(self, car: Car, kind: str) -> bool:
+        stmt = select(CarEvent.id).where(CarEvent.car_id == car.id, CarEvent.kind == kind).limit(1)
+        return (await self.session.execute(stmt)).first() is not None
+
+    async def add_event(self, car: Car, kind: str, data: dict | None = None) -> None:
+        await self._event(car, kind, data)
 
     async def get(self, car_id: int) -> Car | None:
         return await self.session.get(Car, car_id)
@@ -181,6 +191,70 @@ class CarRepository:
     async def list_by_status(self, status: str, *, limit: int = 30) -> list[Car]:
         stmt = select(Car).where(Car.status == status).order_by(Car.id.desc()).limit(limit)
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def search_offerable(
+        self,
+        *,
+        query: str | None = None,
+        brand: str | None = None,
+        model: str | None = None,
+        year_min: int | None = None,
+        year_max: int | None = None,
+        price_min_usd: int | None = None,
+        price_max_usd: int | None = None,
+        transmission: str | None = None,
+        fuel: str | None = None,
+        exclude_ids: list[int] | None = None,
+        limit: int = 5,
+    ) -> list[Car]:
+        """Mijozga taklif qilish mumkin bo'lgan (sotuvda/bron) mashinalar. Slang nomlar katalog orqali tushuniladi."""
+        conds = [Car.status.in_(OFFERABLE_STATUSES)]
+        # «jentra», «кобальт» → Gentra, Cobalt
+        raw_name = " ".join(p for p in (brand, model, query) if p)
+        if raw_name:
+            det_brand, det_model = detect_brand_model(normalize_text(raw_name))
+            name_model = det_model or model
+            name_brand = det_brand or brand
+            if name_model:
+                conds.append(Car.model.ilike(f"%{name_model.split()[0]}%"))
+            elif name_brand:
+                conds.append(Car.brand.ilike(f"%{name_brand}%"))
+            elif query:
+                conds.append(Car.raw_text.ilike(f"%{query.strip()[:60]}%"))
+        if year_min:
+            conds.append(Car.year >= year_min)
+        if year_max:
+            conds.append(Car.year <= year_max)
+        if price_min_usd:
+            conds.append(Car.price_usd >= price_min_usd)
+        if price_max_usd:
+            # Byudjetdan biroz (10%) qimmatini ham ko'rsatamiz — savdolashish uchun joy bor
+            conds.append(Car.price_usd <= int(price_max_usd * 1.1))
+        if transmission:
+            conds.append(Car.transmission == transmission)
+        if fuel:
+            conds.append(Car.fuel.ilike(f"%{fuel}%"))
+        if exclude_ids:
+            conds.append(Car.id.not_in(exclude_ids))
+        order = [Car.status.asc()]  # active < reserved — avval sotuvdagilar
+        if price_max_usd:
+            order.append(func.abs(Car.price_usd - price_max_usd).asc())
+        order.append(Car.published_at.desc().nulls_last())
+        stmt = select(Car).where(*conds).order_by(*order).limit(max(1, min(limit, 10)))
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def similar_offerable(self, car: Car, *, limit: int = 3) -> list[Car]:
+        """Sotilgan/yo'q mashina o'rniga o'xshashlari: avval shu model, keyin shu narx oralig'i."""
+        same = await self.search_offerable(model=car.model, brand=car.brand, exclude_ids=[car.id], limit=limit)
+        if len(same) >= limit or not car.price_usd:
+            return same
+        band = await self.search_offerable(
+            price_min_usd=int(car.price_usd * 0.8),
+            price_max_usd=int(car.price_usd * 1.1),
+            exclude_ids=[car.id, *[c.id for c in same]],
+            limit=limit - len(same),
+        )
+        return same + band
 
     async def stats(self, *, days: int = 30) -> dict[str, Any]:
         """Jamoa uchun qisqa statistika (bot ichidagi /statistika va CRM bilan bir xil mantiq)."""

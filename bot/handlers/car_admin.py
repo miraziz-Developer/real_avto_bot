@@ -17,7 +17,9 @@ from bot.config import settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import Car, CarStatus
 from bot.services.car_cards import STATUS_LABELS, car_admin_kb, car_card_html
+from bot.db.repositories import CrmRepository
 from bot.services.car_parser import parse_admin_edit, parse_price_usd
+from bot.services.wishlist_notify import notify_wishlist_matches_car
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +77,7 @@ async def _refresh_card(cq: CallbackQuery, car: Car, header: str | None = None) 
 
 
 @router.callback_query(F.data.startswith("car:"))
-async def car_action(cq: CallbackQuery, state: FSMContext, cars: CarRepository) -> None:
+async def car_action(cq: CallbackQuery, state: FSMContext, cars: CarRepository, crm: CrmRepository) -> None:
     if cq.from_user is None or not _is_admin(cq.from_user.id):
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
@@ -108,6 +110,9 @@ async def car_action(cq: CallbackQuery, state: FSMContext, cars: CarRepository) 
     label = STATUS_LABELS.get(new_status, new_status)
     await cq.answer(f"{label}" if changed or action == "keep" else "O'zgarish yo'q")
     await _refresh_card(cq, car)
+    if changed and new_status == CarStatus.ACTIVE and cq.bot is not None:
+        await notify_wishlist_matches_car(cq.bot, crm, cars, car)
+        await cars.session.commit()
     if new_status == CarStatus.SOLD and car.is_own and not car.sold_price_usd and cq.message:
         await cq.message.answer(
             f"💰 #{car.id} qanchaga sotildi? Foyda hisobi uchun: <code>/sotildi {car.id} 9500</code>",
@@ -122,7 +127,7 @@ async def car_edit_cancel(message: Message, state: FSMContext) -> None:
 
 
 @router.message(StateFilter(CarEditStates.waiting_text), F.text)
-async def car_edit_apply(message: Message, state: FSMContext, cars: CarRepository) -> None:
+async def car_edit_apply(message: Message, state: FSMContext, cars: CarRepository, crm: CrmRepository) -> None:
     if message.from_user is None or not _is_admin(message.from_user.id):
         await state.clear()
         return
@@ -143,6 +148,9 @@ async def car_edit_apply(message: Message, state: FSMContext, cars: CarRepositor
     if car.status == CarStatus.REVIEW and all((car.brand, car.model, car.year, car.price_usd)):
         await cars.set_status(car, CarStatus.ACTIVE, actor=message.from_user.id)
     await cars.session.commit()
+    if car.status == CarStatus.ACTIVE and message.bot is not None:
+        await notify_wishlist_matches_car(message.bot, crm, cars, car)
+        await cars.session.commit()
     await state.clear()
     note = f"\n\n⚠️ Tushunilmadi: {html.escape('; '.join(bad))}" if bad else ""
     header = f"✅ Yangilandi ({len(changes)} ta maydon){note}"

@@ -34,6 +34,7 @@ from bot.middlewares.rate_limit import RateLimitMiddleware
 from bot.middlewares.workflow import BotUsernameMiddleware
 from bot.ai import get_ai
 from bot.workers.sale_followup import sale_followup_loop
+from bot.workers.lead_reminder import lead_reminder_loop
 from bot.workers.stale_cars import stale_cars_loop
 
 logger = logging.getLogger(__name__)
@@ -177,6 +178,7 @@ async def _set_admin_commands(bot: Bot) -> None:
     from aiogram.types import BotCommand, BotCommandScopeChat
 
     commands = [
+        BotCommand(command="leadlar", description="🔥 Ochiq mijozlar (leadlar)"),
         BotCommand(command="statistika", description="📊 Mashinalar statistikasi (30 kun)"),
         BotCommand(command="sotuvda", description="🟢 Sotuvdagi mashinalar"),
         BotCommand(command="tekshiruv", description="🟡 Tekshiruv kutayotgan postlar"),
@@ -224,6 +226,7 @@ async def _run() -> None:
     # worker_lb = asyncio.create_task(leaderboard_loop(bot, session_factory))
     worker_sale = asyncio.create_task(sale_followup_loop(bot, session_factory))
     worker_stale = asyncio.create_task(stale_cars_loop(bot, session_factory))
+    worker_leads = asyncio.create_task(lead_reminder_loop(bot, session_factory))
     try:
         # channel_post / edited_channel_post ham kelishi uchun ishlatilayotgan update turlarini aniq so'raymiz
         await dp.start_polling(bot, handle_signals=True, allowed_updates=dp.resolve_used_update_types())
@@ -231,11 +234,12 @@ async def _run() -> None:
         # worker_lb.cancel()
         worker_sale.cancel()
         worker_stale.cancel()
+        worker_leads.cancel()
         # try:
         #     await worker_lb
         # except asyncio.CancelledError:
         #     pass
-        for w in (worker_sale, worker_stale):
+        for w in (worker_sale, worker_stale, worker_leads):
             try:
                 await w
             except asyncio.CancelledError:

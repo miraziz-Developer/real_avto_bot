@@ -44,3 +44,29 @@ python -m scripts.import_channel_export path/to/result.json             # bazaga
 docker run -d --rm --name realavto-testdb -e POSTGRES_PASSWORD=test -e POSTGRES_DB=realavto_test -p 55432:5432 postgres:16-alpine
 TEST_DATABASE_URL=postgresql+asyncpg://postgres:test@localhost:55432/realavto_test pytest tests -q
 ```
+
+---
+
+## AI savdo agenti (2-bosqich)
+
+Botga yozilgan har qanday savolga (matn yoki ovoz) agent **faqat mashinalar bazasidan** javob beradi, mijozni «pishiradi» va tayyor bo'lganda menejerga topshiradi.
+
+**Mijoz tomoni**
+- «Cobalt bormi?», «10 000$ gacha avtomat», ovozli xabar — agent sotuvdagi mashinalarni topadi (sotilganini hech qachon taklif qilmaydi), rasmlarini yuboradi, savollarga javob beradi.
+- Mos mashina yo'q bo'lsa — o'xshashlarini taklif qiladi yoki «chiqsa xabar beraman» (qidiruv saqlaydi). Kanalga mos mashina tushishi bilan mijozga xabar boradi.
+- Mijoz tayyor bo'lsa (ko'rishga kelmoqchi, «olaman», narx/kredit so'rayapti, odam bilan gaplashmoqchi) — menejerga topshiriladi.
+- `GROQ_API_KEY` bo'lmasa ham ishlaydi: matndan model/byudjetni ajratib, bazadan ro'yxat + «Menejer bilan bog'lanish» tugmasi.
+- Chegirma, kredit, hujjat bo'yicha va'da bermaydi; ma'lumot yo'q bo'lsa o'ylab topmaydi.
+
+**Menejer tomoni (botda)**
+- 🔥 **Lead kartasi**: ism, telefon, qiziqqan mashina, byudjet, to'lov usuli, kelish vaqti, AI xulosasi, oxirgi xabarlar.
+- **Kartaga reply qilsangiz — javob mijozga boradi** (AI shu zahoti jim turadi). Mijoz javoblari ham sizga keladi.
+- Tugmalar: ✅ Oldim · 🤖 AI davom etsin · 🏁 Sotuv bo'ldi · ❌ Yopish · 💬 To'liq suhbat.
+- `LEAD_REMINDER_MINUTES` (5) ichida hech kim olmasa — barcha adminlarga qayta eslatma.
+- Buyruqlar: `/leadlar` (ochiq mijozlar) · `/lead ID`.
+
+**CRM** → «Mijozlar (AI)»: ochiq mijozlar, menejer kutayotganlar, konversiya, topshirishgacha vaqt, har bir suhbat to'liq.
+
+**Sozlamalar** (`.env`): `AGENT_ENABLED`, `GROQ_API_KEY`, `GROQ_AGENT_MODEL`, `BUSINESS_NAME`, `BUSINESS_ADDRESS`, `BUSINESS_HOURS` (bo'sh bo'lsa agent ish vaqtini aytmaydi), `REAL_AVTO_MAP_URL`, `LEAD_REMINDER_MINUTES`.
+
+**Kanaldan botga yo'naltirish**: istalgan mashina uchun havola `https://t.me/<bot>?start=car_<ID>` — mijoz shu mashina rasmlari va ma'lumoti bilan suhbatni boshlaydi.

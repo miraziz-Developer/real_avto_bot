@@ -140,6 +140,13 @@ class Settings:
     groq_model: str
     groq_stt_model: str
     car_stale_days: int
+    agent_enabled: bool
+    agent_model: str
+    business_name: str
+    business_address: str
+    business_hours: str
+    map_url: str
+    lead_reminder_minutes: int
     sale_followup_interval_hours: int
     sale_followup_interval_minutes: int | None
     parking_location_text: str
@@ -176,6 +183,16 @@ settings = Settings(
     groq_stt_model=(os.getenv("GROQ_STT_MODEL", "") or "whisper-large-v3").strip(),
     # Shuncha kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi
     car_stale_days=_int("CAR_STALE_DAYS", 14),
+    # AI savdo agenti: botga yozilgan savollarga mashinalar bazasidan javob beradi
+    agent_enabled=_bool("AGENT_ENABLED", True),
+    agent_model=(os.getenv("GROQ_AGENT_MODEL", "") or os.getenv("GROQ_MODEL", "") or "llama-3.3-70b-versatile").strip(),
+    business_name=(os.getenv("BUSINESS_NAME", "") or "Real Avto").strip(),
+    business_address=(os.getenv("BUSINESS_ADDRESS", "") or "Yangiyo'l").strip(),
+    # Bo'sh bo'lsa agent ish vaqtini aytmaydi (o'ylab topmaslik uchun) — menejer aniqlaydi
+    business_hours=(os.getenv("BUSINESS_HOURS", "") or "").strip(),
+    map_url=(os.getenv("REAL_AVTO_MAP_URL", "") or _REAL_AVTO_MAP_DEFAULT).strip(),
+    # Adminga topshirilgan lead shuncha daqiqada olinmasa — barcha adminlarga qayta eslatma
+    lead_reminder_minutes=_int("LEAD_REMINDER_MINUTES", 5),
     sale_followup_interval_hours=_int("SALE_FOLLOWUP_INTERVAL_HOURS", 24),
     sale_followup_interval_minutes=_optional_positive_int("SALE_FOLLOWUP_INTERVAL_MINUTES"),
     parking_location_text=_parking_location_text(),

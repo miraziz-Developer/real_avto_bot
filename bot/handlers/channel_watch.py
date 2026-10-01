@@ -20,7 +20,9 @@ from bot.db.cars_repo import CarRepository
 from bot.db.models import CarSource, CarStatus
 from bot.services.car_cards import car_card_html, notify_admins_text, send_car_card_to_admins
 from bot.services.car_extract import extract_car
+from bot.db.repositories import CrmRepository
 from bot.services.car_parser import is_sold_text
+from bot.services.wishlist_notify import notify_wishlist_matches_car
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +133,9 @@ async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
             header = "🆕 <b>Kanalda yangi mashina</b>"
         await send_car_card_to_admins(bot, car, header=header)
         logger.info("Kanal posti → mashina #%s (%s, %s)", car.id, car.title, car.status)
+        # «Chiqsa xabar ber» qidiruvini saqlagan mijozlarga
+        await notify_wishlist_matches_car(bot, CrmRepository(session), cars, car)
+        await session.commit()
 
 
 async def _flush_album(bot: Bot, group_id: str) -> None:

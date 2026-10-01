@@ -649,3 +649,12 @@ table.data tr.clickable {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Havolalar qorong'i fonda o'qiladigan bo'lsin (lead kartasi: Telegram, telefon) */
+.sheetBody a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.sheetBody a:hover {
+  text-decoration: underline;
+}

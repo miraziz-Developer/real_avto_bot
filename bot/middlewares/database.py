@@ -5,6 +5,7 @@ from aiogram.types import TelegramObject
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from bot.db.cars_repo import CarRepository
+from bot.db.leads_repo import LeadRepository
 from bot.db.repositories import AppMetaRepository, CrmRepository, UserRepository
 
 
@@ -24,6 +25,7 @@ class DbSessionMiddleware(BaseMiddleware):
             data["app_meta"] = AppMetaRepository(session)
             data["crm"] = CrmRepository(session)
             data["cars"] = CarRepository(session)
+            data["leads"] = LeadRepository(session)
             try:
                 result = await handler(event, data)
                 await session.commit()

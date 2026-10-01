@@ -84,6 +84,32 @@ class GroqClient:
             raise AIError("JSON obyekt kutilgan edi")
         return out
 
+    async def chat(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        model: str | None = None,
+        temperature: float = 0.3,
+        max_tokens: int = 700,
+    ) -> dict:
+        """Bitta model qadami. Javob: {"content": str|None, "tool_calls": [...]} (OpenAI formatidagi message)."""
+        payload: dict[str, Any] = {
+            "model": model or self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        data = await self._post("/chat/completions", json=payload)
+        try:
+            msg = data["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise AIError(f"Javob formati noto'g'ri: {e}") from e
+        return {"content": msg.get("content"), "tool_calls": msg.get("tool_calls") or []}
+
     async def transcribe(self, audio: bytes, *, filename: str = "audio.ogg") -> str:
         """Ovozli xabar / dumaloq video ovozini matnga aylantirish."""
         form = aiohttp.FormData()

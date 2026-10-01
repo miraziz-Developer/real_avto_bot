@@ -3,9 +3,12 @@ from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from bot.db.cars_repo import CarRepository
+from bot.db.leads_repo import LeadRepository
 from bot.db.repositories import CrmRepository, UserRepository
 from bot.handlers.listing_chat import open_listing_buyer_entry
 from bot.handlers.render import present_root_menu, present_user_state
+from bot.handlers.sales_agent import open_car_entry
 
 router = Router(name="start")
 
@@ -17,6 +20,8 @@ async def cmd_start(
     state: FSMContext,
     users: UserRepository,
     crm: CrmRepository,
+    cars: CarRepository,
+    leads: LeadRepository,
     bot_username: str,
 ) -> None:
     if message.from_user is None:
@@ -35,6 +40,17 @@ async def cmd_start(
             start_ref_code=None,
         )
         await open_listing_buyer_entry(message, state, crm, int(sp[1]))
+        return
+    if len(sp) == 2 and sp[0].lower() == "car" and sp[1].isdigit():
+        # Mashina haqida suhbat (wishlist xabari, kanal havolasi): agent shu mashina bilan boshlaydi
+        await users.ensure_user(
+            tg_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            last_name=message.from_user.last_name,
+            start_ref_code=None,
+        )
+        await open_car_entry(message, int(sp[1]), leads=leads, cars=cars, crm=crm)
         return
 
     ref_code = raw.upper() if raw else None

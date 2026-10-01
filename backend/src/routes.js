@@ -4,6 +4,7 @@ import { signAccessToken } from "./auth.js";
 import { requireAuth, requireRole } from "./middleware.js";
 import { asyncHandler, getPagination, verifyPassword } from "./utils.js";
 import { carsRouter } from "./cars.js";
+import { leadsRouter } from "./leads.js";
 
 export const router = express.Router();
 
@@ -45,6 +46,7 @@ router.post('/auth/login', asyncHandler(async (req, res) => {
 router.use(requireAuth);
 
 router.use('/cars', carsRouter);
+router.use('/leads', leadsRouter);
 
 router.get('/stats', asyncHandler(async (_req, res) => {
   const [

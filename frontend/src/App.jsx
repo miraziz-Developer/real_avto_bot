@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import CarsPage from "./CarsPage.jsx";
+import LeadsPage from "./LeadsPage.jsx";
 
 const baseURL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "") || "/api";
 const publicApi = axios.create({ baseURL });
 
 const TABS = [
   { id: "dashboard", label: "Boshqaruv", ic: "◆" },
+  { id: "leads", label: "Mijozlar (AI)", ic: "✦" },
   { id: "cars", label: "Mashinalar", ic: "▤" },
   { id: "clients", label: "Mijozlar", ic: "◎" },
   { id: "listings", label: "E'lonlar (TG)", ic: "▣" },
@@ -309,6 +311,7 @@ export default function App() {
         {tab === "dashboard" && (
           <Dashboard stats={state.stats} wishlists={pages.wishlists.items} listings={pages.listings.items} />
         )}
+        {tab === "leads" && <LeadsPage api={api} canEdit={canEdit} query={query} />}
         {tab === "cars" && <CarsPage api={api} canEdit={canEdit} query={query} />}
         {tab === "clients" && (
           <PaginatedTable

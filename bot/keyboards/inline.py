@@ -52,6 +52,7 @@ def contest_hub_keyboard(*, show_join: bool) -> InlineKeyboardMarkup:
 def root_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="🤖 Mashina tanlashda yordam", callback_data="agent_start")],
             [InlineKeyboardButton(text="📢 E’lon berish", callback_data="ad_start")],
             [InlineKeyboardButton(text="🔍 Qidiruv saqlash", callback_data="wishlist_start")],
         ]

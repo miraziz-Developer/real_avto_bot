@@ -398,9 +398,29 @@ class CrmRepository:
         sub: ListingSubmission,
     ) -> list[tuple[Wishlist, Client]]:
         """E'lon (tasdiqlangan) qatoriga mos, faol wishlist + mijoz telegrami bor qatorlar."""
+        return await self.find_wishlists_matching(
+            brand=sub.brand,
+            model=sub.model,
+            year=sub.year,
+            price_usd=sub.price_ask_usd,
+            condition_key=sub.condition_key,
+            exclude_client_id=sub.client_id,
+        )
+
+    async def find_wishlists_matching(
+        self,
+        *,
+        brand: str | None,
+        model: str | None,
+        year: int,
+        price_usd: int,
+        condition_key: str | None = None,
+        exclude_client_id: int | None = None,
+    ) -> list[tuple[Wishlist, Client]]:
+        """Mashina parametrlariga mos faol wishlistlar (bot e'loni ham, kanal mashinasi ham)."""
         lm = func.lower
-        sb = (sub.brand or "").strip()
-        sm = (sub.model or "").strip()
+        sb = (brand or "").strip()
+        sm = (model or "").strip()
         brand_keys = _brand_synonyms_lower(sb) or frozenset({sb.lower()})
         brand_match = or_(*[lm(Wishlist.brand) == lm(literal(bk)) for bk in sorted(brand_keys)])
         wl_model = Wishlist.model
@@ -413,20 +433,22 @@ class CrmRepository:
         )
         budget_hi = (Wishlist.budget_max * 11) // 10
         price_ok = and_(
-            sub.price_ask_usd <= budget_hi,
-            or_(Wishlist.budget_min.is_(None), sub.price_ask_usd >= Wishlist.budget_min),
+            price_usd <= budget_hi,
+            or_(Wishlist.budget_min.is_(None), price_usd >= Wishlist.budget_min),
         )
+        # Kanal mashinasida holat kaliti yo'q — holat filtri faqat ma'lum bo'lsa qo'llanadi
         cond_ok = or_(
             Wishlist.condition_key.is_(None),
-            Wishlist.condition_key == sub.condition_key,
+            Wishlist.condition_key == condition_key,
+            literal(condition_key is None),
         )
-        year_ok = and_(Wishlist.year_min <= sub.year, Wishlist.year_max >= sub.year)
+        year_ok = and_(Wishlist.year_min <= year, Wishlist.year_max >= year)
         stmt = (
             select(Wishlist, Client)
             .join(Client, Client.id == Wishlist.client_id)
             .where(
                 Wishlist.is_active.is_(True),
-                Wishlist.client_id != sub.client_id,
+                Wishlist.client_id != (exclude_client_id or -1),
                 Client.telegram_id.is_not(None),
                 brand_match,
                 model_match,
