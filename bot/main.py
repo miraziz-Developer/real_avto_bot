@@ -172,6 +172,25 @@ async def _verify_reviews_channel(bot: Bot) -> None:
     )
 
 
+async def _set_admin_commands(bot: Bot) -> None:
+    """Adminlar uchun «/» menyusi (oddiy foydalanuvchilarga ko'rinmaydi)."""
+    from aiogram.types import BotCommand, BotCommandScopeChat
+
+    commands = [
+        BotCommand(command="statistika", description="📊 Mashinalar statistikasi (30 kun)"),
+        BotCommand(command="sotuvda", description="🟢 Sotuvdagi mashinalar"),
+        BotCommand(command="tekshiruv", description="🟡 Tekshiruv kutayotgan postlar"),
+        BotCommand(command="mashina", description="🚗 Mashina kartasi: /mashina ID"),
+        BotCommand(command="sotildi", description="🔴 Sotildi: /sotildi ID [narx]"),
+        BotCommand(command="start", description="Asosiy menyu"),
+    ]
+    for aid in settings.admin_telegram_ids:
+        try:
+            await bot.set_my_commands(commands, scope=BotCommandScopeChat(chat_id=aid))
+        except TelegramBadRequest as e:
+            logger.warning("Admin %s uchun buyruqlar menyusi o'rnatilmadi: %s", aid, e)
+
+
 async def _run() -> None:
     _configure_logging()
 
@@ -187,6 +206,7 @@ async def _run() -> None:
     # LEADERBOARD MUZLATILDI - Foydalanuvchi botdan chiqdi
     # await _verify_leaderboard_channel(bot)
     await _verify_reviews_channel(bot)
+    await _set_admin_commands(bot)
 
     storage = await _fsm_storage()
     dp = Dispatcher(storage=storage)

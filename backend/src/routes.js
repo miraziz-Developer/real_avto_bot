@@ -3,6 +3,7 @@ import { pool } from "./db.js";
 import { signAccessToken } from "./auth.js";
 import { requireAuth, requireRole } from "./middleware.js";
 import { asyncHandler, getPagination, sha256 } from "./utils.js";
+import { carsRouter } from "./cars.js";
 
 export const router = express.Router();
 
@@ -42,6 +43,8 @@ router.post('/auth/login', asyncHandler(async (req, res) => {
 }));
 
 router.use(requireAuth);
+
+router.use('/cars', carsRouter);
 
 router.get('/stats', asyncHandler(async (_req, res) => {
   const [

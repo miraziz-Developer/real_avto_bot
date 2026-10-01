@@ -8,3 +8,10 @@ __pycache__/
 **/__pycache__/
 *.pyc
 .Python
+
+# Node
+node_modules/
+frontend/dist/
+
+# Lokal Claude preview sozlamasi
+.claude/launch.json
