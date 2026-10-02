@@ -258,7 +258,8 @@ async def _run() -> None:
     register_handlers(dp)
     dp.update.middleware(UnhandledErrorMiddleware())
 
-    await bot.delete_webhook(drop_pending_updates=True)
+    # Bot o'chiq paytda kelgan kanal postlari va mijoz xabarlari yo'qolmasin — Telegram ularni 24 soat saqlaydi
+    await bot.delete_webhook(drop_pending_updates=False)
 
     # LEADERBOARD LOOP MUZLATILDI - Foydalanuvchi botdan chiqdi
     # worker_lb = asyncio.create_task(leaderboard_loop(bot, session_factory))
