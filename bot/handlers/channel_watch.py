@@ -23,7 +23,7 @@ from bot.db.models import CarSource, CarStatus
 from bot.services.car_cards import car_card_html, notify_admins_text, send_car_card_to_admins
 from bot.services.car_extract import extract_car
 from bot.db.repositories import CrmRepository
-from bot.services.car_parser import has_phone, is_reserved_text, is_sold_text
+from bot.services.car_parser import has_phone, is_reserved_text, is_sold_text, parse_car_text
 from bot.services.wishlist_notify import notify_wishlist_matches_car
 
 logger = logging.getLogger(__name__)
@@ -257,7 +257,21 @@ async def _process_channel_post(bot: Bot, messages: list[Message]) -> None:
                 msg_ids = [m.message_id for m in messages]
 
         photos, videos = _media_of(messages)
-        status = CarStatus.SOLD if is_sold_text(text) else None
+        # Ovoz transkripsiyasi xato bo'lishi mumkin: asosiy faktlar (marka/model/yil) yoki narx faqat ovozdan
+        # olingan bo'lsa — admin tasdiqlamaguncha sotuvga chiqmaydi (agent taklif qilmaydi)
+        text_only = parse_car_text(text, usd_rate_uzs=settings.usd_rate_uzs) if text else None
+        audio_unverified = bool(transcripts) and (
+            text_only is None
+            or not text_only.is_complete()
+            or (parsed.price_usd is not None and text_only.price_usd is None)
+        )
+        low_confidence = parsed.confidence is not None and parsed.confidence < 0.6
+        if is_sold_text(text):
+            status = CarStatus.SOLD
+        elif audio_unverified or low_confidence:
+            status = CarStatus.REVIEW
+        else:
+            status = None
         car = await cars.create_from_parsed(
             parsed,
             source=CarSource.CHANNEL,
@@ -274,7 +288,13 @@ async def _process_channel_post(bot: Bot, messages: list[Message]) -> None:
             _recent_media_car[chat_id] = (time.monotonic(), car.id)
         else:
             _recent_media_car.pop(chat_id, None)
-        if car.status == CarStatus.REVIEW:
+        if car.status == CarStatus.REVIEW and audio_unverified:
+            heard = html.escape(" ".join(transcripts)[:300])
+            header = (
+                "🎙 <b>Ma'lumot videodagi ovozdan olindi</b> — to'g'riligini tekshirib tasdiqlang.\n"
+                f"Eshitilgani: <i>«{heard}»</i>"
+            )
+        elif car.status == CarStatus.REVIEW:
             header = "🆕 <b>Kanalda yangi post</b> — ma'lumot to'liq emas, tekshirib bering"
         else:
             header = "🆕 <b>Kanalda yangi mashina</b>"

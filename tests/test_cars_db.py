@@ -336,3 +336,36 @@ async def test_spoken_video_and_description_processed_concurrently_make_one_car(
         car = rows[0]
         assert (car.model, car.year, car.price_usd, car.mileage_km) == ("Cobalt", 2020, 9200, 98000)
         assert car.channel_message_ids == [300, 301] and car.video_file_ids == ["vn:spoken"]
+
+
+async def test_audio_only_facts_wait_for_admin_but_text_posts_go_live(session_factory, watch, monkeypatch):
+    from aiogram.types import VideoNote
+
+    async def fake_transcribe(bot, messages):
+        return ["Kobalt 2020 yil, narxi 9200 dollar"] if any(m.video_note for m in messages) else []
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    bot = FakeBot()
+    chat = Chat(id=CHANNEL_ID, type="channel", username="real_avto_test")
+    video = Message(
+        message_id=400, date=datetime.now(timezone.utc), chat=chat,
+        video_note=VideoNote(file_id="v400", file_unique_id="u400", length=240, duration=20),
+    )
+    await watch.process_channel_post(bot, [video])
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert car.status == CarStatus.REVIEW  # faqat ovozdan — admin tasdig'isiz sotuvga chiqmaydi
+    card = bot.sent[-1][2]
+    assert "ovozdan olindi" in card and "Kobalt 2020" in card
+
+    # Matnli post (+ ovoz) — faktlar matnda bor, darhol sotuvda
+    watch._recent_media_car.clear()
+    text_post = Message(
+        message_id=401, date=datetime.now(timezone.utc), chat=chat,
+        caption="🚘Avtomobil: Gentra 🗓️yili: 2019 📍probeg: 120.000km",
+        video_note=None,
+    )
+    await watch.process_channel_post(bot, [text_post])
+    async with session_factory() as s:
+        gentra = (await s.execute(select(Car).where(Car.model == "Gentra"))).scalar_one()
+        assert gentra.status == CarStatus.ACTIVE

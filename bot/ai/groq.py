@@ -118,6 +118,10 @@ class GroqClient:
         # Til aniq berilmasa Whisper o'zbekchani ko'pincha turkcha deb taniydi
         if settings.groq_stt_language:
             form.add_field("language", settings.groq_stt_language)
+        # Avtosalon lug'ati — model nomlari va atamalarni to'g'ri yozishga yordam beradi
+        if settings.groq_stt_prompt:
+            form.add_field("prompt", settings.groq_stt_prompt)
+        form.add_field("temperature", "0")
         form.add_field("response_format", "json")
         data = await self._post("/audio/transcriptions", data=form)
         return str(data.get("text") or "").strip()

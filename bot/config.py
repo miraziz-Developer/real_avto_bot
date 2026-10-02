@@ -140,6 +140,7 @@ class Settings:
     groq_model: str
     groq_stt_model: str
     groq_stt_language: str
+    groq_stt_prompt: str
     car_stale_days: int
     agent_enabled: bool
     agent_model: str
@@ -200,6 +201,15 @@ settings = Settings(
     groq_stt_model=(os.getenv("GROQ_STT_MODEL", "") or "whisper-large-v3").strip(),
     # Ovozli xabar tili (ISO-639-1). Bo'sh — Whisper o'zi aniqlaydi (o'zbekchada xato qiladi)
     groq_stt_language=(os.getenv("GROQ_STT_LANGUAGE", "uz") or "").strip(),
+    groq_stt_prompt=(
+        os.getenv("GROQ_STT_PROMPT", "")
+        or (
+            "Real Avto, Yangiyo'l avtosaloni. Chevrolet Cobalt, Gentra, Nexia, Spark, Damas, Labo, Matiz, "
+            "Lacetti, Malibu, Tracker, Captiva, Onix, Monza, Equinox, BYD, Kia, Hyundai, JAC. "
+            "Yili, probeg, ming kilometr, pozitsiya, kraska toza, mexanika, avtomat, metan, propan, "
+            "nasiya, boshlang'ich to'lov, narxi, dollar, million so'm, kelishamiz."
+        )
+    ).strip(),
     # Shuncha kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi
     car_stale_days=_int("CAR_STALE_DAYS", 14),
     # AI savdo agenti: botga yozilgan savollarga mashinalar bazasidan javob beradi
