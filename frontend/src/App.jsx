@@ -16,6 +16,15 @@ const TABS = [
   { id: "contest", label: "Konkurs", ic: "★" },
 ];
 
+const BUYOUT_LABELS = {
+  offered: "taklif yuborildi",
+  accepted: "sotuvchi rozi",
+  negotiating: "muhokamada",
+  declined: "sotuvchi rad etdi",
+  expired: "javob bo'lmadi",
+  bought: "sotib olindi",
+};
+
 function formatUsd(n) {
   if (n === null || n === undefined || Number.isNaN(Number(n))) return "—";
   return `$${Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
@@ -580,7 +589,17 @@ function ListingsPage({ rows, total, page, limit, filter, onFilter, onPageChange
                 </td>
                 <td>{r.year}</td>
                 <td className="mono">{formatUsd(r.price_ask_usd)}</td>
-                <td>{statusBadge(r.status)}</td>
+                <td>
+                  {statusBadge(r.status)}
+                  {r.buyout_status && (
+                    <div style={{ fontSize: 11, marginTop: 4 }}>
+                      💰 {BUYOUT_LABELS[r.buyout_status] || r.buyout_status} {r.buyout_price_usd ? formatUsd(r.buyout_price_usd) : ""}
+                    </div>
+                  )}
+                  {String(r.status).toLowerCase() === "pending" && r.frozen_until && (
+                    <div style={{ fontSize: 11, marginTop: 4, color: "var(--muted)" }}>⏳ {formatDate(r.frozen_until)} gacha</div>
+                  )}
+                </td>
                 <td className="mono" style={{ fontSize: 12 }}>{formatDate(r.created_at)}</td>
                 <td>
                   {r.client_db_id != null && (

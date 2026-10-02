@@ -225,6 +225,14 @@ class ListingSubmission(Base):
     # open | feedback_pending | sold | not_sold | None (pending/rejected e'lonlar)
     sale_status: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     sale_last_prompt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Muzlatish: shu vaqtgacha jamoa ko'rib chiqadi (sotib olish imkoniyati), keyin avtomatik kanalga
+    frozen_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    # Sotib olish taklifi: offered | accepted | declined | negotiating | expired | bought
+    buyout_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    buyout_price_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    buyout_admin_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    buyout_offered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    auto_published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

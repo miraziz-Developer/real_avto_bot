@@ -150,6 +150,10 @@ class Settings:
     business_enabled: bool
     business_owner_pause_hours: int
     comments_enabled: bool
+    listing_freeze_hours: int
+    work_hour_start: int
+    work_hour_end: int
+    buyout_reply_hours: int
     sale_followup_interval_hours: int
     sale_followup_interval_minutes: int | None
     parking_location_text: str
@@ -202,6 +206,14 @@ settings = Settings(
     business_owner_pause_hours=_int("BUSINESS_OWNER_PAUSE_HOURS", 6),
     # Kanal kommentlaridagi savollarga bazadan qisqa javob + botga havola
     comments_enabled=_bool("COMMENTS_ENABLED", True),
+    # Bot orqali kelgan e'lon shuncha ISH soati muzlatiladi (jamoa sotib olishi mumkin), keyin avtomatik kanalga.
+    # 0 — avtomatik joylash yo'q (faqat qo'lda tasdiqlash)
+    listing_freeze_hours=_int("LISTING_FREEZE_HOURS", 6),
+    # Ish vaqti (Toshkent): muzlatish faqat shu soatlarda «sanaladi», avtomatik joylash ham shu vaqtda
+    work_hour_start=_int("WORK_HOUR_START", 9),
+    work_hour_end=_int("WORK_HOUR_END", 21),
+    # Sotuvchi sotib olish taklifiga shuncha soatda javob bermasa — e'lon avtomatik kanalga chiqadi
+    buyout_reply_hours=_int("BUYOUT_REPLY_HOURS", 24),
     sale_followup_interval_hours=_int("SALE_FOLLOWUP_INTERVAL_HOURS", 24),
     sale_followup_interval_minutes=_optional_positive_int("SALE_FOLLOWUP_INTERVAL_MINUTES"),
     parking_location_text=_parking_location_text(),

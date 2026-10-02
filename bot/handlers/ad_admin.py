@@ -14,7 +14,6 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    InputMediaPhoto,
     Message,
 )
 
@@ -24,9 +23,7 @@ from bot.config import settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import ListingSubmissionStatus
 from bot.db.repositories import CrmRepository
-from bot.handlers.ad_listing import listing_caption_from_sub_public, truncate_caption_html
-from bot.services.car_cards import car_from_approved_listing
-from bot.services.wishlist_notify import notify_wishlist_matches
+from bot.services.listing_publish import PublishError, publish_listing
 
 router = Router(name="ad_admin")
 
@@ -60,56 +57,26 @@ async def listing_approve(cq: CallbackQuery, crm: CrmRepository, cars: CarReposi
     if sub is None or sub.status != ListingSubmissionStatus.PENDING:
         await cq.answer("Bu e'lon allaqachon qayta ishlangan", show_alert=True)
         return
-
-    caption = truncate_caption_html(listing_caption_from_sub_public(sub))
-    photos = list(sub.photo_file_ids or [])
-    if not photos:
+    if not sub.photo_file_ids:
         await cq.answer("Rasmlar yo'q", show_alert=True)
         return
 
-    media = [InputMediaPhoto(media=photos[0], caption=caption, parse_mode="HTML")]
-    media.extend(InputMediaPhoto(media=p) for p in photos[1:])
-
     # Telegram spinner: answerCallbackQuery bitta marta; kanalga yuborishdan OLDIN yopamiz.
     await cq.answer()
-
     try:
-        msgs = await cq.bot.send_media_group(settings.channel_id, media)
-    except TelegramBadRequest as e:
-        logging.exception("Kanalga e'lon yuborish: %s", e)
-        err = html.escape(str(e))
-        hint = ""
-        if "chat not found" in str(e).lower():
-            hint = (
-                "\n\n<b>Nima qilish kerak</b>\n"
-                "• <code>.env</code> dagi <code>CHANNEL_ID</code> — "
-                "tasdiqlangan e'lonlar shu kanalga chiqadi (<code>-100…</code> yoki <code>@kanal</code>).\n"
-                "• Botni shu kanalga qo‘shing va <b>Post messages</b> (yoki admin) huquqi bo‘lsin.\n"
-                "• ID ni @RawDataBot / @getidsbot orqali kanaldan oling."
-            )
+        msgs = await publish_listing(cq.bot, crm, cars, sub)
+    except PublishError as e:
         try:
-            await cq.message.reply(
-                f"❌ Kanal xatosi: {err}{hint}",
-                parse_mode=ParseMode.HTML,
-            )
+            await cq.message.reply(e.html_text, parse_mode=ParseMode.HTML)
         except TelegramBadRequest:
             pass
         return
-
-    first_id = msgs[0].message_id if msgs else None
-    updated = await crm.try_mark_listing_approved(lid, channel_message_id=first_id)
-    if updated is None:
-        for m in msgs:
-            try:
-                await cq.bot.delete_message(settings.channel_id, m.message_id)
-            except TelegramBadRequest:
-                pass
+    if msgs is None:
         try:
             await cq.message.reply("⚠️ Boshqa admin allaqachon tasdiqlagan.")
         except TelegramBadRequest:
             pass
         return
-
     try:
         await cq.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
@@ -118,64 +85,6 @@ async def listing_approve(cq: CallbackQuery, crm: CrmRepository, cars: CarReposi
         await cq.message.reply(f"✅ E'lon #{lid} kanalga joylandi.")
     except TelegramBadRequest:
         pass
-
-    bot_un = ""
-    try:
-        bot_me = await cq.bot.get_me()
-        bot_un = (bot_me.username or "").strip().lstrip("@")
-    except Exception:
-        logging.exception("get_me muvaffaqiyatsiz — kanal ostidagi anonim havola yuborilmaydi")
-
-    if bot_un and first_id is not None:
-        try:
-            ask = f"https://t.me/{bot_un}?start=lq_{lid}"
-            await cq.bot.send_message(
-                settings.channel_id,
-                "💬 <b>Mashina haqida savol</b> — bot orqali yozishingiz mumkin.",
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [InlineKeyboardButton(text="💬 Savol yozish", url=ask)],
-                    ],
-                ),
-                reply_to_message_id=first_id,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-        except TelegramBadRequest as e:
-            logging.warning("Kanalga savol tugmasi yuborilmadi: %s", e)
-
-    try:
-        ask_dm = f"https://t.me/{bot_un}?start=lq_{lid}" if bot_un else ""
-        extra = ""
-        if ask_dm:
-            extra = (
-                '\n\nKanaldagi post ostida «<a href="'
-                + html.escape(ask_dm)
-                + '">Savol yozish</a>» tugmasi ham bor.'
-            )
-        await cq.bot.send_message(
-            sub.user_telegram_id,
-            "✅ E'loningiz tasdiqlandi va kanalda e'lon qilindi. Rahmat!" + extra,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-    except TelegramBadRequest:
-        pass
-
-    # Mashinalar bazasiga ham yozamiz — savdo agenti va statistika shu bazadan ishlaydi
-    # Savepoint: xato bo'lsa ham e'lon tasdig'i (shu sessiyada) bekor bo'lmaydi
-    try:
-        async with cars.session.begin_nested():
-            await car_from_approved_listing(
-                cars,
-                updated,
-                channel_chat_id=msgs[0].chat.id if msgs else None,
-                channel_message_ids=[m.message_id for m in msgs],
-            )
-    except Exception:
-        logging.exception("Tasdiqlangan e'lon #%s mashinalar bazasiga yozilmadi", lid)
-
-    await notify_wishlist_matches(cq.bot, crm, updated)
 
 
 @router.callback_query(F.data.startswith("lad_r:"))

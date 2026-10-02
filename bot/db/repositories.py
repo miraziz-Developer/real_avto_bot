@@ -305,6 +305,21 @@ class CrmRepository:
         await self.session.flush()
         return sub
 
+    async def listings_due_for_auto_publish(self, *, now: datetime, limit: int = 10) -> list[ListingSubmission]:
+        """Muzlatish muddati tugagan, hech kim hal qilmagan e'lonlar (sotib olish taklifiga javob kelmaganlar ham)."""
+        stmt = (
+            select(ListingSubmission)
+            .where(
+                ListingSubmission.status == ListingSubmissionStatus.PENDING,
+                ListingSubmission.frozen_until.is_not(None),
+                ListingSubmission.frozen_until <= now,
+                or_(ListingSubmission.buyout_status.is_(None), ListingSubmission.buyout_status == "offered"),
+            )
+            .order_by(ListingSubmission.frozen_until.asc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def try_mark_listing_rejected(
         self,
         listing_id: int,

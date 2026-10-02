@@ -14,6 +14,7 @@ from bot.db.base import create_tables, dispose_engine, get_engine, get_session_f
 from bot.db.migrate import (
     apply_car_indexes,
     apply_lead_business_columns,
+    apply_listing_freeze_columns,
     apply_contest_tables,
     apply_listing_extra_details_column,
     apply_listing_location_column,
@@ -36,6 +37,7 @@ from bot.middlewares.workflow import BotUsernameMiddleware
 from bot.ai import get_ai
 from bot.workers.sale_followup import sale_followup_loop
 from bot.workers.lead_reminder import lead_reminder_loop
+from bot.workers.listing_freeze import listing_freeze_loop
 from bot.workers.stale_cars import stale_cars_loop
 
 logger = logging.getLogger(__name__)
@@ -94,6 +96,7 @@ async def _bootstrap_database() -> None:
             await apply_listing_location_column(get_engine())
             await apply_car_indexes(get_engine())
             await apply_lead_business_columns(get_engine())
+            await apply_listing_freeze_columns(get_engine())
 
 
             return
@@ -229,6 +232,7 @@ async def _run() -> None:
     worker_sale = asyncio.create_task(sale_followup_loop(bot, session_factory))
     worker_stale = asyncio.create_task(stale_cars_loop(bot, session_factory))
     worker_leads = asyncio.create_task(lead_reminder_loop(bot, session_factory))
+    worker_freeze = asyncio.create_task(listing_freeze_loop(bot, session_factory))
     try:
         # channel_post / edited_channel_post ham kelishi uchun ishlatilayotgan update turlarini aniq so'raymiz
         await dp.start_polling(bot, handle_signals=True, allowed_updates=dp.resolve_used_update_types())
@@ -237,11 +241,12 @@ async def _run() -> None:
         worker_sale.cancel()
         worker_stale.cancel()
         worker_leads.cancel()
+        worker_freeze.cancel()
         # try:
         #     await worker_lb
         # except asyncio.CancelledError:
         #     pass
-        for w in (worker_sale, worker_stale, worker_leads):
+        for w in (worker_sale, worker_stale, worker_leads, worker_freeze):
             try:
                 await w
             except asyncio.CancelledError:

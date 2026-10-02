@@ -7,14 +7,14 @@ odam rejimida mijoz xabari → adminga, FSM oqimidagi foydalanuvchi matnini agen
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.methods import CopyMessage, GetMe, SendMessage
+from aiogram.methods import CopyMessage, GetMe, SendMediaGroup, SendMessage
 from aiogram.types import (
     BusinessConnection,
     CallbackQuery,
@@ -31,7 +31,18 @@ from bot import config
 from bot.db import base as db_base
 from bot.db.cars_repo import CarRepository
 from bot.db.migrate import apply_car_indexes
-from bot.db.models import AgentMessage, CarSource, Lead, LeadRelay, LeadStatus
+from bot.db.models import (
+    AgentMessage,
+    Car,
+    CarSource,
+    CarStatus,
+    Lead,
+    LeadRelay,
+    LeadStatus,
+    ListingSubmission,
+    ListingSubmissionStatus,
+)
+from bot.db.repositories import CrmRepository
 from bot.handlers import register_handlers
 from bot.handlers.ad_listing import AdListingStates
 from bot.middlewares.database import DbSessionMiddleware
@@ -44,6 +55,18 @@ pytestmark = pytest.mark.skipif(not TEST_DB, reason="TEST_DATABASE_URL berilmaga
 ADMIN_ID = 111
 CUSTOMER_ID = 5005
 BOT_ID = 42
+
+
+CHANNEL_REF = "@x"  # testlarda CHANNEL_ID=@x
+CHANNEL_NUMERIC_ID = -1001234
+
+
+def _cid(chat_id) -> int:
+    """«@kanal» kabi username chat_id larni soxta raqamli id ga aylantirish."""
+    try:
+        return int(chat_id)
+    except (TypeError, ValueError):
+        return CHANNEL_NUMERIC_ID
 
 
 class MockSession(BaseSession):
@@ -68,13 +91,15 @@ class MockSession(BaseSession):
         if isinstance(method, GetMe):
             return User(id=BOT_ID, is_bot=True, first_name="Bot", username="real_avto_test_bot")
         if isinstance(method, SendMessage):
-            return self._message(int(method.chat_id), method.text)
+            return self._message(_cid(method.chat_id), method.text)
+        if isinstance(method, SendMediaGroup):
+            return [self._message(_cid(method.chat_id)) for _ in method.media]
         if isinstance(method, CopyMessage):
             self._mid += 1
             return MessageId(message_id=self._mid)
         if getattr(method, "__returning__", None) is bool:
             return True
-        return self._message(int(getattr(method, "chat_id", 0) or 0))
+        return self._message(_cid(getattr(method, "chat_id", 0)))
 
     async def close(self) -> None:
         pass
@@ -82,10 +107,8 @@ class MockSession(BaseSession):
     async def stream_content(self, *a, **kw):  # pragma: no cover
         yield b""
 
-    def sent(self, method_type, chat_id: int | None = None) -> list:
-        return [
-            r for r in self.requests if isinstance(r, method_type) and (chat_id is None or int(r.chat_id) == chat_id)
-        ]
+    def sent(self, method_type, chat_id: int | str | None = None) -> list:
+        return [r for r in self.requests if isinstance(r, method_type) and (chat_id is None or r.chat_id == chat_id)]
 
 
 class _CurrentSessionFactory:
@@ -126,7 +149,7 @@ async def env():
         await conn.execute(
             text(
                 "TRUNCATE lead_relays, agent_messages, leads, car_events, cars, wishlist, clients, "
-                "business_connections, channel_threads RESTART IDENTITY CASCADE"
+                "business_connections, channel_threads, listing_submissions RESTART IDENTITY CASCADE"
             )
         )
     async with factory() as s:
@@ -366,3 +389,126 @@ async def test_channel_comments_answer_questions_from_db(env):
     # Xarid niyati → menejerga signal
     await dp.feed_update(bot, comment(9002, "kredit bilan olsam bo'ladimi?"))
     assert "xarid niyati" in session.sent(SendMessage, ADMIN_ID)[-1].text
+
+
+# --- E'lon muzlatish va «Sotib olamiz» ------------------------------------------------------------
+
+SELLER_ID = 8008
+
+
+async def _pending_listing(factory, *, frozen_until: datetime | None = None, buyout_status: str | None = None) -> int:
+    async with factory() as s:
+        crm = CrmRepository(s)
+        client = await crm.get_or_create_client(telegram_id=SELLER_ID, full_name="Sotuvchi")
+        sub = await crm.create_listing_submission(
+            client_id=client.id,
+            user_telegram_id=SELLER_ID,
+            seller_username="seller1",
+            brand="Chevrolet",
+            model="Malibu",
+            year=2019,
+            mileage=64000,
+            condition_key="yaxshi",
+            has_accident=False,
+            price_ask_usd=21500,
+            paint_status="toza",
+            extra_details="",
+            location="Toshkent",
+            phone="+998901112233",
+            photo_file_ids=["a1", "a2"],
+            payment_screenshot_file_id=None,
+        )
+        sub.frozen_until = frozen_until or datetime.now(timezone.utc) + timedelta(hours=3)
+        sub.buyout_status = buyout_status
+        if buyout_status:
+            sub.buyout_price_usd = 19000
+        await s.commit()
+        return sub.id
+
+
+def _buttons(markup) -> list[str]:
+    return [b.callback_data or b.url for row in (markup.inline_keyboard if markup else []) for b in row]
+
+
+async def _offer(dp, bot, lid: int, price_text: str) -> None:
+    await dp.feed_update(bot, _callback_update(ADMIN_ID, f"lad_b:{lid}"))
+    await dp.feed_update(bot, _text_update(ADMIN_ID, price_text))
+
+
+async def test_buyout_accepted_bought_and_posted_to_channel(env):
+    dp, bot, session, factory, _ = env
+    lid = await _pending_listing(factory)
+
+    await _offer(dp, bot, lid, "8500")
+    offer = session.sent(SendMessage, SELLER_ID)[-1]
+    assert "$8,500" in offer.text and f"lbo:y:{lid}" in _buttons(offer.reply_markup)
+    async with factory() as s:
+        sub = await s.get(ListingSubmission, lid)
+        assert sub.buyout_status == "offered" and sub.buyout_price_usd == 8500
+        assert sub.frozen_until > datetime.now(timezone.utc) + timedelta(hours=20)  # sotuvchi javobi kutiladi
+
+    # Begona odam taklif tugmasini bosa olmaydi
+    await dp.feed_update(bot, _callback_update(CUSTOMER_ID, f"lbo:y:{lid}"))
+    async with factory() as s:
+        assert (await s.get(ListingSubmission, lid)).buyout_status == "offered"
+
+    await dp.feed_update(bot, _callback_update(SELLER_ID, f"lbo:y:{lid}"))
+    deal = session.sent(SendMessage, ADMIN_ID)[-1]
+    assert "ROZI" in deal.text and "+998901112233" in deal.text
+    assert f"lbo_done:{lid}" in _buttons(deal.reply_markup)
+
+    await dp.feed_update(bot, _callback_update(ADMIN_ID, f"lbo_done:{lid}"))
+    async with factory() as s:
+        sub = await s.get(ListingSubmission, lid)
+        assert sub.status == ListingSubmissionStatus.REJECTED and sub.buyout_status == "bought"
+        car = (await s.execute(select(Car).where(Car.listing_submission_id == lid))).scalar_one()
+        assert car.is_own and car.purchase_price_usd == 8500 and car.status == CarStatus.ARCHIVED
+        car_id = car.id
+    card = session.sent(SendMessage, ADMIN_ID)[-1]
+    assert "Sotib olindi" in card.text and f"car:post:{car_id}" in _buttons(card.reply_markup)
+    assert session.sent(SendMediaGroup, CHANNEL_REF) == []  # sotib olingan e'lon kanalga chiqmagan
+
+    # Tayyor — bot o'zi kanalga joylaydi
+    await dp.feed_update(bot, _callback_update(ADMIN_ID, f"car:post:{car_id}"))
+    posts = session.sent(SendMediaGroup, CHANNEL_REF)
+    assert len(posts) == 1 and "Malibu" in posts[0].media[0].caption
+    async with factory() as s:
+        car = await s.get(Car, car_id)
+        assert car.status == CarStatus.ACTIVE and car.channel_message_ids
+
+
+async def test_buyout_declined_publishes_listing(env):
+    dp, bot, session, factory, _ = env
+    lid = await _pending_listing(factory)
+    await _offer(dp, bot, lid, "110 mln")
+    async with factory() as s:
+        assert (await s.get(ListingSubmission, lid)).buyout_status == "offered"
+    await dp.feed_update(bot, _callback_update(SELLER_ID, f"lbo:n:{lid}"))
+    assert len(session.sent(SendMediaGroup, CHANNEL_REF)) == 1
+    async with factory() as s:
+        sub = await s.get(ListingSubmission, lid)
+        assert sub.status == ListingSubmissionStatus.APPROVED and sub.buyout_status == "declined"
+        car = (await s.execute(select(Car).where(Car.listing_submission_id == lid))).scalar_one()
+        assert car.status == CarStatus.ACTIVE and car.source == CarSource.BOT
+
+
+async def test_freeze_worker_publishes_only_in_work_hours(env):
+    from bot.services.work_hours import TASHKENT
+    from bot.workers.listing_freeze import publish_due_once
+
+    dp, bot, session, factory, _ = env
+    day = datetime.now(TASHKENT).replace(hour=10, minute=0, second=0, microsecond=0)
+    plain = await _pending_listing(factory, frozen_until=day - timedelta(minutes=1))
+    offered = await _pending_listing(factory, frozen_until=day - timedelta(minutes=1), buyout_status="offered")
+    future = await _pending_listing(factory, frozen_until=day + timedelta(hours=2))
+
+    night = day.replace(hour=23)
+    assert await publish_due_once(bot, factory, now=night) == 0
+    assert await publish_due_once(bot, factory, now=day) == 2
+    async with factory() as s:
+        a, b, c = [await s.get(ListingSubmission, i) for i in (plain, offered, future)]
+        assert a.status == ListingSubmissionStatus.APPROVED and a.auto_published
+        assert b.status == ListingSubmissionStatus.APPROVED and b.buyout_status == "expired"
+        assert c.status == ListingSubmissionStatus.PENDING
+    assert "avtomatik kanalga chiqdi" in session.sent(SendMessage, ADMIN_ID)[-1].text
+    assert await publish_due_once(bot, factory, now=day) == 0  # ikkinchi marta joylanmaydi

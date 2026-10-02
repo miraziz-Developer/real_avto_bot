@@ -4,6 +4,7 @@ from bot.handlers import (
     ad_admin,
     ad_listing,
     business_agent,
+    buyout,
     callbacks,
     car_admin,
     channel_comments,
@@ -25,6 +26,8 @@ def register_handlers(dp: Dispatcher) -> None:
     dp.include_router(start.router)
     # Admin (/cancel moderatsiya va h.k.) state ichidagi umumiy handlerlardan OLDIN ishlashi kerak.
     dp.include_router(ad_admin.router)
+    # «Sotib olamiz»: admin narx FSM'i va sotuvchi javobi
+    dp.include_router(buyout.router)
     # Admin reply → mijoz (relay) car_admin FSM'dan oldin; relay bo'lmasa SkipHandler bilan o'tkazib yuboradi
     dp.include_router(lead_admin.router)
     dp.include_router(car_admin.router)

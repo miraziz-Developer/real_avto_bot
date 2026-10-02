@@ -84,3 +84,19 @@ Egasi mijozga **o'zi yozsa** — AI shu mijoz bilan `BUSINESS_OWNER_PAUSE_HOURS`
 **Kommentlar** — kanal postiga «narxi qancha?», «bormi?», «kredit bormi?» kabi savol yozilsa, bot bazadan qisqa javob beradi (sotuvda/bron/sotilgan, narx, probeg) va «🤖 Botda batafsil» tugmasini qo'yadi. Ochiq joyda AI ishlatilmaydi — faqat bazadagi faktlar. Xarid niyati bo'lsa («olaman», «kredit», «raqam») — adminlarga signal.
 - Talab: bot kanalga ulangan **muhokama guruhida admin** bo'lishi kerak.
 - Bir mijozga bitta post bo'yicha 10 daqiqada bir marta javob (guruh to'lib ketmasligi uchun). O'chirish: `COMMENTS_ENABLED=false`.
+
+---
+
+## E'lon muzlatish va «💰 Sotib olamiz» (3-bosqich)
+
+Bot orqali kelgan e'lon darhol kanalga chiqmaydi — `LISTING_FREEZE_HOURS` (6) **ish soati** jamoada turadi. Shu vaqtda yaxshi mashinani o'zimiz sotib olishimiz mumkin.
+
+- Ish vaqti `WORK_HOUR_START`–`WORK_HOUR_END` (9–21, Toshkent). Kechqurun 20:00 da kelgan e'lon ertasi 14:00 da chiqadi — tunda vaqt «yonib» ketmaydi, kanalga ham tunda e'lon chiqmaydi.
+- Admin kartasida: ✅ Tasdiqlash · ❌ Rad etish · **💰 Sotib olamiz** + «⏳ 12.10 14:00 da avtomatik chiqadi».
+- **💰 Sotib olamiz** → narx yoziladi (`8500` yoki `110 mln`) → sotuvchiga taklif: ✅ Roziman · 💬 Muhokama · 📢 Yo'q, e'lon qilinsin.
+  - Rozi / muhokama → adminlarga sotuvchi telefoni va «🏁 Sotib oldik» / «📢 Bekor — e'lon qilish».
+  - Rad → e'lon darhol kanalga.
+  - `BUYOUT_REPLY_HOURS` (24) ichida javob yo'q → e'lon avtomatik kanalga.
+- **🏁 Sotib oldik** → mashina bazaga «bizniki» bo'lib (xarid narxi bilan) tushadi. Ta'mir xarajati va sotuv narxini kartadagi «✏️ Tuzatish» orqali kiriting, tayyor bo'lgach **📢 Kanalga joylash** — bot o'zi Real Avto shablonida joylaydi, agent darhol taklif qila boshlaydi, foyda CRM statistikasida.
+- Hech kim hech narsa qilmasa — muddat tugagach e'lon o'zi kanalga chiqadi, adminlarga xabar boradi.
+- CRM «E'lonlar» bo'limida muzlatish vaqti va taklif holati ko'rinadi. O'chirish: `LISTING_FREEZE_HOURS=0`.

@@ -11,12 +11,12 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InputMediaPhoto, Message
 
 from bot.config import settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import Car, CarStatus
-from bot.services.car_cards import STATUS_LABELS, car_admin_kb, car_card_html
+from bot.services.car_cards import STATUS_LABELS, car_admin_kb, car_can_be_posted, car_card_html, car_channel_caption
 from bot.db.repositories import CrmRepository
 from bot.services.car_parser import parse_admin_edit, parse_price_usd
 from bot.services.wishlist_notify import notify_wishlist_matches_car
@@ -91,6 +91,10 @@ async def car_action(cq: CallbackQuery, state: FSMContext, cars: CarRepository, 
         await cq.answer("Mashina topilmadi", show_alert=True)
         return
 
+    if action == "post":
+        await _post_to_channel(cq, car, cars, crm)
+        return
+
     if action == "edit":
         await state.set_state(CarEditStates.waiting_text)
         await state.update_data(car_id=car_id)
@@ -118,6 +122,33 @@ async def car_action(cq: CallbackQuery, state: FSMContext, cars: CarRepository, 
             f"💰 #{car.id} qanchaga sotildi? Foyda hisobi uchun: <code>/sotildi {car.id} 9500</code>",
             parse_mode=ParseMode.HTML,
         )
+
+
+async def _post_to_channel(cq: CallbackQuery, car: Car, cars: CarRepository, crm: CrmRepository) -> None:
+    if not car_can_be_posted(car):
+        await cq.answer("Bu mashinani kanalga joylab bo'lmaydi (rasm yo'q yoki allaqachon kanalda)", show_alert=True)
+        return
+    if not (car.price_usd and car.year and car.model):
+        await cq.answer("Avval «✏️ Tuzatish» orqali narx, yil va modelni kiriting", show_alert=True)
+        return
+    await cq.answer()
+    photos = list(car.photo_file_ids)[:10]
+    media = [InputMediaPhoto(media=photos[0], caption=car_channel_caption(car), parse_mode=ParseMode.HTML)]
+    media.extend(InputMediaPhoto(media=p) for p in photos[1:])
+    try:
+        msgs = await cq.bot.send_media_group(settings.channel_id, media)
+    except TelegramBadRequest as e:
+        if cq.message:
+            await cq.message.answer(f"❌ Kanalga joylab bo'lmadi: {html.escape(str(e))}", parse_mode=ParseMode.HTML)
+        return
+    car.channel_chat_id = msgs[0].chat.id if msgs else None
+    car.channel_message_ids = [m.message_id for m in msgs]
+    car.published_at = None  # set_status ACTIVE yangi sotuv sanasini qo'yadi
+    await cars.set_status(car, CarStatus.ACTIVE, actor=cq.from_user.id if cq.from_user else None)
+    await cars.session.commit()
+    await notify_wishlist_matches_car(cq.bot, crm, cars, car)
+    await cars.session.commit()
+    await _refresh_card(cq, car, header="📢 Kanalga joylandi — sotuvda")
 
 
 @router.message(StateFilter(CarEditStates.waiting_text), Command("cancel"))

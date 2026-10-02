@@ -112,6 +112,8 @@ def car_admin_kb(car: Car) -> InlineKeyboardMarkup:
             rows.append([InlineKeyboardButton(text="🟢 Bron bekor — sotuvda", callback_data=f"car:ok:{cid}")])
         rows.append([InlineKeyboardButton(text="🚫 Arxivga", callback_data=f"car:arch:{cid}")])
     else:
+        if car_can_be_posted(car):
+            rows.append([InlineKeyboardButton(text="📢 Kanalga joylash", callback_data=f"car:post:{cid}")])
         rows.append(
             [
                 InlineKeyboardButton(text="↩️ Qayta sotuvga", callback_data=f"car:ok:{cid}"),
@@ -119,6 +121,34 @@ def car_admin_kb(car: Car) -> InlineKeyboardMarkup:
             ]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def car_can_be_posted(car: Car) -> bool:
+    """O'zimiz sotib olgan, rasmi bor, hali kanalda yo'q mashina — bot kanalga o'zi joylashi mumkin."""
+    return bool(car.is_own and car.photo_file_ids and not car.channel_message_ids)
+
+
+def car_channel_caption(car: Car) -> str:
+    """Bot kanalga joylaydigan post matni (Real Avto shabloni)."""
+    from bot.utils.contact_html import sales_phones_links_html
+
+    e = html.escape
+    lines = [f"🚗 <b>{e(' '.join(p for p in (car.brand, car.model) if p) or 'Mashina')}</b>"]
+    if car.year:
+        lines.append(f"📆 yili: {car.year}")
+    if car.mileage_km is not None:
+        lines.append(f"🛣 probeg: {_fmt_int(car.mileage_km)} km")
+    specs = [p for p in (car.transmission, car.fuel, car.color, car.position) if p]
+    if specs:
+        lines.append("⚙️ " + " · ".join(e(s) for s in specs))
+    if car.paint_status:
+        lines.append(f"🖌 Kraska: {e(car.paint_status)}")
+    if car.has_accident is not None:
+        lines.append("DTP: " + ("bor" if car.has_accident else "yo'q"))
+    lines.append(f"💰 Narxi: <b>${_fmt_int(car.price_usd)}</b>")
+    lines.append(f"📍 {e(settings.business_name)} · {e(settings.business_address)}")
+    lines.append(sales_phones_links_html())
+    return "\n".join(lines)[:1024]
 
 
 def stale_prompt_kb(car: Car) -> InlineKeyboardMarkup:
