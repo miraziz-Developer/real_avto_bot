@@ -2,7 +2,7 @@ from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.types import CallbackQuery, Message
 
-from bot.config import settings
+from bot.config import is_admin, settings
 from bot.db.models import User
 from bot.db.repositories import UserRepository
 from bot.services.subscription import SubscriptionService
@@ -20,16 +20,18 @@ async def present_root_menu(
     message: Message | None = None,
     callback: CallbackQuery | None = None,
 ) -> None:
+    user = (callback.from_user if callback else None) or (message.from_user if message else None)
+    admin = is_admin(user.id if user else None)
     if callback and callback.message:
         from bot.handlers.helpers import edit_or_answer
 
-        await edit_or_answer(callback, msg.ROOT_WELCOME, root_menu_keyboard())
+        await edit_or_answer(callback, msg.ROOT_WELCOME, root_menu_keyboard(is_admin=admin))
         return
 
     if message:
         await message.answer(
             msg.ROOT_WELCOME,
-            reply_markup=root_menu_keyboard(),
+            reply_markup=root_menu_keyboard(is_admin=admin),
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
         )

@@ -50,6 +50,8 @@ services:
     environment:
       BOT_TOKEN: ${BOT_TOKEN:-}
       BOT_USERNAME: ${BOT_USERNAME:-}
+      # Telegram Mini App orqali CRM'ga parolsiz kirish huquqi
+      ADMIN_TELEGRAM_IDS: ${ADMIN_TELEGRAM_IDS:-}
       SALES_PHONE: ${SALES_PHONE:-}
       BUSINESS_NAME: ${BUSINESS_NAME:-}
       BUSINESS_ADDRESS: ${BUSINESS_ADDRESS:-}

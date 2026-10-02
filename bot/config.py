@@ -155,6 +155,7 @@ class Settings:
     work_hour_end: int
     buyout_reply_hours: int
     catalog_url: str
+    crm_url: str
     instagram_enabled: bool
     ig_access_token: str
     ig_app_secret: str
@@ -224,6 +225,8 @@ settings = Settings(
     buyout_reply_hours=_int("BUYOUT_REPLY_HOURS", 24),
     # Mashinalar katalogi (sayt + Telegram Mini App). Mini App uchun HTTPS bo'lishi shart
     catalog_url=(os.getenv("CATALOG_URL", "") or "").strip().rstrip("/"),
+    # Admin panel (CRM) — adminlarga bot ichida Mini App bo'lib ochiladi (HTTPS shart)
+    crm_url=(os.getenv("CRM_URL", "") or "").strip().rstrip("/"),
     # Instagram (Meta App Review'dan keyin): Direct va kommentlarga agent javobi, webhook orqali
     instagram_enabled=_bool("INSTAGRAM_ENABLED", False),
     ig_access_token=(os.getenv("IG_ACCESS_TOKEN", "") or "").strip(),

@@ -176,6 +176,31 @@ export default function App() {
     setPages((prev) => ({ ...prev, [key]: { ...prev[key], page } }));
   }, []);
 
+  // Telegram Mini App ichida ochilgan bo'lsa — admin parolsiz kiradi (initData imzosi backendda tekshiriladi)
+  useEffect(() => {
+    const tg = window.Telegram?.WebApp;
+    if (!tg?.initData) return;
+    tg.ready();
+    tg.expand();
+    if (token) return;
+    publicApi
+      .post("/auth/telegram", { init_data: tg.initData })
+      .then((r) => {
+        setToken(r.data.token);
+        setUser(r.data.user);
+        localStorage.setItem("crm_token", r.data.token);
+        localStorage.setItem("crm_user", JSON.stringify(r.data.user));
+        setError("");
+      })
+      .catch((e) => {
+        setError(
+          e?.response?.status === 403
+            ? "Bu panel faqat Real Avto jamoasi uchun. Sizning Telegram akkauntingiz adminlar ro'yxatida yo'q."
+            : "Telegram orqali kirib bo'lmadi — login va parol bilan kiring.",
+        );
+      });
+  }, [token]);
+
   async function login(e) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);

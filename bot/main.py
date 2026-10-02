@@ -185,6 +185,7 @@ async def _set_admin_commands(bot: Bot) -> None:
     from aiogram.types import BotCommand, BotCommandScopeChat
 
     commands = [
+        BotCommand(command="panel", description="🛠 Admin panel (CRM)"),
         BotCommand(command="leadlar", description="🔥 Ochiq mijozlar (leadlar)"),
         BotCommand(command="statistika", description="📊 Mashinalar statistikasi (30 kun)"),
         BotCommand(command="sotuvda", description="🟢 Sotuvdagi mashinalar"),
@@ -201,19 +202,32 @@ async def _set_admin_commands(bot: Bot) -> None:
 
 
 async def _set_catalog_menu_button(bot: Bot) -> None:
-    """Chat pastidagi «Katalog» tugmasi — Telegram Mini App (faqat HTTPS manzil bilan)."""
-    if not settings.catalog_url.startswith("https://"):
-        if settings.catalog_url:
-            logger.warning("CATALOG_URL https emas — Mini App menyu tugmasi o'rnatilmadi: %s", settings.catalog_url)
-        return
+    """Chat pastidagi Mini App tugmasi: hamma uchun «🚗 Katalog», adminlarga — «🛠 Admin panel» (CRM).
+
+    Telegram menyu tugmasini har bir chat uchun alohida qo'yishga ruxsat beradi. Faqat HTTPS manzillar.
+    """
     from aiogram.types import MenuButtonWebApp, WebAppInfo
 
-    try:
-        await bot.set_chat_menu_button(
-            menu_button=MenuButtonWebApp(text="🚗 Katalog", web_app=WebAppInfo(url=settings.catalog_url))
-        )
-    except TelegramBadRequest as e:
-        logger.warning("Katalog menyu tugmasi o'rnatilmadi: %s", e)
+    for name, url in (("CATALOG_URL", settings.catalog_url), ("CRM_URL", settings.crm_url)):
+        if url and not url.startswith("https://"):
+            logger.warning("%s https emas — Mini App tugmasi o'rnatilmadi: %s", name, url)
+    if settings.catalog_url.startswith("https://"):
+        try:
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text="🚗 Katalog", web_app=WebAppInfo(url=settings.catalog_url))
+            )
+        except TelegramBadRequest as e:
+            logger.warning("Katalog menyu tugmasi o'rnatilmadi: %s", e)
+    if settings.crm_url.startswith("https://"):
+        for aid in settings.admin_telegram_ids:
+            try:
+                await bot.set_chat_menu_button(
+                    chat_id=aid,
+                    menu_button=MenuButtonWebApp(text="🛠 Admin panel", web_app=WebAppInfo(url=settings.crm_url)),
+                )
+            except TelegramBadRequest as e:
+                # Admin hali botga /start bosmagan bo'lsa — chat yo'q
+                logger.warning("Admin %s uchun panel tugmasi o'rnatilmadi: %s", aid, e)
 
 
 async def _run() -> None:

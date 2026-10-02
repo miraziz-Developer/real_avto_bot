@@ -11,7 +11,14 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InputMediaPhoto, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    Message,
+    WebAppInfo,
+)
 
 from bot.config import is_admin, settings
 from bot.db.cars_repo import CarRepository
@@ -292,3 +299,19 @@ async def cmd_stats(message: Message, command: CommandObject, cars: CarRepositor
     arg = (command.args or "").strip()
     days = int(arg) if arg.isdigit() and 1 <= int(arg) <= 365 else 30
     await message.answer(stats_html(await cars.stats(days=days)), parse_mode=ParseMode.HTML)
+
+
+@router.message(Command("panel"))
+async def cmd_panel(message: Message) -> None:
+    """Admin panel (CRM) ni bot ichida Mini App bo'lib ochish."""
+    if message.from_user is None or not is_admin(message.from_user.id):
+        return
+    if not settings.crm_url.startswith("https://"):
+        await message.answer("CRM_URL (https) sozlanmagan — .env ga qo'shing.")
+        return
+    await message.answer(
+        "🛠 Admin panel — mashinalar, mijozlar, statistika:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🛠 Panelni ochish", web_app=WebAppInfo(url=settings.crm_url))]]
+        ),
+    )
