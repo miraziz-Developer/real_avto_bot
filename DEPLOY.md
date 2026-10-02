@@ -163,3 +163,92 @@ docker compose build
 
 - **Mahalliy** ishlab chiqishda bot `DATABASE_URL` da `localhost` ishlatadi; Dockerda **`db`** hostname `docker-compose` tarmog‘ida DNS bo‘ladi.
 - **Webhook** ishlatilmaydi — bot process doimiy ishlashi kerak (systemd yoki Docker `restart: unless-stopped` allaqachon bor).
+
+---
+
+## 12. AI CRM yangilanishi (kanal kuzatuvchi, AI agent, katalog, Instagram)
+
+Bir martalik qadamlar — eski versiyadan yangisiga o'tishda **tartib bilan**.
+
+### 12.1 Zaxira nusxa (majburiy)
+```bash
+cd /opt/real_avto_bot
+docker compose exec -T db pg_dump -U postgres real_avto_konkurs | gzip > ~/backup_before_ai_crm_$(date +%F).sql.gz
+ls -lh ~/backup_before_ai_crm_*.sql.gz   # hajmi 0 emasligini tekshiring
+```
+
+### 12.2 DB parolini almashtirish
+Eski parol `docker-compose.yml` ichida edi va git tarixida qolgan — **almashtirish shart**.
+`POSTGRES_PASSWORD` faqat **yangi** bazani yaratishda ishlatiladi, mavjud bazada parolni qo'lda o'zgartiring:
+```bash
+NEW_PW="$(openssl rand -hex 24)"; echo "$NEW_PW"     # saqlab qo'ying
+docker compose exec -T db psql -U postgres -c "ALTER USER postgres WITH PASSWORD '$NEW_PW';"
+```
+Keyin shu parolni yozing:
+- ildiz `.env`: `POSTGRES_PASSWORD=...` va `DATABASE_URL=postgresql+asyncpg://postgres:...@db:5432/real_avto_konkurs`
+- `backend/.env`: `DATABASE_URL=postgresql://postgres:...@db:5432/real_avto_konkurs`
+
+### 12.3 Yangi `.env` sozlamalari (ildiz)
+| O'zgaruvchi | Nima uchun |
+|---|---|
+| `GROQ_API_KEY` | AI tahlil va savdo agenti (bo'sh bo'lsa oddiy rejim ishlaydi) |
+| `BUSINESS_NAME`, `BUSINESS_ADDRESS`, `BUSINESS_HOURS`, `REAL_AVTO_MAP_URL` | Agent va katalog javoblari |
+| `BOT_USERNAME`, `CATALOG_URL` | Katalog (Mini App uchun HTTPS) |
+| `LISTING_FREEZE_HOURS`, `WORK_HOUR_START/END`, `BUYOUT_REPLY_HOURS` | E'lon muzlatish va «Sotib olamiz» |
+| `INSTAGRAM_ENABLED`, `IG_*` | Instagram (Meta ruxsatidan keyin) |
+To'liq ro'yxat va izohlar: `.env.example`.
+
+### 12.4 Yangilash
+```bash
+git fetch && git checkout main && git pull
+docker compose build
+docker compose up -d
+docker compose logs -f bot backend catalog | head -100
+```
+Bot ishga tushganda yangi jadvallar (`cars`, `leads`, ...) va ustunlar avtomatik yaratiladi — qayta ishga tushirish xavfsiz.
+
+### 12.5 HTTPS (katalog Mini App va Instagram webhook uchun)
+Masalan Caddy (sertifikat avtomatik):
+```
+katalog.realavto.uz {
+    reverse_proxy 127.0.0.1:3002
+}
+crm.realavto.uz {
+    reverse_proxy 127.0.0.1:3000
+}
+hook.realavto.uz {
+    reverse_proxy /webhooks/instagram 127.0.0.1:8081
+}
+```
+CRM'ni tashqi internetga ochmaslik ham mumkin (faqat VPN / IP cheklovi) — u ichki panel.
+
+### 12.6 Telegram sozlamalari
+- [ ] Bot asosiy kanalda **admin** (postlarni o'qish va joylash)
+- [ ] Bot kanalning **muhokama guruhida admin** (kommentlarga javob)
+- [ ] `ADMIN_TELEGRAM_IDS` — lead va mashina kartalarini oladigan jamoa
+- [ ] (ixtiyoriy) Telegram Business: egasining akkauntida *Chatbotlar* → bot, **kontaktlarni chiqarib tashlang**
+
+### 12.7 Kanal tarixini import qilish
+Telegram Desktop → kanal → Export chat history (JSON, rasmlarsiz) → serverga `/opt/real_avto_bot/import/result.json`:
+```bash
+docker compose cp import/result.json bot:/app/result.json
+docker compose exec bot python -m scripts.import_channel_export /app/result.json --dry-run
+docker compose exec bot python -m scripts.import_channel_export /app/result.json --ai
+```
+
+### 12.8 Tekshiruv (smoke test)
+- [ ] Kanalga test post tashlang → adminlarga «🆕 Kanalda yangi mashina» kartasi keldi
+- [ ] Postni tahrirlab «SOTILDI» yozing → «🔴 sotildi» xabari
+- [ ] Botga boshqa akkauntdan «Cobalt bormi?» → bazadan javob; «menejer bilan gaplashmoqchiman» → lead kartasi
+- [ ] Lead kartasiga reply → javob mijozga bordi
+- [ ] Botda test e'lon → kartada «⏳ … da avtomatik chiqadi» va «💰 Sotib olamiz»
+- [ ] `/statistika`, CRM «Mashinalar» va «Mijozlar (AI)» sahifalari ochiladi
+- [ ] Katalog: `https://katalog…` ochiladi, rasmlar ko'rinadi, botda «🚗 Katalog» tugmasi bor
+
+### 12.9 Orqaga qaytarish
+```bash
+git checkout <oldingi-commit> && docker compose build && docker compose up -d
+# Ma'lumotni qaytarish kerak bo'lsa:
+gunzip -c ~/backup_before_ai_crm_YYYY-MM-DD.sql.gz | docker compose exec -T db psql -U postgres real_avto_konkurs
+```
+Yangi jadvallar eski kodga xalaqit bermaydi — faqat kodni qaytarish yetarli bo'lishi mumkin.
