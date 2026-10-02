@@ -188,10 +188,15 @@ async def on_channel_post_edited(message: Message, bot: Bot, cars: CarRepository
 
     parsed = await extract_car(text, ai=get_ai(), usd_rate_uzs=settings.usd_rate_uzs)
     old_price = car.price_usd
+    was_active = car.status == CarStatus.ACTIVE
     changes = await cars.apply_parsed(car, parsed, raw_text=text)
     if not changes:
         return
     await cars.session.commit()
+    if not was_active and car.status == CarStatus.ACTIVE:
+        # Tahrir mashinani to'liq qildi (tekshiruv → sotuvda) — «chiqsa xabar ber» egalariga
+        await notify_wishlist_matches_car(bot, CrmRepository(cars.session), cars, car)
+        await cars.session.commit()
     if "price_usd" in changes and old_price:
         await notify_admins_text(
             bot,

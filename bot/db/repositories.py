@@ -313,7 +313,26 @@ class CrmRepository:
                 ListingSubmission.status == ListingSubmissionStatus.PENDING,
                 ListingSubmission.frozen_until.is_not(None),
                 ListingSubmission.frozen_until <= now,
-                or_(ListingSubmission.buyout_status.is_(None), ListingSubmission.buyout_status == "offered"),
+                # «expired» ham — kanal xatosidan keyin qayta urinish uchun
+                or_(
+                    ListingSubmission.buyout_status.is_(None),
+                    ListingSubmission.buyout_status.in_(("offered", "expired")),
+                ),
+            )
+            .order_by(ListingSubmission.frozen_until.asc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def listings_with_stale_deals(self, *, now: datetime, limit: int = 10) -> list[ListingSubmission]:
+        """Sotuvchi rozi bo'lgan / muhokamadagi, lekin jamoa hal qilmagan kelishuvlar (eslatma uchun)."""
+        stmt = (
+            select(ListingSubmission)
+            .where(
+                ListingSubmission.status == ListingSubmissionStatus.PENDING,
+                ListingSubmission.buyout_status.in_(("accepted", "negotiating")),
+                ListingSubmission.frozen_until.is_not(None),
+                ListingSubmission.frozen_until <= now,
             )
             .order_by(ListingSubmission.frozen_until.asc())
             .limit(limit)

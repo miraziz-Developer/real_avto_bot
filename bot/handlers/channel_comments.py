@@ -23,6 +23,7 @@ from bot.db.models import Car, CarStatus
 from bot.handlers.channel_watch import is_main_channel
 from bot.services.car_cards import notify_admins_text
 from bot.services.car_parser import normalize_text
+from bot.utils.currency import fmt_price
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +67,6 @@ def _cooldown_ok(user_id: int, post_id: int) -> bool:
     return True
 
 
-def _fmt_usd(n: int | None) -> str:
-    return f"${n:,}".replace(",", " ") if n else ""
-
 
 def comment_reply_text(car: Car | None, first_name: str | None) -> str:
     hello = f"Assalomu alaykum{', ' + html.escape(first_name) if first_name else ''}!"
@@ -79,7 +77,7 @@ def comment_reply_text(car: Car | None, first_name: str | None) -> str:
         lines = [f"{hello} <b>{title}</b> hali sotuvda ✅"]
         facts = []
         if car.price_usd:
-            facts.append(f"💰 <b>{_fmt_usd(car.price_usd)}</b>")
+            facts.append(f"💰 <b>{fmt_price(car.price_usd)}</b>")
         if car.mileage_km is not None:
             facts.append(f"🛣 {car.mileage_km:,} km".replace(",", " "))
         if facts:

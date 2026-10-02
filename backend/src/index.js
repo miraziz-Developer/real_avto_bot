@@ -9,7 +9,9 @@ import { pool } from "./db.js";
 
 const app = express();
 app.disable("x-powered-by");
-app.set("trust proxy", 1);
+// Caddy/nginx → catalog nginx → backend: barcha ichki (loopback / docker) hoplarga ishonamiz,
+// shunda req.ip haqiqiy mijoz IP si bo'ladi (ochiq API rate-limit har mijozga alohida)
+app.set("trust proxy", process.env.TRUST_PROXY || "loopback, linklocal, uniquelocal");
 app.use(createCorsMiddleware());
 app.use(express.json({ limit: "512kb" }));
 app.use(router);

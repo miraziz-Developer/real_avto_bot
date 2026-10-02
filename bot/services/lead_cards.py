@@ -13,6 +13,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from bot.config import settings
 from bot.db.leads_repo import LeadRepository
 from bot.db.models import AgentMessage, Car, Lead, LeadStatus
+from bot.utils.currency import fmt_price
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,6 @@ def lead_score(lead: Lead) -> int:
     return min(score, 100)
 
 
-def _fmt_usd(n: int | None) -> str:
-    return f"${n:,}".replace(",", " ") if n else "—"
-
 
 def lead_card_html(
     lead: Lead,
@@ -60,19 +58,24 @@ def lead_card_html(
         header = "🔥 <b>ISSIQ MIJOZ</b>" if score >= HOT_SCORE else "🔔 <b>Mijoz menejer bilan gaplashmoqchi</b>"
     lines = [header, ""]
     name = e(lead.name or "Mijoz")
-    who = f'👤 <a href="tg://user?id={lead.telegram_id}">{name}</a>'
-    if lead.username:
-        who += f" · @{e(lead.username)}"
+    if lead.channel == "instagram":
+        # Instagram mijozi: telegram_id ustunida IGSID — Telegram havolasi emas, Instagram profili
+        url = f"https://instagram.com/{lead.username}" if lead.username else None
+        who = f'👤 <a href="{e(url)}">{name}</a> · Instagram' if url else f"👤 {name} · Instagram"
+    else:
+        who = f'👤 <a href="tg://user?id={lead.telegram_id}">{name}</a>'
+        if lead.username:
+            who += f" · @{e(lead.username)}"
     if lead.phone:
         who += f" · <code>{e(lead.phone)}</code>"
     lines.append(who)
     if car is not None:
-        lines.append(f"🚗 {e(car.title)} — {_fmt_usd(car.price_usd)}  <code>#{car.id}</code>")
+        lines.append(f"🚗 {e(car.title)} — {fmt_price(car.price_usd, empty='—')}  <code>#{car.id}</code>")
     if lead.wants and car is None:
         lines.append(f"🔎 Qidiryapti: {e(lead.wants[:200])}")
     money = []
     if lead.budget_usd:
-        money.append(f"byudjet {_fmt_usd(lead.budget_usd)}")
+        money.append(f"byudjet {fmt_price(lead.budget_usd, empty='—')}")
     if lead.payment_method:
         money.append(e(lead.payment_method))
     if money:

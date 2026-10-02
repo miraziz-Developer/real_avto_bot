@@ -269,3 +269,8 @@ def sale_followup_retry_hint(s: Settings = settings) -> str:
         m = max(1, s.sale_followup_interval_minutes)
         return f"{m} daqiqadan so‘ng"
     return f"{max(1, s.sale_followup_interval_hours)} soatdan so‘ng"
+
+
+def is_admin(uid: int | None) -> bool:
+    """Admin (jamoa a'zosi) — ADMIN_TELEGRAM_IDS dagi foydalanuvchi."""
+    return uid is not None and uid in settings.admin_telegram_ids

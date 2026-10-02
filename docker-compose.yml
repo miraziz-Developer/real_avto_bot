@@ -44,10 +44,19 @@ services:
 
   backend:
     build: ./backend
-    # Ildiz .env: BOT_TOKEN (katalog rasmlari), SALES_PHONE, BUSINESS_*, BOT_USERNAME; backend/.env undan ustun
     env_file:
-      - ./.env
       - ./backend/.env
+    # Katalog uchun ildiz .env dan faqat kerakli qiymatlar (Groq/Instagram kalitlari backend'ga berilmaydi)
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      BOT_USERNAME: ${BOT_USERNAME:-}
+      SALES_PHONE: ${SALES_PHONE:-}
+      BUSINESS_NAME: ${BUSINESS_NAME:-}
+      BUSINESS_ADDRESS: ${BUSINESS_ADDRESS:-}
+      BUSINESS_HOURS: ${BUSINESS_HOURS:-}
+      REAL_AVTO_MAP_URL: ${REAL_AVTO_MAP_URL:-}
+      USD_RATE_UZS: ${USD_RATE_UZS:-}
+      CAR_STALE_DAYS: ${CAR_STALE_DAYS:-14}
     init: true
     depends_on:
       db:

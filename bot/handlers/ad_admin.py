@@ -19,7 +19,7 @@ from aiogram.types import (
 
 from aiogram.exceptions import TelegramBadRequest
 
-from bot.config import settings
+from bot.config import is_admin
 from bot.db.cars_repo import CarRepository
 from bot.db.models import ListingSubmissionStatus
 from bot.db.repositories import CrmRepository
@@ -32,15 +32,10 @@ class AdAdminRejectStates(StatesGroup):
     waiting_reason = State()
 
 
-def _is_admin(uid: int | None) -> bool:
-    if uid is None:
-        return False
-    return uid in settings.admin_telegram_ids
-
 
 @router.callback_query(F.data.startswith("lad_a:"))
 async def listing_approve(cq: CallbackQuery, crm: CrmRepository, cars: CarRepository) -> None:
-    if cq.from_user is None or not _is_admin(cq.from_user.id):
+    if cq.from_user is None or not is_admin(cq.from_user.id):
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
     if cq.message is None:
@@ -89,7 +84,7 @@ async def listing_approve(cq: CallbackQuery, crm: CrmRepository, cars: CarReposi
 
 @router.callback_query(F.data.startswith("lad_r:"))
 async def listing_reject_start(cq: CallbackQuery, state: FSMContext, crm: CrmRepository) -> None:
-    if cq.from_user is None or not _is_admin(cq.from_user.id):
+    if cq.from_user is None or not is_admin(cq.from_user.id):
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
     if cq.message is None:
@@ -123,7 +118,7 @@ async def listing_reject_start(cq: CallbackQuery, state: FSMContext, crm: CrmRep
 
 @router.message(Command("cancel"), StateFilter(AdAdminRejectStates.waiting_reason))
 async def listing_reject_cancel(message: Message, state: FSMContext) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         await state.clear()
         return
     await state.clear()
@@ -139,7 +134,7 @@ async def listing_reject_cancel(message: Message, state: FSMContext) -> None:
     ~F.text.startswith("/"),
 )
 async def listing_reject_reason(message: Message, state: FSMContext, crm: CrmRepository) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         await state.clear()
         return
 
@@ -201,7 +196,7 @@ async def listing_reject_reason(message: Message, state: FSMContext, crm: CrmRep
 
 @router.message(StateFilter(AdAdminRejectStates.waiting_reason))
 async def listing_reject_need_text(message: Message) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         return
     await message.answer(
         "Rad sababini oddiy <b>matn</b> bilan yozing (kamida 4 belgi). "

@@ -12,7 +12,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 
-from bot.config import settings
+from bot.config import is_admin
 from bot.db.cars_repo import CarRepository
 from bot.db.leads_repo import LeadRepository
 from bot.db.models import Lead, LeadStatus
@@ -23,9 +23,6 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="lead_admin")
 
-
-def _is_admin(uid: int | None) -> bool:
-    return uid is not None and uid in settings.admin_telegram_ids
 
 
 async def _refresh_card(cq: CallbackQuery, lead: Lead, leads: LeadRepository, cars: CarRepository) -> None:
@@ -87,7 +84,7 @@ async def send_admin_message_to_customer(bot: Bot, lead: Lead, message: Message)
 
 @router.callback_query(F.data.startswith("lead:"))
 async def lead_action(cq: CallbackQuery, bot: Bot, leads: LeadRepository, cars: CarRepository) -> None:
-    if cq.from_user is None or not _is_admin(cq.from_user.id):
+    if cq.from_user is None or not is_admin(cq.from_user.id):
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
     parts = (cq.data or "").split(":")
@@ -112,6 +109,12 @@ async def lead_action(cq: CallbackQuery, bot: Bot, leads: LeadRepository, cars: 
             for i in range(0, len(text), 4000):
                 m = await cq.message.answer(text[i : i + 4000], parse_mode=ParseMode.HTML)
                 await leads.add_relay(lead, m.chat.id, m.message_id)
+        return
+
+    if lead.status in (LeadStatus.WON, LeadStatus.LOST) and action in ("take", "ai", "won", "lost"):
+        # Eski karta nusxasi — yopilgan leadni qayta ochmaymiz
+        await cq.answer(f"Bu lead allaqachon yopilgan: {LEAD_STATUS_LABELS[lead.status]}", show_alert=True)
+        await _refresh_card(cq, lead, leads, cars)
         return
 
     admin_name = cq.from_user.first_name or "Menejer"
@@ -146,7 +149,7 @@ async def lead_action(cq: CallbackQuery, bot: Bot, leads: LeadRepository, cars: 
 @router.message(F.chat.type == "private", F.reply_to_message)
 async def admin_reply_relay(message: Message, bot: Bot, leads: LeadRepository) -> None:
     """Admin lead kartasi yoki mijoz xabariga reply qilsa — javob mijozga yuboriladi."""
-    if message.from_user is None or not _is_admin(message.from_user.id) or message.reply_to_message is None:
+    if message.from_user is None or not is_admin(message.from_user.id) or message.reply_to_message is None:
         raise SkipHandler()
     if (message.text or "").startswith("/"):
         raise SkipHandler()
@@ -171,7 +174,7 @@ async def admin_reply_relay(message: Message, bot: Bot, leads: LeadRepository) -
 
 @router.message(F.chat.type == "private", Command("leadlar"))
 async def cmd_open_leads(message: Message, leads: LeadRepository) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         return
     rows = await leads.list_open(limit=30)
     if not rows:
@@ -191,7 +194,7 @@ async def cmd_open_leads(message: Message, leads: LeadRepository) -> None:
 
 @router.message(F.chat.type == "private", Command("lead"))
 async def cmd_lead(message: Message, command: CommandObject, bot: Bot, leads: LeadRepository, cars: CarRepository) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         return
     arg = (command.args or "").strip().lstrip("#")
     lead = await leads.get(int(arg)) if arg.isdigit() else None

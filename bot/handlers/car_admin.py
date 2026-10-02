@@ -13,7 +13,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InputMediaPhoto, Message
 
-from bot.config import settings
+from bot.config import is_admin, settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import Car, CarStatus
 from bot.services.car_cards import STATUS_LABELS, car_admin_kb, car_can_be_posted, car_card_html, car_channel_caption
@@ -46,9 +46,6 @@ class CarEditStates(StatesGroup):
     waiting_text = State()
 
 
-def _is_admin(uid: int | None) -> bool:
-    return uid is not None and uid in settings.admin_telegram_ids
-
 
 def _parse_cb(data: str | None) -> tuple[str, int] | None:
     parts = (data or "").split(":")
@@ -78,7 +75,7 @@ async def _refresh_card(cq: CallbackQuery, car: Car, header: str | None = None) 
 
 @router.callback_query(F.data.startswith("car:"))
 async def car_action(cq: CallbackQuery, state: FSMContext, cars: CarRepository, crm: CrmRepository) -> None:
-    if cq.from_user is None or not _is_admin(cq.from_user.id):
+    if cq.from_user is None or not is_admin(cq.from_user.id):
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
     parsed = _parse_cb(cq.data)
@@ -159,7 +156,7 @@ async def car_edit_cancel(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(CarEditStates.waiting_text), F.text)
 async def car_edit_apply(message: Message, state: FSMContext, cars: CarRepository, crm: CrmRepository) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         await state.clear()
         return
     data = await state.get_data()
@@ -195,7 +192,7 @@ async def car_edit_apply(message: Message, state: FSMContext, cars: CarRepositor
 
 @router.message(Command("mashina"))
 async def cmd_car(message: Message, command: CommandObject, cars: CarRepository) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         return
     arg = (command.args or "").strip().lstrip("#")
     if not arg.isdigit():
@@ -212,7 +209,7 @@ async def cmd_car(message: Message, command: CommandObject, cars: CarRepository)
 
 @router.message(Command("sotildi"))
 async def cmd_sold(message: Message, command: CommandObject, cars: CarRepository) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         return
     parts = (command.args or "").split(maxsplit=1)
     if not parts or not parts[0].lstrip("#").isdigit():
@@ -254,14 +251,14 @@ async def _send_list(message: Message, cars: CarRepository, status: str, title: 
 
 @router.message(Command("tekshiruv"))
 async def cmd_review_list(message: Message, cars: CarRepository) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         return
     await _send_list(message, cars, CarStatus.REVIEW, "🟡 Tekshiruv kutayotgan postlar")
 
 
 @router.message(Command("sotuvda"))
 async def cmd_active_list(message: Message, cars: CarRepository) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         return
     await _send_list(message, cars, CarStatus.ACTIVE, "🟢 Sotuvdagi mashinalar")
 
@@ -290,7 +287,7 @@ def stats_html(s: dict) -> str:
 
 @router.message(Command("statistika"))
 async def cmd_stats(message: Message, command: CommandObject, cars: CarRepository) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         return
     arg = (command.args or "").strip()
     days = int(arg) if arg.isdigit() and 1 <= int(arg) <= 365 else 30

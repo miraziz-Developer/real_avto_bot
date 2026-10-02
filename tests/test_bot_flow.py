@@ -522,3 +522,92 @@ async def test_catalog_deep_links_start_sell_and_alert_flows(env):
     await dp.feed_update(bot, _text_update(CUSTOMER_ID, "/start alert"))
     msg = session.sent(SendMessage, CUSTOMER_ID)[-1]
     assert _buttons(msg.reply_markup) == ["wishlist_start"]
+
+
+# --- Review tuzatishlari uchun regression testlar ---------------------------------------------
+
+
+async def test_expired_offer_is_retried_and_stale_deals_reminded(env):
+    from bot.services.work_hours import TASHKENT
+    from bot.workers.listing_freeze import publish_due_once, remind_stale_deals_once
+
+    dp, bot, session, factory, _ = env
+    day = datetime.now(TASHKENT).replace(hour=11, minute=0, second=0, microsecond=0)
+    # Avvalgi urinishda kanal xatosi bo'lgan (expired) e'lon — qayta urinishda chiqishi kerak
+    expired = await _pending_listing(factory, frozen_until=day - timedelta(minutes=1), buyout_status="expired")
+    accepted = await _pending_listing(factory, frozen_until=day - timedelta(minutes=1), buyout_status="accepted")
+    assert await publish_due_once(bot, factory, now=day) == 1
+    async with factory() as s:
+        assert (await s.get(ListingSubmission, expired)).status == ListingSubmissionStatus.APPROVED
+        assert (await s.get(ListingSubmission, accepted)).status == ListingSubmissionStatus.PENDING  # bizga sotmoqchi
+
+    # Rozi bo'lgan, lekin hal qilinmagan kelishuv — adminlarga eslatma, kuniga bir marta
+    assert await remind_stale_deals_once(bot, factory, now=day) == 1
+    reminder = session.sent(SendMessage, ADMIN_ID)[-1]
+    assert "Hal qilinmagan kelishuv" in reminder.text and f"lbo_done:{accepted}" in _buttons(reminder.reply_markup)
+    assert await remind_stale_deals_once(bot, factory, now=day) == 0
+
+
+async def test_closed_lead_card_buttons_do_not_reopen(env):
+    dp, bot, session, factory, _ = env
+    await dp.feed_update(bot, _text_update(CUSTOMER_ID, "kobalt bormi?"))
+    async with factory() as s:
+        lead = (await s.execute(select(Lead))).scalar_one()
+        lead.status = LeadStatus.WON
+        await s.commit()
+        lead_id = lead.id
+    await dp.feed_update(bot, _callback_update(ADMIN_ID, f"lead:take:{lead_id}"))
+    async with factory() as s:
+        lead = await s.get(Lead, lead_id)
+        assert lead.status == LeadStatus.WON and not lead.human_mode
+
+
+async def test_channel_edit_completing_car_notifies_saved_searches(env):
+    dp, bot, session, factory, _ = env
+    async with factory() as s:
+        crm = CrmRepository(s)
+        client = await crm.get_or_create_client(telegram_id=CUSTOMER_ID, full_name="Aziz")
+        await crm.create_wishlist(
+            client_id=client.id, brand="Chevrolet", model="Spark", year_min=2015, year_max=2030,
+            budget_min=None, budget_max=9000, condition_key=None,
+        )
+        await s.commit()
+    post_id = next(_ids)
+
+    def channel_msg(text_: str) -> Message:
+        return Message(message_id=post_id, date=datetime.now(timezone.utc), chat=CHANNEL_CHAT, text=text_)
+
+    await dp.feed_update(bot, Update(update_id=next(_ids), channel_post=channel_msg("Spark 2021 keldi, 31000 km")))
+    async with factory() as s:
+        car = (await s.execute(select(Car).where(Car.model == "Spark"))).scalar_one()
+        assert car.status == CarStatus.REVIEW  # narx yo'q
+    await dp.feed_update(
+        bot, Update(update_id=next(_ids), edited_channel_post=channel_msg("Spark 2021 keldi, 31000 km, narxi 8500$"))
+    )
+    async with factory() as s:
+        car = (await s.execute(select(Car).where(Car.model == "Spark"))).scalar_one()
+        assert car.status == CarStatus.ACTIVE and car.price_usd == 8500
+    assert any("Siz qidirgan mashina" in m.text for m in session.sent(SendMessage, CUSTOMER_ID))
+
+
+async def test_published_bot_listing_is_not_renotified_via_car(env):
+    from bot.services.wishlist_notify import notify_wishlist_matches_car
+
+    dp, bot, session, factory, _ = env
+    lid = await _pending_listing(factory)
+    await _offer(dp, bot, lid, "8500")
+    await dp.feed_update(bot, _callback_update(SELLER_ID, f"lbo:n:{lid}"))  # rad → e'lon kanalga
+    async with factory() as s:
+        car = (await s.execute(select(Car).where(Car.listing_submission_id == lid))).scalar_one()
+        cars = CarRepository(s)
+        assert await cars.has_event(car, "wishlist_notified")
+        assert await notify_wishlist_matches_car(bot, CrmRepository(s), cars, car) == 0
+
+
+def test_instagram_lead_card_links_to_instagram_not_telegram():
+    from bot.db.models import Lead as LeadModel
+    from bot.services.lead_cards import lead_card_html
+
+    lead = LeadModel(id=7, telegram_id=17841400000000001, channel="instagram", username="aziz_ig", name="Aziz", status="handed_off")
+    html_text = lead_card_html(lead)
+    assert "https://instagram.com/aziz_ig" in html_text and "tg://user" not in html_text

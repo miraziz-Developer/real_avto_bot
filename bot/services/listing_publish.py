@@ -116,12 +116,15 @@ async def publish_listing(
     # Savepoint: xato bo'lsa ham e'lon tasdig'i (shu sessiyada) bekor bo'lmaydi
     try:
         async with cars.session.begin_nested():
-            await car_from_approved_listing(
+            car = await car_from_approved_listing(
                 cars,
                 updated,
                 channel_chat_id=msgs[0].chat.id if msgs else None,
                 channel_message_ids=[m.message_id for m in msgs],
             )
+            # Wishlist egalari pastda (e'lon yo'li bilan) xabar oladi — mashina orqali qayta yuborilmasin
+            if not await cars.has_event(car, "wishlist_notified"):
+                await cars.add_event(car, "wishlist_notified", {"via": "listing"})
     except Exception:
         logger.exception("Tasdiqlangan e'lon #%s mashinalar bazasiga yozilmadi", lid)
 

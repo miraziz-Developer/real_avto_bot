@@ -20,22 +20,27 @@ from bot.db.repositories import CrmRepository
 from bot.services.car_cards import notify_admins_text
 from bot.services.listing_publish import PublishError, publish_listing
 from bot.services.work_hours import is_work_time
+from bot.utils.currency import fmt_usd
 
 logger = logging.getLogger(__name__)
 
 CHECK_EVERY_SECONDS = 60
 RETRY_AFTER_ERROR = timedelta(hours=1)
+DEAL_REMIND_EVERY = timedelta(hours=24)
 
 
 async def listing_freeze_loop(bot: Bot, session_factory: async_sessionmaker[AsyncSession]) -> None:
-    if settings.listing_freeze_hours <= 0:
-        logger.info("E'lon muzlatish o'chirilgan (LISTING_FREEZE_HOURS=0) — avtomatik joylash yo'q")
-        return
-    logger.info("E'lon muzlatish worker: %s ish soati", settings.listing_freeze_hours)
+    auto_publish = settings.listing_freeze_hours > 0
+    if auto_publish:
+        logger.info("E'lon muzlatish worker: %s ish soati", settings.listing_freeze_hours)
+    else:
+        logger.info("E'lon muzlatish o'chirilgan (LISTING_FREEZE_HOURS=0) — faqat kelishuv eslatmalari")
     try:
         while True:
             try:
-                await publish_due_once(bot, session_factory)
+                if auto_publish:
+                    await publish_due_once(bot, session_factory)
+                await remind_stale_deals_once(bot, session_factory)
             except Exception:
                 logger.exception("Avtomatik joylash xatosi")
             await asyncio.sleep(CHECK_EVERY_SECONDS)
@@ -79,3 +84,35 @@ async def publish_due_once(
                 f"avtomatik kanalga chiqdi ({why}).",
             )
     return published
+
+
+async def remind_stale_deals_once(
+    bot: Bot,
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Sotuvchi rozi bo'lgan/muhokamadagi kelishuv uzoq hal qilinmasa — adminlarga har kuni eslatma."""
+    from bot.handlers.buyout import deal_kb
+
+    now = now or datetime.now(timezone.utc)
+    if not is_work_time(now, start_hour=settings.work_hour_start, end_hour=settings.work_hour_end):
+        return 0
+    async with session_factory() as session:
+        crm = CrmRepository(session)
+        rows = await crm.listings_with_stale_deals(now=now)
+        for sub in rows:
+            sub.frozen_until = now + DEAL_REMIND_EVERY
+            await session.commit()
+            state = "rozi bo'lgan" if sub.buyout_status == "accepted" else "narxni muhokama qilmoqchi bo'lgan"
+            text = (
+                f"⏰ <b>Hal qilinmagan kelishuv</b>: #{sub.id} {html.escape(f'{sub.brand} {sub.model} {sub.year}')} — "
+                f"sotuvchi {state} (taklif {fmt_usd(sub.buyout_price_usd or 0)}). "
+                "Sotib oldikmi yoki e'lonni kanalga chiqaraylikmi?"
+            )
+            for aid in settings.admin_telegram_ids:
+                try:
+                    await bot.send_message(aid, text, parse_mode="HTML", reply_markup=deal_kb(sub.id))
+                except Exception:
+                    logger.warning("Kelishuv eslatmasi admin %s ga yuborilmadi", aid)
+        return len(rows)

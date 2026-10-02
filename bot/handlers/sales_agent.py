@@ -34,6 +34,7 @@ from bot.db.leads_repo import LeadRepository
 from bot.db.models import CarStatus, Lead
 from bot.db.repositories import CrmRepository
 from bot.services.lead_cards import lead_score, send_lead_card
+from bot.utils.currency import fmt_price
 
 logger = logging.getLogger(__name__)
 
@@ -289,9 +290,6 @@ async def on_agent_start(cq: CallbackQuery) -> None:
         )
 
 
-def _price(n: int | None) -> str:
-    return f"${n:,}".replace(",", " ") if n else ""
-
 
 async def open_car_entry(
     message: Message,
@@ -312,7 +310,7 @@ async def open_car_entry(
         lines = ["Afsuski, bu mashina endi sotuvda yo'q."]
         if similar:
             lines.append("O'xshash variantlar:")
-            lines.extend(f"• {c.title} {_price(c.price_usd)}".rstrip() for c in similar)
+            lines.extend(f"• {c.title} {fmt_price(c.price_usd)}".rstrip() for c in similar)
         lines.append("Qanday mashina qidiryapsiz? Yozing, yordam beraman.")
         text = "\n".join(lines)
         await leads.add_message(lead, "assistant", text)
@@ -322,7 +320,7 @@ async def open_car_entry(
     d = car_for_agent(car)
     parts = [f"🚗 {car.title}"]
     if car.price_usd:
-        parts.append(f"💰 {_price(car.price_usd)}")
+        parts.append(f"💰 {fmt_price(car.price_usd)}")
     if car.mileage_km is not None:
         parts.append(f"🛣 {car.mileage_km:,} km".replace(",", " "))
     specs = " · ".join(str(d[k]) for k in ("transmission", "fuel", "color", "position") if k in d)

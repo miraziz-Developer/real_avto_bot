@@ -41,6 +41,8 @@ function interest(l) {
 }
 
 function tgLink(l) {
+  // Instagram mijozida telegram_id ustunida IGSID — Instagram profiliga havola
+  if (l.channel === "instagram") return l.username ? `https://instagram.com/${l.username}` : null;
   return l.username ? `https://t.me/${l.username}` : `tg://user?id=${l.telegram_id}`;
 }
 
@@ -220,8 +222,12 @@ function LeadSheet({ id, api, canEdit, onClose, onChanged }) {
             <>
               <div className="sectionTitle">Mijoz</div>
               <dl className="kv">
-                <dt>Telegram</dt>
-                <dd><a href={tgLink(l)} target="_blank" rel="noreferrer">{l.username ? `@${l.username}` : `id ${l.telegram_id}`}</a></dd>
+                <dt>{l.channel === "instagram" ? "Instagram" : "Telegram"}</dt>
+                <dd>
+                  {tgLink(l) ? (
+                    <a href={tgLink(l)} target="_blank" rel="noreferrer">{l.username ? `@${l.username}` : `id ${l.telegram_id}`}</a>
+                  ) : "—"}
+                </dd>
                 <dt>Telefon</dt><dd>{l.phone ? <a href={`tel:${l.phone}`}>{l.phone}</a> : "—"}</dd>
                 <dt>Qiziqish</dt><dd>{interest(l)}</dd>
                 <dt>Byudjet / to'lov</dt><dd>{usd(l.budget_usd)} · {l.payment_method || "—"}</dd>

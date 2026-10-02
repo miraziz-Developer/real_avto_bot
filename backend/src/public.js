@@ -32,13 +32,16 @@ publicRouter.use((req, res, next) => {
 });
 
 // --- Narx bahosi («Real narx»): o'z bazamizdagi o'xshash mashinalar medianasi ------------------
-const INSIGHT_SQL = `
-  select percentile_cont(0.5) within group (order by price_usd) as median, count(*)::int as n
-  from cars
-  where lower(model) = lower($1) and year between $2 - 1 and $2 + 1
-    and price_usd is not null and id <> $3
-    and status in ('active','reserved','sold')
-    and coalesce(sold_at, published_at, created_at) > now() - interval '365 days'`;
+// Bir so'rovda butun sahifa uchun: har mashina → o'xshashlar (model, yil ±1, 12 oy) medianasi
+const INSIGHTS_SQL = `
+  select t.id, percentile_cont(0.5) within group (order by c.price_usd) as median, count(c.id)::int as n
+  from unnest($1::int[], $2::text[], $3::int[]) as t(id, model, year)
+  left join cars c
+    on lower(c.model) = lower(t.model) and c.year between t.year - 1 and t.year + 1
+   and c.price_usd is not null and c.id <> t.id
+   and c.status in ('active','reserved','sold')
+   and coalesce(c.sold_at, c.published_at, c.created_at) > now() - interval '365 days'
+  group by t.id`;
 
 const MIN_COMPARABLES = 3;
 
@@ -51,11 +54,23 @@ export function priceInsight(price, median, n) {
   return null;
 }
 
-async function insightFor(car) {
-  if (!car.model || !car.year || !car.price_usd) return null;
-  const r = await pool.query(INSIGHT_SQL, [car.model, car.year, car.id]);
-  const median = r.rows[0]?.median == null ? null : Number(r.rows[0].median);
-  return priceInsight(Number(car.price_usd), median, r.rows[0]?.n || 0);
+/** rows → Map(id → insight|null); faqat model, yil va narxi bor mashinalar hisoblanadi. */
+async function insightsFor(rows) {
+  const eligible = rows.filter((c) => c.model && c.year && c.price_usd);
+  const out = new Map();
+  if (!eligible.length) return out;
+  const r = await pool.query(INSIGHTS_SQL, [
+    eligible.map((c) => c.id),
+    eligible.map((c) => c.model),
+    eligible.map((c) => c.year),
+  ]);
+  const byId = new Map(r.rows.map((x) => [x.id, x]));
+  for (const c of eligible) {
+    const s = byId.get(c.id);
+    const median = s?.median == null ? null : Number(s.median);
+    out.set(c.id, priceInsight(Number(c.price_usd), median, s?.n || 0));
+  }
+  return out;
 }
 
 const PUBLIC_COLUMNS = `id, status, brand, model, year, mileage_km, price_usd, color, transmission, fuel,
@@ -157,7 +172,8 @@ publicRouter.get("/cars", asyncHandler(async (req, res) => {
        limit $${args.length - 1} offset $${args.length}`,
       args,
     );
-    const items = await Promise.all(r.rows.map(async (row) => ({ ...publicCar(row), insight: await insightFor(row) })));
+    const insights = await insightsFor(r.rows);
+    const items = r.rows.map((row) => ({ ...publicCar(row), insight: insights.get(row.id) ?? null }));
     res.set("Cache-Control", "public, max-age=30");
     res.json({ items, total, page, page_size: PAGE_SIZE });
   } catch {
@@ -180,7 +196,8 @@ publicRouter.get("/cars/:id", asyncHandler(async (req, res) => {
     [OFFERABLE, id, row.model || "", Number(row.price_usd || 0)],
   );
   res.set("Cache-Control", "public, max-age=30");
-  res.json({ car: { ...publicCar(row), insight: await insightFor(row) }, similar: similar.rows.map(publicCar) });
+  const insights = await insightsFor([row]);
+  res.json({ car: { ...publicCar(row), insight: insights.get(row.id) ?? null }, similar: similar.rows.map(publicCar) });
 }));
 
 // --- Rasm proksi: Telegram file_id → rasm (bot tokeni brauzerga hech qachon chiqmaydi) -----------

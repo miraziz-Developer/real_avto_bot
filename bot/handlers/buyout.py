@@ -22,7 +22,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from bot.config import settings
+from bot.config import is_admin, settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import CarSource, CarStatus, ListingSubmission, ListingSubmissionStatus
 from bot.db.repositories import CrmRepository
@@ -41,9 +41,6 @@ BOUGHT_REASON = "Real Avto sotib oldi"
 class BuyoutStates(StatesGroup):
     waiting_price = State()
 
-
-def _is_admin(uid: int | None) -> bool:
-    return uid is not None and uid in settings.admin_telegram_ids
 
 
 def _lid(data: str | None) -> int | None:
@@ -85,7 +82,7 @@ def _seller_contact_html(sub: ListingSubmission) -> str:
 
 @router.callback_query(F.data.startswith("lad_b:"))
 async def buyout_start(cq: CallbackQuery, state: FSMContext, crm: CrmRepository) -> None:
-    if cq.from_user is None or not _is_admin(cq.from_user.id):
+    if cq.from_user is None or not is_admin(cq.from_user.id):
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
     lid = _lid(cq.data)
@@ -116,7 +113,7 @@ async def buyout_cancel(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(BuyoutStates.waiting_price), F.text)
 async def buyout_price(message: Message, state: FSMContext, bot: Bot, crm: CrmRepository) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         await state.clear()
         return
     price = parse_price_usd(f"narx {message.text}", settings.usd_rate_uzs)
@@ -192,7 +189,8 @@ async def seller_answer(cq: CallbackQuery, bot: Bot, crm: CrmRepository, cars: C
 
     if action in ("y", "t"):
         sub.buyout_status = "accepted" if action == "y" else "negotiating"
-        sub.frozen_until = None
+        # Avtomatik joylanmaydi (sotuvchi bizga sotmoqchi), lekin shu muddatda hal qilinmasa — adminlarga eslatma
+        sub.frozen_until = datetime.now(timezone.utc) + timedelta(hours=max(1, settings.buyout_reply_hours))
         await crm.session.commit()
         if cq.message:
             await cq.message.answer("Rahmat! Menejerimiz tez orada siz bilan bog'lanadi ✅", parse_mode=None)
@@ -220,7 +218,7 @@ async def seller_answer(cq: CallbackQuery, bot: Bot, crm: CrmRepository, cars: C
 
 @router.callback_query(F.data.startswith("lbo_pub:"))
 async def deal_publish(cq: CallbackQuery, bot: Bot, crm: CrmRepository, cars: CarRepository) -> None:
-    if cq.from_user is None or not _is_admin(cq.from_user.id):
+    if cq.from_user is None or not is_admin(cq.from_user.id):
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
     sub = await crm.get_listing_submission(_lid(cq.data) or 0)
@@ -244,7 +242,7 @@ async def deal_publish(cq: CallbackQuery, bot: Bot, crm: CrmRepository, cars: Ca
 
 @router.callback_query(F.data.startswith("lbo_done:"))
 async def deal_bought(cq: CallbackQuery, crm: CrmRepository, cars: CarRepository) -> None:
-    if cq.from_user is None or not _is_admin(cq.from_user.id):
+    if cq.from_user is None or not is_admin(cq.from_user.id):
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
     sub = await crm.get_listing_submission(_lid(cq.data) or 0)

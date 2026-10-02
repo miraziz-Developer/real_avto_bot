@@ -7,8 +7,10 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from bot.agent.tools import AgentContext
 from bot.config import settings
 from bot.services.car_parser import parse_car_text
+from bot.utils.currency import fmt_price
 
 HANDOFF_CB = "agent:handoff"
+NO_PRICE = "narx so'rang"
 
 
 def fallback_kb() -> InlineKeyboardMarkup:
@@ -19,9 +21,6 @@ def fallback_kb() -> InlineKeyboardMarkup:
         ]
     )
 
-
-def _fmt_usd(n: int | None) -> str:
-    return f"${n:,}".replace(",", " ") if n else "narx so'rang"
 
 
 async def fallback_reply(ctx: AgentContext, text: str) -> tuple[str, InlineKeyboardMarkup | None]:
@@ -64,7 +63,7 @@ async def _fallback_reply(ctx: AgentContext, text: str) -> tuple[str, InlineKeyb
     for c in rows:
         km = f", {c.mileage_km:,} km".replace(",", " ") if c.mileage_km else ""
         reserved = " (bron)" if c.status == "reserved" else ""
-        lines.append(f"• {c.title} — {_fmt_usd(c.price_usd)}{km}{reserved}")
+        lines.append(f"• {c.title} — {fmt_price(c.price_usd, empty=NO_PRICE)}{km}{reserved}")
     lines.append("")
     lines.append("Ko'rishga kelish yoki batafsil ma'lumot uchun menejer bilan bog'laning 👇")
     return "\n".join(lines), fallback_kb()
