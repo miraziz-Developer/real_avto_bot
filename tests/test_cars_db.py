@@ -63,12 +63,16 @@ async def test_create_find_by_album_message_and_events(session_factory):
 async def test_incomplete_goes_to_review_then_active_after_fix(session_factory):
     async with session_factory() as s:
         cars = CarRepository(s)
-        car = await cars.create_from_parsed(_parsed(price_usd=None), source=CarSource.CHANNEL, raw_text="x")
+        # Yil yo'q — tekshiruv kerak (narx esa majburiy emas)
+        car = await cars.create_from_parsed(_parsed(year=None), source=CarSource.CHANNEL, raw_text="x")
         assert car.status == CarStatus.REVIEW
-        changes = await cars.apply_parsed(car, _parsed(price_usd=8100))
+        changes = await cars.apply_parsed(car, _parsed(year=2021))
         await s.commit()
-        assert "price_usd" in changes
+        assert "year" in changes
         assert car.status == CarStatus.ACTIVE
+        # Narxsiz mashina ham sotuvda bo'ladi (Real Avto postlarida narx ko'pincha yozilmaydi)
+        no_price = await cars.create_from_parsed(_parsed(price_usd=None), source=CarSource.CHANNEL, raw_text="x")
+        assert no_price.status == CarStatus.ACTIVE
 
 
 async def test_price_change_and_status_events(session_factory):
@@ -155,6 +159,7 @@ def watch(monkeypatch):
     monkeypatch.setattr(car_cards, "settings", patched)
     monkeypatch.setattr(channel_watch, "settings", patched)
     channel_watch._orphan_media.clear()  # testlar orasida «egasiz media» buferi aralashmasin
+    channel_watch._recent_media_car.clear()
     return channel_watch
 
 
@@ -299,3 +304,35 @@ async def test_editing_other_text_does_not_trigger_phone_rule(session_factory, w
         await watch.on_channel_post_edited(_channel_msg(96, text_="Yangi kelgan mashinalar ro'yxati tez orada"), bot, CarRepository(s))
         await s.refresh(car)
         assert car.status == CarStatus.ACTIVE
+
+
+
+async def test_spoken_video_and_description_processed_concurrently_make_one_car(session_factory, watch, monkeypatch):
+    import asyncio
+
+    from aiogram.types import VideoNote
+
+    async def slow_transcribe(bot, messages):
+        if any(m.video_note for m in messages):
+            await asyncio.sleep(0.3)  # haqiqiy transkripsiya sekin
+            return ["Cobalt 2020 yil, mexanika"]
+        return []
+
+    monkeypatch.setattr(watch, "_transcribe_media", slow_transcribe)
+    bot = FakeBot()
+    chat = Chat(id=CHANNEL_ID, type="channel", username="real_avto_test")
+    video = Message(
+        message_id=300, date=datetime.now(timezone.utc), chat=chat,
+        video_note=VideoNote(file_id="spoken", file_unique_id="u300", length=240, duration=20),
+    )
+    description = Message(
+        message_id=301, date=datetime.now(timezone.utc), chat=chat, text="Cobalt narxi 9200$, probeg 98 000 km"
+    )
+    # Telegram ikkalasini ketma-ket yuboradi, aiogram esa parallel qayta ishlaydi
+    await asyncio.gather(watch.process_channel_post(bot, [video]), watch.process_channel_post(bot, [description]))
+    async with session_factory() as s:
+        rows = (await s.execute(select(Car))).scalars().all()
+        assert len(rows) == 1
+        car = rows[0]
+        assert (car.model, car.year, car.price_usd, car.mileage_km) == ("Cobalt", 2020, 9200, 98000)
+        assert car.channel_message_ids == [300, 301] and car.video_file_ids == ["vn:spoken"]

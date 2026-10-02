@@ -41,6 +41,22 @@ _album_tasks: dict[str, asyncio.Task] = {}
 # Forward qilinganda reply bog'lanishi yo'qoladi: video va uning tavsifi ketma-ket ikki post bo'lib keladi.
 ORPHAN_MEDIA_SECONDS = 120
 _orphan_media: dict[int, tuple[float, list[Message]]] = {}
+# Gapirilgan video o'zi mashina bo'lib yaratilgan bo'lsa — ortidan kelgan tavsif shu mashinani to'ldiradi
+_recent_media_car: dict[int, tuple[float, int]] = {}
+# Bir kanal postlari navbat bilan: video transkripsiyasi (sekin) va tavsif (tez) tartibi buzilmasin
+_channel_locks: dict[int, asyncio.Lock] = {}
+
+
+def _channel_lock(chat_id: int) -> asyncio.Lock:
+    return _channel_locks.setdefault(chat_id, asyncio.Lock())
+
+
+def _take_recent_media_car(chat_id: int) -> int | None:
+    item = _recent_media_car.pop(chat_id, None)
+    if item is None:
+        return None
+    ts, car_id = item
+    return car_id if time.monotonic() - ts <= ORPHAN_MEDIA_SECONDS else None
 
 
 def _take_orphan_media(chat_id: int) -> list[Message]:
@@ -157,6 +173,11 @@ async def _apply_reply_to_car(bot: Bot, cars: CarRepository, car, messages: list
 
 async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
     """Bitta e'lon (oddiy post yoki albom) ni qayta ishlash. O'z DB sessiyasi bilan ishlaydi."""
+    async with _channel_lock(messages[0].chat.id):
+        await _process_channel_post(bot, messages)
+
+
+async def _process_channel_post(bot: Bot, messages: list[Message]) -> None:
     messages = sorted(messages, key=lambda m: m.message_id)
     first = messages[0]
     chat_id = first.chat.id
@@ -215,10 +236,19 @@ async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
         if not parsed.looks_like_car():
             if has_media and not text:
                 _orphan_media[chat_id] = (time.monotonic(), messages)
-            logger.info("Kanal posti e'lon emas deb topildi (msg %s)", msg_ids[0])
+            logger.info(
+                "Kanal posti e'lon emas deb topildi (msg %s): %r", msg_ids[0], full_text[:150].replace("\n", " ")
+            )
             return
 
         if not has_media and reply_to is None:
+            recent_car_id = _take_recent_media_car(chat_id)
+            recent_car = await cars.get(recent_car_id) if recent_car_id else None
+            if recent_car is not None:
+                # Tavsif o'zidan oldingi (gapirilgan) videodan yaratilgan mashinaga tegishli
+                _orphan_media.pop(chat_id, None)
+                await _apply_reply_to_car(bot, cars, recent_car, messages, text)
+                return
             orphan = _take_orphan_media(chat_id)
             if orphan:
                 # Tavsif o'zidan oldingi matnsiz video/rasmga tegishli — bitta e'lon
@@ -240,6 +270,10 @@ async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
             published_at=_original_date(first),
         )
         await session.commit()
+        if has_media and not text:
+            _recent_media_car[chat_id] = (time.monotonic(), car.id)
+        else:
+            _recent_media_car.pop(chat_id, None)
         if car.status == CarStatus.REVIEW:
             header = "🆕 <b>Kanalda yangi post</b> — ma'lumot to'liq emas, tekshirib bering"
         else:
@@ -285,12 +319,17 @@ async def on_channel_post(message: Message, bot: Bot) -> None:
 async def on_channel_post_edited(message: Message, bot: Bot, cars: CarRepository) -> None:
     if not is_main_channel(message.chat):
         return
+    async with _channel_lock(message.chat.id):
+        await _on_channel_post_edited(message, bot, cars)
+
+
+async def _on_channel_post_edited(message: Message, bot: Bot, cars: CarRepository) -> None:
     text = _message_text(message)
     car = await cars.find_by_channel_message(message.chat.id, message.message_id)
     if car is None:
-        # Avval matnsiz bo'lgan post tahrirlanib e'longa aylangan bo'lishi mumkin
+        # Avval matnsiz bo'lgan post tahrirlanib e'longa aylangan bo'lishi mumkin (lock allaqachon olingan)
         if text:
-            await process_channel_post(bot, [message])
+            await _process_channel_post(bot, [message])
         return
 
     old_text = car.raw_text or ""
@@ -324,8 +363,8 @@ async def on_channel_post_edited(message: Message, bot: Bot, cars: CarRepository
     if not changes:
         return
     await cars.session.commit()
-    if not was_active and car.status == CarStatus.ACTIVE:
-        # Tahrir mashinani to'liq qildi (tekshiruv → sotuvda) — «chiqsa xabar ber» egalariga
+    if car.status == CarStatus.ACTIVE and (not was_active or (old_price is None and car.price_usd)):
+        # Tahrir mashinani sotuvga chiqardi yoki birinchi marta narx qo'ydi — «chiqsa xabar ber» egalariga
         await notify_wishlist_matches_car(bot, CrmRepository(cars.session), cars, car)
         await cars.session.commit()
     if "price_usd" in changes and old_price:

@@ -173,3 +173,11 @@ def test_reserved_and_phone():
     assert is_reserved_text("Bron") and is_reserved_text("бронь") and not is_reserved_text("Bronza rang")
     assert has_phone("📞 +998 97 782 92 99") and has_phone("97 433 76 08") and has_phone("+998977829299")
     assert not has_phone("Cobalt 2020, probeg 98 000 km, narxi 9200$")
+
+
+def test_real_avto_channel_template_without_price():
+    r = p("🚘AVTOMOBIL: BMW 318 🗓️yili: 1991 📍probeg:??    NASIYA SAVDOGA   📞Aloqa: +998 (50) 702 39 60")
+    assert (r.brand, r.model, r.year, r.price_usd) == ("BMW", "318", 1991, None)
+    assert r.is_complete()  # narx majburiy emas
+    r = p("🚘Avtomobil: SPARK MEXANIKA 1,25 MATOR 🗓️yili: 2012 📍probeg: 406.000km  📞Aloqa: +998 (88) 539 48 55")
+    assert (r.model, r.year, r.mileage_km, r.transmission) == ("Spark", 2012, 406000, "mexanika")

@@ -25,7 +25,7 @@ from bot.db.cars_repo import CarRepository
 from bot.db.models import Car, CarStatus
 from bot.services.car_cards import STATUS_LABELS, car_admin_kb, car_can_be_posted, car_card_html, car_channel_caption
 from bot.db.repositories import CrmRepository
-from bot.services.car_parser import parse_admin_edit, parse_price_usd
+from bot.services.car_parser import REQUIRED_FIELDS, parse_admin_edit, parse_price_usd
 from bot.services.wishlist_notify import notify_wishlist_matches_car
 
 logger = logging.getLogger(__name__)
@@ -180,7 +180,7 @@ async def car_edit_apply(message: Message, state: FSMContext, cars: CarRepositor
         )
         return
     changes = await cars.update_fields(car, values, actor=message.from_user.id)
-    if car.status == CarStatus.REVIEW and all((car.brand, car.model, car.year, car.price_usd)):
+    if car.status == CarStatus.REVIEW and all(getattr(car, f) for f in REQUIRED_FIELDS):
         await cars.set_status(car, CarStatus.ACTIVE, actor=message.from_user.id)
     await cars.session.commit()
     if car.status == CarStatus.ACTIVE and message.bot is not None:

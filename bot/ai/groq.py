@@ -115,6 +115,9 @@ class GroqClient:
         form = aiohttp.FormData()
         form.add_field("file", audio, filename=filename)
         form.add_field("model", self.stt_model)
+        # Til aniq berilmasa Whisper o'zbekchani ko'pincha turkcha deb taniydi
+        if settings.groq_stt_language:
+            form.add_field("language", settings.groq_stt_language)
         form.add_field("response_format", "json")
         data = await self._post("/audio/transcriptions", data=form)
         return str(data.get("text") or "").strip()

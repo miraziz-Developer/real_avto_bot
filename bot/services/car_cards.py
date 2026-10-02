@@ -25,7 +25,7 @@ STATUS_LABELS = {
     CarStatus.ARCHIVED: "⚪ Arxiv",
 }
 
-_FIELD_LABELS = {"brand": "marka", "model": "model", "year": "yil", "price_usd": "narx"}
+_FIELD_LABELS = {"brand": "marka", "model": "model", "year": "yil"}
 
 
 def _fmt_int(n: int | None) -> str:

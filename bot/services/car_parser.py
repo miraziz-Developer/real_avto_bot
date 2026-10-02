@@ -193,7 +193,7 @@ def detect_brand_model(text: str) -> tuple[str | None, str | None]:
         model = None
         if tok and tok.start() - end <= 2:
             cand = tok.group(0)
-            if not re.fullmatch(r"\d{3,}", cand):  # yil yoki narx emas
+            if not re.fullmatch(r"\d{4,}", cand):  # yil yoki narx emas (BMW 318, Peugeot 406 — model)
                 model = cand.upper() if len(cand) <= 3 else cand.capitalize()
         return brand, model
     return None, None
@@ -364,7 +364,8 @@ _ACCIDENT_YES_RE = re.compile(r"(?:dtp|дтп|avariya)\w*\s*[:\-–]?\s*(?:bor|h
 
 # --- Natija -----------------------------------------------------------------------
 
-REQUIRED_FIELDS = ("brand", "model", "year", "price_usd")
+# Narx majburiy emas: Real Avto postlarida narx ko'pincha yozilmaydi («narxini menejer aytadi»)
+REQUIRED_FIELDS = ("brand", "model", "year")
 
 
 @dataclass

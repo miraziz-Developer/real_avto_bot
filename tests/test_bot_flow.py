@@ -580,7 +580,7 @@ async def test_channel_edit_completing_car_notifies_saved_searches(env):
     await dp.feed_update(bot, Update(update_id=next(_ids), channel_post=channel_msg("Spark 2021 keldi, 31000 km")))
     async with factory() as s:
         car = (await s.execute(select(Car).where(Car.model == "Spark"))).scalar_one()
-        assert car.status == CarStatus.REVIEW  # narx yo'q
+        assert car.status == CarStatus.ACTIVE and car.price_usd is None  # narxsiz ham sotuvda
     await dp.feed_update(
         bot, Update(update_id=next(_ids), edited_channel_post=channel_msg("Spark 2021 keldi, 31000 km, narxi 8500$"))
     )

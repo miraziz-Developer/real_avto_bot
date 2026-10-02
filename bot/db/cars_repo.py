@@ -9,7 +9,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Car, CarEvent, CarSource, CarStatus, ChannelThread
-from bot.services.car_parser import ParsedCar, detect_brand_model, normalize_text
+from bot.services.car_parser import REQUIRED_FIELDS, ParsedCar, detect_brand_model, normalize_text
 
 # ParsedCar → Car ga ko'chiriladigan maydonlar
 PARSED_FIELDS = (
@@ -156,7 +156,7 @@ class CarRepository:
         if changes:
             await self._event(car, "edited", {k: v for k, v in changes.items() if k != "price_usd"} or None)
         # Admin tekshiruvidagi mashina tahrirdan keyin to'liq bo'lib qolsa — sotuvga chiqadi
-        if car.status == CarStatus.REVIEW and all(getattr(car, f) for f in ("brand", "model", "year", "price_usd")):
+        if car.status == CarStatus.REVIEW and all(getattr(car, f) for f in REQUIRED_FIELDS):
             await self.set_status(car, CarStatus.ACTIVE)
         return changes
 

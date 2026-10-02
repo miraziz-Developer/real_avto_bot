@@ -139,6 +139,7 @@ class Settings:
     groq_api_key: str
     groq_model: str
     groq_stt_model: str
+    groq_stt_language: str
     car_stale_days: int
     agent_enabled: bool
     agent_model: str
@@ -195,13 +196,15 @@ settings = Settings(
     payment_card_holder=(os.getenv("PAYMENT_CARD_HOLDER", "") or "").strip(),
     # AI (kanal postlarini tahlil, ovoz/dumaloq video → matn). Kalit bo'lmasa faqat regex parser ishlaydi.
     groq_api_key=(os.getenv("GROQ_API_KEY", "") or "").strip(),
-    groq_model=(os.getenv("GROQ_MODEL", "") or "llama-3.3-70b-versatile").strip(),
+    groq_model=(os.getenv("GROQ_MODEL", "") or "openai/gpt-oss-120b").strip(),
     groq_stt_model=(os.getenv("GROQ_STT_MODEL", "") or "whisper-large-v3").strip(),
+    # Ovozli xabar tili (ISO-639-1). Bo'sh — Whisper o'zi aniqlaydi (o'zbekchada xato qiladi)
+    groq_stt_language=(os.getenv("GROQ_STT_LANGUAGE", "uz") or "").strip(),
     # Shuncha kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi
     car_stale_days=_int("CAR_STALE_DAYS", 14),
     # AI savdo agenti: botga yozilgan savollarga mashinalar bazasidan javob beradi
     agent_enabled=_bool("AGENT_ENABLED", True),
-    agent_model=(os.getenv("GROQ_AGENT_MODEL", "") or os.getenv("GROQ_MODEL", "") or "llama-3.3-70b-versatile").strip(),
+    agent_model=(os.getenv("GROQ_AGENT_MODEL", "") or os.getenv("GROQ_MODEL", "") or "openai/gpt-oss-120b").strip(),
     business_name=(os.getenv("BUSINESS_NAME", "") or "Real Avto").strip(),
     business_address=(os.getenv("BUSINESS_ADDRESS", "") or "Yangiyo'l").strip(),
     # Bo'sh bo'lsa agent ish vaqtini aytmaydi (o'ylab topmaslik uchun) — menejer aniqlaydi
