@@ -154,6 +154,7 @@ def watch(monkeypatch):
     patched = dataclasses.replace(car_cards.settings, admin_telegram_ids=frozenset({ADMIN_ID}), channel_id=str(CHANNEL_ID))
     monkeypatch.setattr(car_cards, "settings", patched)
     monkeypatch.setattr(channel_watch, "settings", patched)
+    channel_watch._orphan_media.clear()  # testlar orasida «egasiz media» buferi aralashmasin
     return channel_watch
 
 
@@ -256,3 +257,45 @@ async def test_new_post_with_baraka_wording_is_not_sold(session_factory, watch):
     await watch.process_channel_post(bot, [_channel_msg(95, text_="Spark 2021, 31000 km, narxi 8500$. Barakasini bersin!")])
     async with session_factory() as s:
         assert (await s.execute(select(Car))).scalar_one().status == CarStatus.ACTIVE
+
+
+async def test_forwarded_video_then_description_becomes_one_car_with_original_date(session_factory, watch):
+    from aiogram.types import MessageOriginChannel, VideoNote
+
+    bot = FakeBot()
+    original_date = datetime.now(timezone.utc) - timedelta(days=5)
+    origin = MessageOriginChannel(
+        date=original_date, chat=Chat(id=-100777, type="channel", username="real_avto_arzon"), message_id=500
+    )
+    video = Message(
+        message_id=200,
+        date=datetime.now(timezone.utc),
+        chat=Chat(id=CHANNEL_ID, type="channel", username="real_avto_test"),
+        video_note=VideoNote(file_id="fwd_vn", file_unique_id="u200", length=240, duration=20),
+        forward_origin=origin,
+    )
+    await watch.process_channel_post(bot, [video])
+    description = Message(
+        message_id=201,
+        date=datetime.now(timezone.utc),
+        chat=Chat(id=CHANNEL_ID, type="channel", username="real_avto_test"),
+        text="Gentra 2019, probeg 120 ming km, narxi 9800$",
+        forward_origin=MessageOriginChannel(date=original_date, chat=origin.chat, message_id=501),
+    )
+    await watch.process_channel_post(bot, [description])
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert (car.model, car.price_usd) == ("Gentra", 9800)
+        assert car.channel_message_ids == [200, 201] and car.video_file_ids == ["vn:fwd_vn"]
+        assert abs((car.published_at - original_date).total_seconds()) < 2  # asl post sanasi
+
+
+async def test_editing_other_text_does_not_trigger_phone_rule(session_factory, watch):
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(96, text_="Malibu 2019, probeg 64 000 km, narxi 21500$\n📞 +998 97 782 92 99")])
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        # Butunlay boshqa matnga tahrir (telefonsiz) — bu sotildi emas
+        await watch.on_channel_post_edited(_channel_msg(96, text_="Yangi kelgan mashinalar ro'yxati tez orada"), bot, CarRepository(s))
+        await s.refresh(car)
+        assert car.status == CarStatus.ACTIVE

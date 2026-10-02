@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
+import time
 
 from aiogram import Bot, Router
 from aiogram.types import Chat, Message
@@ -34,6 +36,41 @@ _MAX_TRANSCRIBE_BYTES = 19 * 1024 * 1024
 
 _albums: dict[str, list[Message]] = {}
 _album_tasks: dict[str, asyncio.Task] = {}
+
+# Matnsiz media post (masalan dumaloq video) — ortidan kelgan matnli post bilan bitta e'lon qilish uchun.
+# Forward qilinganda reply bog'lanishi yo'qoladi: video va uning tavsifi ketma-ket ikki post bo'lib keladi.
+ORPHAN_MEDIA_SECONDS = 120
+_orphan_media: dict[int, tuple[float, list[Message]]] = {}
+
+
+def _take_orphan_media(chat_id: int) -> list[Message]:
+    item = _orphan_media.pop(chat_id, None)
+    if item is None:
+        return []
+    ts, msgs = item
+    return msgs if time.monotonic() - ts <= ORPHAN_MEDIA_SECONDS else []
+
+
+def _forget_orphan(chat_id: int, message_ids: list[int]) -> None:
+    """Bu media reply orqali e'longa qo'shildi — keyingi postga yopishtirmaslik uchun buferdan olib tashlaymiz."""
+    item = _orphan_media.get(chat_id)
+    if item and any(m.message_id in message_ids for m in item[1]):
+        _orphan_media.pop(chat_id, None)
+
+
+def _same_post(new_text: str, old_text: str) -> bool:
+    """Tahrirlangan matn shu mashina postining o'zimi (telefonsiz qolgan qismi eski matnga mos keladimi)."""
+    words = [w for w in re.findall(r"\w+", new_text.lower()) if not w.isdigit() or len(w) == 4]
+    if len(words) < 3:
+        return False
+    old_words = set(re.findall(r"\w+", old_text.lower()))
+    return sum(w in old_words for w in words) / len(words) >= 0.7
+
+
+def _original_date(m: Message):
+    """Forward qilingan postda — asl post sanasi (statistika «necha kunda sotildi» to'g'ri bo'lishi uchun)."""
+    origin_date = getattr(m.forward_origin, "date", None) if m.forward_origin else None
+    return origin_date or m.date
 
 
 def is_main_channel(chat: Chat) -> bool:
@@ -150,6 +187,7 @@ async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
                 return
 
         if reply_to is not None:
+            _forget_orphan(chat_id, [reply_to.message_id])
             replied_car = await cars.find_by_channel_message(chat_id, reply_to.message_id)
             if replied_car is not None:
                 # Masalan: dumaloq video ostiga «narxi 8500$» deb reply — shu mashinani to'ldiramiz
@@ -166,13 +204,27 @@ async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
 
         transcripts = await _transcribe_media(bot, messages)
         full_text = "\n".join([text, *[f"[Ovoz]: {t}" for t in transcripts]]).strip()
+        has_media = any(m.photo or m.video or m.video_note for m in messages)
         if not full_text:
-            return  # matnsiz rasm/video — mashina ekanini aniqlab bo'lmaydi
+            if has_media:
+                # Matnsiz video/rasm — keyingi matnli post (tavsif) bilan birlashtiramiz
+                _orphan_media[chat_id] = (time.monotonic(), messages)
+            return
 
         parsed = await extract_car(full_text, ai=get_ai(), usd_rate_uzs=settings.usd_rate_uzs)
         if not parsed.looks_like_car():
+            if has_media and not text:
+                _orphan_media[chat_id] = (time.monotonic(), messages)
             logger.info("Kanal posti e'lon emas deb topildi (msg %s)", msg_ids[0])
             return
+
+        if not has_media and reply_to is None:
+            orphan = _take_orphan_media(chat_id)
+            if orphan:
+                # Tavsif o'zidan oldingi matnsiz video/rasmga tegishli — bitta e'lon
+                messages = [*orphan, *messages]
+                first = messages[0]
+                msg_ids = [m.message_id for m in messages]
 
         photos, videos = _media_of(messages)
         status = CarStatus.SOLD if is_sold_text(text) else None
@@ -185,7 +237,7 @@ async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
             channel_chat_id=chat_id,
             channel_message_ids=msg_ids,
             status=status,
-            published_at=first.date,
+            published_at=_original_date(first),
         )
         await session.commit()
         if car.status == CarStatus.REVIEW:
@@ -247,8 +299,8 @@ async def on_channel_post_edited(message: Message, bot: Bot, cars: CarRepository
         reason = "postga «sotildi» yozildi"
     elif (
         text
-        and message.message_id == car.channel_message_ids[0]
         and has_phone(old_text)
+        and _same_post(text, old_text)
         and not has_phone(text)
         and car.status in (CarStatus.ACTIVE, CarStatus.RESERVED)
     ):
