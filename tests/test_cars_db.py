@@ -223,3 +223,36 @@ async def test_video_note_then_reply_with_details_becomes_one_car(session_factor
         car = (await s.execute(select(Car))).scalar_one()
         assert car.price_usd == 8800 and car.channel_message_ids == [80, 81, 82]
     assert any("reply bilan yangilandi" in t for _, _, t in bot.sent)
+
+
+async def test_edit_removing_phone_or_baraka_reply_marks_sold_and_bron_reply(session_factory, watch):
+    bot = FakeBot()
+    text = "Damas 2022, probeg 76 000 km, narxi 7800$\n📞 +998 97 782 92 99"
+    await watch.process_channel_post(bot, [_channel_msg(90, text_=text)])
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert car.status == CarStatus.ACTIVE
+        # 2 kundan keyin: postdan telefon olib tashlandi
+        await watch.on_channel_post_edited(_channel_msg(90, text_="Damas 2022, probeg 76 000 km, narxi 7800$"), bot, CarRepository(s))
+        await s.refresh(car)
+        assert car.status == CarStatus.SOLD
+    assert any("telefon raqami olib tashlandi" in t for _, _, t in bot.sent)
+
+    # Boshqa mashina: «bron» reply → bron, keyin «Baraka bo'ldi» reply → sotildi
+    post = _channel_msg(91, text_="Cobalt 2020, probeg 98 000 km, narxi 9200$")
+    await watch.process_channel_post(bot, [post])
+    await watch.process_channel_post(bot, [_channel_msg(92, text_="Bron", reply_to=post)])
+    async with session_factory() as s:
+        cobalt = (await s.execute(select(Car).where(Car.model == "Cobalt"))).scalar_one()
+        assert cobalt.status == CarStatus.RESERVED
+    await watch.process_channel_post(bot, [_channel_msg(93, text_="Baraka bo'ldi ✅", reply_to=post)])
+    async with session_factory() as s:
+        cobalt = (await s.execute(select(Car).where(Car.model == "Cobalt"))).scalar_one()
+        assert cobalt.status == CarStatus.SOLD
+
+
+async def test_new_post_with_baraka_wording_is_not_sold(session_factory, watch):
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(95, text_="Spark 2021, 31000 km, narxi 8500$. Barakasini bersin!")])
+    async with session_factory() as s:
+        assert (await s.execute(select(Car))).scalar_one().status == CarStatus.ACTIVE

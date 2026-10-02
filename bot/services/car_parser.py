@@ -21,8 +21,30 @@ _SOLD_RE = re.compile(
 )
 
 
-def is_sold_text(text: str | None) -> bool:
-    return bool(text and _SOLD_RE.search(normalize_text(text)))
+# Keyingi tahrir/reply'dagina sotildi belgisi (yangi e'lon matnida «barakasini bersin» uchrashi mumkin)
+_SOLD_EXTRA_RE = re.compile(
+    r"(?<![\w'])(baraka\w*|olib\s+ketildi|olib\s+ketishdi|sotib\s+olindi|qo'ldan\s+ketdi|"
+    r"барака\w*|забрали)(?![\w'])",
+    re.IGNORECASE,
+)
+_RESERVED_RE = re.compile(r"(?<![\w])(bron|bronlandi|бронь|брон|zakalat|задаток)(?![\w])", re.IGNORECASE)
+_PHONE_RE = re.compile(r"(?:\+?998[\s\-]?)?\(?\d{2}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}(?!\d)")
+
+
+def is_sold_text(text: str | None, *, extended: bool = False) -> bool:
+    """extended=True — tahrir/reply uchun: «baraka bo'ldi», «olib ketildi» ham sotildi hisoblanadi."""
+    if not text:
+        return False
+    t = normalize_text(text)
+    return bool(_SOLD_RE.search(t) or (extended and _SOLD_EXTRA_RE.search(t)))
+
+
+def is_reserved_text(text: str | None) -> bool:
+    return bool(text and _RESERVED_RE.search(normalize_text(text)))
+
+
+def has_phone(text: str | None) -> bool:
+    return bool(text and _PHONE_RE.search(text))
 
 
 # --- Matnni tozalash -------------------------------------------------------------

@@ -150,3 +150,26 @@ def test_merge_missing_keeps_regex_values():
     ai = ai_dict_to_parsed({"model": "Labo", "year": 2020, "mileage_km": 50000}, usd_rate_uzs=RATE)
     regex.merge_missing(ai)
     assert (regex.model, regex.year, regex.mileage_km) == ("Damas", 2022, 50000)
+
+
+@pytest.mark.parametrize(
+    ("text", "strict", "extended"),
+    [
+        ("Baraka bo'ldi ✅", False, True),
+        ("Barakasini bersin", False, True),
+        ("olib ketildi", False, True),
+        ("SOTILDI", True, True),
+        ("Mashina sotuvda, kelinglar", False, False),
+    ],
+)
+def test_sold_extended_only_for_edits_and_replies(text, strict, extended):
+    assert is_sold_text(text) is strict
+    assert is_sold_text(text, extended=True) is extended
+
+
+def test_reserved_and_phone():
+    from bot.services.car_parser import has_phone, is_reserved_text
+
+    assert is_reserved_text("Bron") and is_reserved_text("бронь") and not is_reserved_text("Bronza rang")
+    assert has_phone("📞 +998 97 782 92 99") and has_phone("97 433 76 08") and has_phone("+998977829299")
+    assert not has_phone("Cobalt 2020, probeg 98 000 km, narxi 9200$")

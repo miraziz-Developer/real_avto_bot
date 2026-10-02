@@ -21,7 +21,7 @@ from bot.db.models import CarSource, CarStatus
 from bot.services.car_cards import car_card_html, notify_admins_text, send_car_card_to_admins
 from bot.services.car_extract import extract_car
 from bot.db.repositories import CrmRepository
-from bot.services.car_parser import is_sold_text
+from bot.services.car_parser import has_phone, is_reserved_text, is_sold_text
 from bot.services.wishlist_notify import notify_wishlist_matches_car
 
 logger = logging.getLogger(__name__)
@@ -130,8 +130,8 @@ async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
     async with get_session_factory()() as session:
         cars = CarRepository(session)
 
-        # «SOTILDI» deb reply qilingan — asl postdagi mashina sotildi
-        if reply_to is not None and is_sold_text(text):
+        # «SOTILDI» / «baraka bo'ldi» deb reply qilingan — asl postdagi mashina sotildi
+        if reply_to is not None and is_sold_text(text, extended=True):
             car = await cars.find_by_channel_message(chat_id, reply_to.message_id)
             if car is None:
                 logger.info("Reply «sotildi», lekin bazada mashina topilmadi (msg %s)", reply_to.message_id)
@@ -140,6 +140,14 @@ async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
                 await session.commit()
                 await notify_admins_text(bot, f"🔴 Kanalda sotildi deb belgilandi:\n\n{car_card_html(car)}")
             return
+
+        if reply_to is not None and is_reserved_text(text) and len(text) < 60:
+            car = await cars.find_by_channel_message(chat_id, reply_to.message_id)
+            if car is not None:
+                if await cars.set_status(car, CarStatus.RESERVED):
+                    await session.commit()
+                    await send_car_card_to_admins(bot, car, header="🔵 <b>Kanalda bron deb belgilandi</b>")
+                return
 
         if reply_to is not None:
             replied_car = await cars.find_by_channel_message(chat_id, reply_to.message_id)
@@ -233,10 +241,28 @@ async def on_channel_post_edited(message: Message, bot: Bot, cars: CarRepository
             await process_channel_post(bot, [message])
         return
 
-    if is_sold_text(text):
+    old_text = car.raw_text or ""
+    reason = None
+    if is_sold_text(text, extended=True) and not is_sold_text(old_text, extended=True):
+        reason = "postga «sotildi» yozildi"
+    elif (
+        text
+        and message.message_id == car.channel_message_ids[0]
+        and has_phone(old_text)
+        and not has_phone(text)
+        and car.status in (CarStatus.ACTIVE, CarStatus.RESERVED)
+    ):
+        # Jamoa odati: sotilgach postdan telefon raqami olib tashlanadi
+        reason = "postdan telefon raqami olib tashlandi"
+    if reason:
         if await cars.set_status(car, CarStatus.SOLD):
+            car.raw_text = text
             await cars.session.commit()
-            await notify_admins_text(bot, f"🔴 Post tahrirlandi — <b>sotildi</b>:\n\n{car_card_html(car)}")
+            await send_car_card_to_admins(
+                bot,
+                car,
+                header=f"🔴 <b>Sotildi deb belgilandi</b> — {reason}.\nXato bo'lsa: «↩️ Qayta sotuvga».",
+            )
         return
 
     parsed = await extract_car(text, ai=get_ai(), usd_rate_uzs=settings.usd_rate_uzs)
