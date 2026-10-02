@@ -16,7 +16,6 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import StateFilter
 from aiogram.types import (
     CallbackQuery,
-    InputMediaPhoto,
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
@@ -26,7 +25,7 @@ from aiogram.types import (
 
 from bot.agent.fallback import HANDOFF_CB
 from bot.agent.service import generate_agent_reply
-from bot.agent.tools import AgentContext, _normalize_phone, car_for_agent
+from bot.agent.tools import AgentContext, _normalize_phone, car_for_agent, send_car_media
 from bot.ai import AIError, get_ai
 from bot.config import settings
 from bot.db.cars_repo import CarRepository
@@ -333,14 +332,7 @@ async def open_car_entry(
     parts.append("")
     parts.append("Savolingiz bo'lsa yozing — yoki ko'rishga qachon kela olasiz? 🙂")
     text = "\n".join(parts)
-    photos = list(car.photo_file_ids or [])[:6]
-    try:
-        if len(photos) > 1:
-            await message.answer_media_group([InputMediaPhoto(media=p) for p in photos])
-        elif photos:
-            await message.answer_photo(photos[0])
-    except TelegramBadRequest as e:
-        logger.warning("Mashina #%s rasmlari yuborilmadi: %s", car.id, e)
+    await send_car_media(message.bot, user.id, car)
     await leads.add_message(lead, "assistant", text)
     lead.score = lead_score(lead)
     await message.answer(text, parse_mode=None)

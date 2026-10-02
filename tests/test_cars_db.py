@@ -190,3 +190,36 @@ async def test_non_car_post_is_ignored(session_factory, watch):
     async with session_factory() as s:
         assert (await s.execute(select(Car))).scalars().all() == []
     assert bot.sent == []
+
+
+async def test_video_note_then_reply_with_details_becomes_one_car(session_factory, watch):
+    from aiogram.types import VideoNote
+
+    bot = FakeBot()
+    video_post = Message(
+        message_id=80,
+        date=datetime.now(timezone.utc),
+        chat=Chat(id=CHANNEL_ID, type="channel", username="real_avto_test"),
+        video_note=VideoNote(file_id="vnote1", file_unique_id="u80", length=240, duration=30),
+    )
+    # Matnsiz, ovozsiz dumaloq video — o'zi e'lon emas
+    await watch.process_channel_post(bot, [video_post])
+    async with session_factory() as s:
+        assert (await s.execute(select(Car))).scalars().all() == []
+
+    # Jamoa unga reply qilib ma'lumot yozadi
+    await watch.process_channel_post(
+        bot, [_channel_msg(81, text_="Cobalt 2020, probeg 98 000 km, narxi 9200$", reply_to=video_post)]
+    )
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert (car.model, car.year, car.price_usd) == ("Cobalt", 2020, 9200)
+        assert car.channel_message_ids == [80, 81]
+        assert car.video_file_ids == ["vn:vnote1"]
+
+    # Keyinroq yana reply — narx tushdi: o'sha mashina yangilanadi, yangi yozuv yaratilmaydi
+    await watch.process_channel_post(bot, [_channel_msg(82, text_="Narx tushdi: 8800$", reply_to=video_post)])
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert car.price_usd == 8800 and car.channel_message_ids == [80, 81, 82]
+    assert any("reply bilan yangilandi" in t for _, _, t in bot.sent)

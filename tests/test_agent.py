@@ -76,6 +76,14 @@ class FakeBot:
         self.sent.append(("album", chat_id, str(len(media))))
         return [self._msg(chat_id) for _ in media]
 
+    async def send_video_note(self, chat_id, video_note, **kw):
+        self.sent.append(("video_note", chat_id, video_note))
+        return self._msg(chat_id)
+
+    async def send_video(self, chat_id, video, **kw):
+        self.sent.append(("video", chat_id, video))
+        return self._msg(chat_id)
+
     async def get_me(self):
         return SimpleNamespace(username="real_avto_test_bot")
 
@@ -309,3 +317,21 @@ def test_phone_normalization():
     assert agent_tools._normalize_phone("90 123 45 67") == "+998901234567"
     assert agent_tools._normalize_phone("+998 (90) 123-45-67") == "+998901234567"
     assert agent_tools._normalize_phone("123") is None
+
+
+async def test_send_media_includes_round_video_notes(session_factory):
+    bot = FakeBot()
+    async with session_factory() as s:
+        cars = CarRepository(s)
+        car = await cars.create_from_parsed(
+            ParsedCar(brand="Chevrolet", model="Damas", year=2022, mileage_km=76000, price_usd=7800),
+            source=CarSource.CHANNEL,
+            raw_text="",
+            video_file_ids=["vn:round1"],
+        )
+        await s.commit()
+        ctx = await _ctx(s, bot)
+        out = json.loads(await ctx.execute("send_car_photos", {"car_id": car.id}))
+        assert out["sent"] == 1
+        assert ("video_note", CUSTOMER_ID, "round1") in bot.sent  # dumaloq video dumaloq bo'lib ketadi
+        assert any(k == "text" and "Damas" in t for k, _, t in bot.sent)  # nomi va narxi alohida

@@ -76,6 +76,48 @@ async def _transcribe_media(bot: Bot, messages: list[Message]) -> list[str]:
     return out
 
 
+# Dumaloq video file_id lari shu prefiks bilan saqlanadi — mijozga send_video_note bilan qayta yuborish uchun
+VIDEO_NOTE_PREFIX = "vn:"
+
+
+def _media_of(messages: list[Message]) -> tuple[list[str], list[str]]:
+    photos = [m.photo[-1].file_id for m in messages if m.photo]
+    videos: list[str] = []
+    for m in messages:
+        if m.video_note is not None:
+            videos.append(VIDEO_NOTE_PREFIX + m.video_note.file_id)
+        if m.video is not None:
+            videos.append(m.video.file_id)
+    return photos, videos
+
+
+async def _apply_reply_to_car(bot: Bot, cars: CarRepository, car, messages: list[Message], text: str) -> None:
+    """Postga reply bilan qo'shilgan ma'lumot (narx, probeg, holat...) — mavjud mashinani yangilaydi."""
+    transcripts = await _transcribe_media(bot, messages)
+    full = "\n".join([text, *[f"[Ovoz]: {t}" for t in transcripts]]).strip()
+    photos, videos = _media_of(messages)
+    if not full and not (photos or videos):
+        return
+    was_active = car.status == CarStatus.ACTIVE
+    changes: dict = {}
+    if full:
+        parsed = await extract_car(full, ai=get_ai(), usd_rate_uzs=settings.usd_rate_uzs)
+        changes = await cars.apply_parsed(car, parsed, raw_text=f"{car.raw_text}\n{full}".strip())
+    # Yangi list beramiz — ARRAY ustunidagi o'zgarish saqlanishi uchun
+    new_ids = [m.message_id for m in messages if m.message_id not in car.channel_message_ids]
+    car.channel_message_ids = [*car.channel_message_ids, *new_ids]
+    if photos:
+        car.photo_file_ids = [*car.photo_file_ids, *photos]
+    if videos:
+        car.video_file_ids = [*car.video_file_ids, *videos]
+    await cars.session.commit()
+    if changes or photos or videos:
+        await send_car_card_to_admins(bot, car, header="✏️ <b>Kanaldagi reply bilan yangilandi</b>")
+    if not was_active and car.status == CarStatus.ACTIVE:
+        await notify_wishlist_matches_car(bot, CrmRepository(cars.session), cars, car)
+        await cars.session.commit()
+
+
 async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
     """Bitta e'lon (oddiy post yoki albom) ni qayta ishlash. O'z DB sessiyasi bilan ishlaydi."""
     messages = sorted(messages, key=lambda m: m.message_id)
@@ -99,6 +141,18 @@ async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
                 await notify_admins_text(bot, f"🔴 Kanalda sotildi deb belgilandi:\n\n{car_card_html(car)}")
             return
 
+        if reply_to is not None:
+            replied_car = await cars.find_by_channel_message(chat_id, reply_to.message_id)
+            if replied_car is not None:
+                # Masalan: dumaloq video ostiga «narxi 8500$» deb reply — shu mashinani to'ldiramiz
+                await _apply_reply_to_car(bot, cars, replied_car, messages, text)
+                return
+            # Asl post (ko'pincha matnsiz dumaloq video) bazada yo'q — reply bilan birga bitta e'lon qilamiz
+            messages = [reply_to, *messages]
+            first = reply_to
+            msg_ids = [m.message_id for m in messages]
+            text = "\n".join(t for t in (_message_text(m) for m in messages) if t)
+
         if await cars.find_by_channel_message(chat_id, msg_ids[0]) is not None:
             return  # takroriy update
 
@@ -112,8 +166,7 @@ async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
             logger.info("Kanal posti e'lon emas deb topildi (msg %s)", msg_ids[0])
             return
 
-        photos = [m.photo[-1].file_id for m in messages if m.photo]
-        videos = [v.file_id for m in messages for v in (m.video, m.video_note) if v is not None]
+        photos, videos = _media_of(messages)
         status = CarStatus.SOLD if is_sold_text(text) else None
         car = await cars.create_from_parsed(
             parsed,

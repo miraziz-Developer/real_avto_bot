@@ -24,7 +24,50 @@ from bot.services.lead_cards import send_lead_card
 logger = logging.getLogger(__name__)
 
 MAX_PHOTOS = 6
+MAX_VIDEOS = 2
 MAX_ACTIVE_ALERTS = 5
+# channel_watch dumaloq videolarni shu prefiks bilan saqlaydi
+VIDEO_NOTE_PREFIX = "vn:"
+
+
+async def send_car_media(
+    bot: Bot,
+    chat_id: int,
+    car: Car,
+    *,
+    caption: str | None = None,
+    business_connection_id: str | None = None,
+) -> int:
+    """Mashina rasmlari (albom) va videolari (dumaloq video — dumaloq bo'lib). Yuborilganlar soni."""
+    photos = list(car.photo_file_ids or [])[:MAX_PHOTOS]
+    videos = list(car.video_file_ids or [])[:MAX_VIDEOS]
+    bc = business_connection_id
+    sent = 0
+    try:
+        if len(photos) == 1:
+            await bot.send_photo(chat_id, photos[0], caption=caption, business_connection_id=bc)
+        elif photos:
+            media = [InputMediaPhoto(media=photos[0], caption=caption)] + [InputMediaPhoto(media=p) for p in photos[1:]]
+            await bot.send_media_group(chat_id, media, business_connection_id=bc)
+        sent += len(photos)
+    except (TelegramBadRequest, TelegramForbiddenError) as e:
+        logger.warning("Rasm yuborilmadi (car #%s): %s", car.id, e)
+    for v in videos:
+        try:
+            if v.startswith(VIDEO_NOTE_PREFIX):
+                await bot.send_video_note(chat_id, v[len(VIDEO_NOTE_PREFIX):], business_connection_id=bc)
+            else:
+                await bot.send_video(chat_id, v, caption=None if photos else caption, business_connection_id=bc)
+            sent += 1
+        except (TelegramBadRequest, TelegramForbiddenError) as e:
+            logger.warning("Video yuborilmadi (car #%s): %s", car.id, e)
+    if sent and not photos and caption and all(v.startswith(VIDEO_NOTE_PREFIX) for v in videos):
+        # Dumaloq videoga izoh qo'yib bo'lmaydi — nomi va narxini alohida yozamiz
+        try:
+            await bot.send_message(chat_id, caption, business_connection_id=bc, parse_mode=None)
+        except (TelegramBadRequest, TelegramForbiddenError):
+            pass
+    return sent
 
 
 def _obj(props: dict, required: list[str] | None = None) -> dict:
@@ -63,7 +106,7 @@ TOOL_SCHEMAS: list[dict] = [
         "type": "function",
         "function": {
             "name": "send_car_photos",
-            "description": "Mashina rasmlarini mijozga yuborish.",
+            "description": "Mashina rasmlari va videolarini (dumaloq video ham) mijozga yuborish.",
             "parameters": _obj({"car_id": {"type": "integer"}}, ["car_id"]),
         },
     },
@@ -249,31 +292,28 @@ class AgentContext:
         if car is None or car.status not in (CarStatus.ACTIVE, CarStatus.RESERVED):
             return {"error": "mashina sotuvda emas"}
         photos = list(car.photo_file_ids or [])[:MAX_PHOTOS]
-        if not photos:
+        if not photos and not car.video_file_ids:
             url = channel_post_url(car)
-            return {"sent": 0, "note": "Bazada rasm yo'q." + (f" Kanaldagi post: {url}" if url else "")}
+            return {"sent": 0, "note": "Bazada rasm/video yo'q." + (f" Kanaldagi post: {url}" if url else "")}
         price = f"${car.price_usd:,}".replace(",", " ") if car.price_usd else ""
         caption = " — ".join(p for p in (car.title, price) if p)
         if self.photo_sender is not None:
+            if not photos:
+                return {"sent": 0, "note": "Bu kanalda faqat video bor — kanal havolasini ber."}
             sent = await self.photo_sender(car, photos, caption)
             if not sent:
                 return {"sent": 0, "note": "Rasm yuborib bo'lmadi — katalog yoki kanal havolasini ber."}
             if not self.lead.car_id:
                 self.lead.car_id = car.id
             return {"sent": sent, "note": "Rasmlar yuborildi — ularni qayta tasvirlab o'tirma."}
-        media = [InputMediaPhoto(media=photos[0], caption=caption)] + [InputMediaPhoto(media=p) for p in photos[1:]]
-        try:
-            bc = self.business_connection_id
-            if len(media) == 1:
-                await self.bot.send_photo(self.chat_id, photos[0], caption=caption, business_connection_id=bc)
-            else:
-                await self.bot.send_media_group(self.chat_id, media, business_connection_id=bc)
-        except (TelegramBadRequest, TelegramForbiddenError) as e:
-            logger.warning("Rasm yuborilmadi (car #%s): %s", car.id, e)
-            return {"sent": 0, "error": "rasm yuborib bo'lmadi"}
+        sent = await send_car_media(
+            self.bot, self.chat_id, car, caption=caption, business_connection_id=self.business_connection_id
+        )
+        if not sent:
+            return {"sent": 0, "error": "rasm/video yuborib bo'lmadi"}
         if not self.lead.car_id:
             self.lead.car_id = car.id
-        return {"sent": len(photos), "note": "Rasmlar yuborildi — ularni qayta tasvirlab o'tirma."}
+        return {"sent": sent, "note": "Rasm va videolar yuborildi — ularni qayta tasvirlab o'tirma."}
 
     async def _tool_update_customer_info(self, a: dict) -> dict:
         lead = self.lead
