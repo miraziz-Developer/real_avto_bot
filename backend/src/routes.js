@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "./middleware.js";
 import { asyncHandler, getPagination, verifyPassword } from "./utils.js";
 import { carsRouter } from "./cars.js";
 import { leadsRouter } from "./leads.js";
+import { publicRouter } from "./public.js";
 
 export const router = express.Router();
 
@@ -42,6 +43,9 @@ router.post('/auth/login', asyncHandler(async (req, res) => {
   }
   return res.json({ token: signAccessToken({ id: u.id, username: u.username, role: u.role }), user: { id: u.id, username: u.username, role: u.role } });
 }));
+
+// Ochiq katalog (sayt + Telegram Mini App) — login talab qilinmaydi
+router.use('/public', publicRouter);
 
 router.use(requireAuth);
 

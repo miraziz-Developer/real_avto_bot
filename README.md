@@ -100,3 +100,25 @@ Bot orqali kelgan e'lon darhol kanalga chiqmaydi — `LISTING_FREEZE_HOURS` (6) 
 - **🏁 Sotib oldik** → mashina bazaga «bizniki» bo'lib (xarid narxi bilan) tushadi. Ta'mir xarajati va sotuv narxini kartadagi «✏️ Tuzatish» orqali kiriting, tayyor bo'lgach **📢 Kanalga joylash** — bot o'zi Real Avto shablonida joylaydi, agent darhol taklif qila boshlaydi, foyda CRM statistikasida.
 - Hech kim hech narsa qilmasa — muddat tugagach e'lon o'zi kanalga chiqadi, adminlarga xabar boradi.
 - CRM «E'lonlar» bo'limida muzlatish vaqti va taklif holati ko'rinadi. O'chirish: `LISTING_FREEZE_HOURS=0`.
+
+---
+
+## Mashinalar katalogi — sayt va Telegram Mini App (4-bosqich)
+
+`catalog/` — ro'yxatdan o'tishsiz, telefonga mo'ljallangan katalog: faqat **sotuvdagi** mashinalar (bazadan avtomatik).
+
+- Qidiruv va filtrlar (marka, byudjet, yil, avtomat/mexanika, saralash), rasmlar galereyasi.
+- **«Real narx»**: bazadagi o'xshash mashinalar (model, yil ±1, oxirgi 12 oy) medianasi bilan solishtirib «Bozordan ~10% arzon» / «Bozor narxida» belgisi (kamida 3 ta o'xshash bo'lsa; qimmat bo'lsa ko'rsatilmaydi).
+- Har mashinada: «🤖 Savol berish» (botda shu mashina bilan agent suhbati), qo'ng'iroq, xarita, o'xshash mashinalar.
+- «💰 Mashina sotaman» → botda e'lon berish; mos mashina bo'lmasa «🔔 Chiqsa xabar ber» (Mini App ichida bir bosishda, Telegram imzosi tekshiriladi).
+- Hech qachon ko'rsatilmaydi: sotuvchi telefoni, xarid narxi, foyda, ichki izohlar. Ochiq API: `/api/public/*` (IP bo'yicha cheklov), CRM endpointlari katalog orqali ochilmaydi.
+
+**Ishga tushirish**: `docker compose up -d catalog` → `http://SERVER:3002`. Domen + HTTPS (masalan nginx/Caddy orqali `https://katalog.realavto.uz`) ulab, ildiz `.env` ga:
+```
+CATALOG_URL=https://katalog.realavto.uz
+BOT_USERNAME=real_avto_bot
+```
+Bot qayta ishga tushgach chat pastida **«🚗 Katalog»** tugmasi va bosh menyuda «Sotuvdagi mashinalar» paydo bo'ladi (Mini App faqat HTTPS bilan ishlaydi).
+
+## CI
+`.github/workflows/ci.yml`: har PR'da bot testlari (PostgreSQL bilan), backend testlari, CRM va katalog build.

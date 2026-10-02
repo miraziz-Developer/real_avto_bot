@@ -154,6 +154,7 @@ class Settings:
     work_hour_start: int
     work_hour_end: int
     buyout_reply_hours: int
+    catalog_url: str
     sale_followup_interval_hours: int
     sale_followup_interval_minutes: int | None
     parking_location_text: str
@@ -214,6 +215,8 @@ settings = Settings(
     work_hour_end=_int("WORK_HOUR_END", 21),
     # Sotuvchi sotib olish taklifiga shuncha soatda javob bermasa — e'lon avtomatik kanalga chiqadi
     buyout_reply_hours=_int("BUYOUT_REPLY_HOURS", 24),
+    # Mashinalar katalogi (sayt + Telegram Mini App). Mini App uchun HTTPS bo'lishi shart
+    catalog_url=(os.getenv("CATALOG_URL", "") or "").strip().rstrip("/"),
     sale_followup_interval_hours=_int("SALE_FOLLOWUP_INTERVAL_HOURS", 24),
     sale_followup_interval_minutes=_optional_positive_int("SALE_FOLLOWUP_INTERVAL_MINUTES"),
     parking_location_text=_parking_location_text(),

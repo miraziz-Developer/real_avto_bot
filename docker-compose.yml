@@ -44,7 +44,9 @@ services:
 
   backend:
     build: ./backend
+    # Ildiz .env: BOT_TOKEN (katalog rasmlari), SALES_PHONE, BUSINESS_*, BOT_USERNAME; backend/.env undan ustun
     env_file:
+      - ./.env
       - ./backend/.env
     init: true
     depends_on:
@@ -79,6 +81,24 @@ services:
       start_period: 15s
     ports:
       - "3000:80"
+    restart: unless-stopped
+    stop_grace_period: 15s
+    logging: *default-logging
+
+  # Ochiq mashinalar katalogi (sayt + Telegram Mini App). Faqat /api/public/ ni proksi qiladi
+  catalog:
+    build: ./catalog
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    ports:
+      - "3002:80"
     restart: unless-stopped
     stop_grace_period: 15s
     logging: *default-logging

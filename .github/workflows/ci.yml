@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  bot:
+    name: Bot (Python) — unit + PostgreSQL + Dispatcher testlari
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: realavto_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d realavto_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Testlar haqiqiy Telegram/Groq'ga ulanmaydi — soxta qiymatlar yetarli
+      DATABASE_URL: postgresql+asyncpg://x:x@localhost/x
+      BOT_TOKEN: "1:x"
+      CHANNEL_ID: "@x"
+      CHANNEL_USERNAME: x
+      INSTAGRAM_USERNAME: x
+      LEADERBOARD_CHANNEL_ID: "@x"
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:test@localhost:5432/realavto_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: pytest tests -q
+
+  web:
+    name: CRM backend testlari + frontend/katalog build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Backend
+        working-directory: backend
+        run: npm ci && npm test
+      - name: CRM frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: Katalog (sayt + Mini App)
+        working-directory: catalog
+        run: npm ci && npm run build

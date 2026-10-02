@@ -12,6 +12,7 @@ __pycache__/
 # Node
 node_modules/
 frontend/dist/
+catalog/dist/
 
 # Lokal Claude preview sozlamasi
 .claude/launch.json

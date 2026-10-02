@@ -512,3 +512,13 @@ async def test_freeze_worker_publishes_only_in_work_hours(env):
         assert c.status == ListingSubmissionStatus.PENDING
     assert "avtomatik kanalga chiqdi" in session.sent(SendMessage, ADMIN_ID)[-1].text
     assert await publish_due_once(bot, factory, now=day) == 0  # ikkinchi marta joylanmaydi
+
+
+async def test_catalog_deep_links_start_sell_and_alert_flows(env):
+    dp, bot, session, _, _ = env
+    await dp.feed_update(bot, _text_update(CUSTOMER_ID, "/start sell"))
+    msg = session.sent(SendMessage, CUSTOMER_ID)[-1]
+    assert "sotmoqchimisiz" in msg.text and _buttons(msg.reply_markup) == ["ad_start"]
+    await dp.feed_update(bot, _text_update(CUSTOMER_ID, "/start alert"))
+    msg = session.sent(SendMessage, CUSTOMER_ID)[-1]
+    assert _buttons(msg.reply_markup) == ["wishlist_start"]

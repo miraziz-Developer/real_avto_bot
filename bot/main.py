@@ -198,6 +198,22 @@ async def _set_admin_commands(bot: Bot) -> None:
             logger.warning("Admin %s uchun buyruqlar menyusi o'rnatilmadi: %s", aid, e)
 
 
+async def _set_catalog_menu_button(bot: Bot) -> None:
+    """Chat pastidagi «Katalog» tugmasi — Telegram Mini App (faqat HTTPS manzil bilan)."""
+    if not settings.catalog_url.startswith("https://"):
+        if settings.catalog_url:
+            logger.warning("CATALOG_URL https emas — Mini App menyu tugmasi o'rnatilmadi: %s", settings.catalog_url)
+        return
+    from aiogram.types import MenuButtonWebApp, WebAppInfo
+
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="🚗 Katalog", web_app=WebAppInfo(url=settings.catalog_url))
+        )
+    except TelegramBadRequest as e:
+        logger.warning("Katalog menyu tugmasi o'rnatilmadi: %s", e)
+
+
 async def _run() -> None:
     _configure_logging()
 
@@ -214,6 +230,7 @@ async def _run() -> None:
     # await _verify_leaderboard_channel(bot)
     await _verify_reviews_channel(bot)
     await _set_admin_commands(bot)
+    await _set_catalog_menu_button(bot)
 
     storage = await _fsm_storage()
     dp = Dispatcher(storage=storage)

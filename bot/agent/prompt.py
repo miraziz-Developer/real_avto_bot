@@ -32,7 +32,7 @@ SUHBAT TARTIBI:
 MA'LUMOT:
 - Manzil: {address}. Xarita: {map_url}
 - Telefon: {phones}
-- Ish vaqti: {hours}
+- Ish vaqti: {hours}{catalog_line}
 - Hozir (Toshkent vaqti): {now}
 {lead_context}"""
 
@@ -75,4 +75,7 @@ def build_system_prompt(lead: Lead, car: Car | None = None) -> str:
         rate=f"{settings.usd_rate_uzs:,}".replace(",", " "),
         now=datetime.now(_TASHKENT).strftime("%Y-%m-%d %H:%M, %A"),
         lead_context=lead_context(lead, car),
+        catalog_line=(
+            f"\n- Barcha sotuvdagi mashinalar katalogi (rasmlar bilan): {settings.catalog_url}" if settings.catalog_url else ""
+        ),
     )

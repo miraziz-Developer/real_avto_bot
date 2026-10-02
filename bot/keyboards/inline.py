@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 
 def channel_keyboard(channel_username: str) -> InlineKeyboardMarkup:
@@ -50,13 +50,17 @@ def contest_hub_keyboard(*, show_join: bool) -> InlineKeyboardMarkup:
 
 
 def root_menu_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🤖 Mashina tanlashda yordam", callback_data="agent_start")],
-            [InlineKeyboardButton(text="📢 E’lon berish", callback_data="ad_start")],
-            [InlineKeyboardButton(text="🔍 Qidiruv saqlash", callback_data="wishlist_start")],
-        ]
-    )
+    from bot.config import settings
+
+    rows = [
+        [InlineKeyboardButton(text="🤖 Mashina tanlashda yordam", callback_data="agent_start")],
+        [InlineKeyboardButton(text="📢 E’lon berish", callback_data="ad_start")],
+        [InlineKeyboardButton(text="🔍 Qidiruv saqlash", callback_data="wishlist_start")],
+    ]
+    if settings.catalog_url.startswith("https://"):
+        # Telegram Mini App faqat HTTPS bilan ochiladi
+        rows.insert(0, [InlineKeyboardButton(text="🚗 Sotuvdagi mashinalar", web_app=WebAppInfo(url=settings.catalog_url))])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def alias_prompt_keyboard() -> InlineKeyboardMarkup:
