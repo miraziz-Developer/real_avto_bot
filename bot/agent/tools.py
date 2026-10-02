@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -173,6 +174,10 @@ class AgentContext:
     leads: LeadRepository
     crm: CrmRepository
     business_connection_id: str | None = None  # Telegram Business chati bo'lsa — javoblar egasi nomidan
+    # Business chat va Instagram'da inline tugmalar yuborib bo'lmaydi
+    buttons_supported: bool = True
+    # Telegram'dan boshqa kanal (Instagram) uchun rasm yuborish: (car, file_ids, caption) → yuborilgan soni
+    photo_sender: Callable[[Car, list[str], str], Awaitable[int]] | None = None
     shown_car_ids: list[int] = field(default_factory=list)
     handed_off: bool = False
 
@@ -249,6 +254,13 @@ class AgentContext:
             return {"sent": 0, "note": "Bazada rasm yo'q." + (f" Kanaldagi post: {url}" if url else "")}
         price = f"${car.price_usd:,}".replace(",", " ") if car.price_usd else ""
         caption = " — ".join(p for p in (car.title, price) if p)
+        if self.photo_sender is not None:
+            sent = await self.photo_sender(car, photos, caption)
+            if not sent:
+                return {"sent": 0, "note": "Rasm yuborib bo'lmadi — katalog yoki kanal havolasini ber."}
+            if not self.lead.car_id:
+                self.lead.car_id = car.id
+            return {"sent": sent, "note": "Rasmlar yuborildi — ularni qayta tasvirlab o'tirma."}
         media = [InputMediaPhoto(media=photos[0], caption=caption)] + [InputMediaPhoto(media=p) for p in photos[1:]]
         try:
             bc = self.business_connection_id

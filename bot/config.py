@@ -155,6 +155,13 @@ class Settings:
     work_hour_end: int
     buyout_reply_hours: int
     catalog_url: str
+    instagram_enabled: bool
+    ig_access_token: str
+    ig_app_secret: str
+    ig_verify_token: str
+    ig_account_id: str
+    ig_webhook_port: int
+    ig_graph_version: str
     sale_followup_interval_hours: int
     sale_followup_interval_minutes: int | None
     parking_location_text: str
@@ -217,6 +224,15 @@ settings = Settings(
     buyout_reply_hours=_int("BUYOUT_REPLY_HOURS", 24),
     # Mashinalar katalogi (sayt + Telegram Mini App). Mini App uchun HTTPS bo'lishi shart
     catalog_url=(os.getenv("CATALOG_URL", "") or "").strip().rstrip("/"),
+    # Instagram (Meta App Review'dan keyin): Direct va kommentlarga agent javobi, webhook orqali
+    instagram_enabled=_bool("INSTAGRAM_ENABLED", False),
+    ig_access_token=(os.getenv("IG_ACCESS_TOKEN", "") or "").strip(),
+    ig_app_secret=(os.getenv("IG_APP_SECRET", "") or "").strip(),
+    ig_verify_token=(os.getenv("IG_VERIFY_TOKEN", "") or "").strip(),
+    # O'zimizning Instagram akkaunt ID si (o'z kommentlarimizga javob bermaslik uchun)
+    ig_account_id=(os.getenv("IG_ACCOUNT_ID", "") or "").strip(),
+    ig_webhook_port=_int("IG_WEBHOOK_PORT", 8081),
+    ig_graph_version=(os.getenv("IG_GRAPH_VERSION", "") or "v21.0").strip(),
     sale_followup_interval_hours=_int("SALE_FOLLOWUP_INTERVAL_HOURS", 24),
     sale_followup_interval_minutes=_optional_positive_int("SALE_FOLLOWUP_INTERVAL_MINUTES"),
     parking_location_text=_parking_location_text(),

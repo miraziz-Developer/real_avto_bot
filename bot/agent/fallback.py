@@ -26,8 +26,8 @@ def _fmt_usd(n: int | None) -> str:
 
 async def fallback_reply(ctx: AgentContext, text: str) -> tuple[str, InlineKeyboardMarkup | None]:
     reply, kb = await _fallback_reply(ctx, text)
-    if ctx.business_connection_id:
-        # Business chatda tugmalar yuborib bo'lmaydi — egasi chatni ko'rib turadi, o'zi javob beradi
+    if not ctx.buttons_supported:
+        # Business chat / Instagram'da tugmalar yo'q — menejer suhbatni ko'rib turadi, o'zi javob beradi
         reply = reply.replace(" 👇", "").rstrip() + "\nMenejerimiz ham tez orada javob beradi."
         return reply, None
     return reply, kb

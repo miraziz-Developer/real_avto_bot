@@ -107,6 +107,9 @@ services:
     build: .
     env_file:
       - .env
+    # Instagram webhook (INSTAGRAM_ENABLED=true bo'lsa). Tashqariga HTTPS reverse-proxy orqali chiqaring
+    ports:
+      - "127.0.0.1:8081:8081"
     environment:
       REDIS_URL: redis://redis:6379/0
     init: true

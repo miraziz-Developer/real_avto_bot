@@ -122,3 +122,21 @@ Bot qayta ishga tushgach chat pastida **«🚗 Katalog»** tugmasi va bosh menyu
 
 ## CI
 `.github/workflows/ci.yml`: har PR'da bot testlari (PostgreSQL bilan), backend testlari, CRM va katalog build.
+
+---
+
+## Instagram — Direct va kommentlar (5-bosqich)
+
+Instagram'ga yozilgan savollarga ham **o'sha agent** javob beradi (bazadan), tayyor mijoz Telegram'dagi adminlarga lead kartasi bo'lib keladi.
+
+- **Direct**: savolga javob; menejer lead kartasiga reply qilsa — javob Instagram Direct'ga ketadi. Akkaunt egasi Instagram ilovasidan o'zi yozsa — AI shu mijoz bilan 6 soat jim.
+- **Kommentlar**: savol bo'lsa ochiq qisqa javob («Javobni Direct'ga yubordik 📩») + batafsil javob Direct'ga (private reply). «Zo'r 🔥» kabi kommentlarga javob yo'q; xarid niyati — adminlarga signal.
+- Rasmlar Direct'ga katalogning ochiq rasm manzili orqali yuboriladi (`CATALOG_URL` HTTPS bo'lishi kerak).
+
+**Ulash** (Meta App Review tasdiqlagach):
+1. Meta Developers → ilova → *Instagram API with Instagram Login*: `instagram_business_basic`, `instagram_business_manage_messages`, `instagram_business_manage_comments`.
+2. Webhook: Callback URL `https://DOMEN/webhooks/instagram` (reverse-proxy → bot konteyneri `127.0.0.1:8081`), Verify token = `IG_VERIFY_TOKEN`, obunalar: `messages`, `comments`.
+3. Ildiz `.env`: `INSTAGRAM_ENABLED=true`, `IG_ACCESS_TOKEN`, `IG_APP_SECRET`, `IG_VERIFY_TOKEN`, `IG_ACCOUNT_ID`.
+4. Har webhook so'rovi `X-Hub-Signature-256` bilan tekshiriladi — imzosiz so'rovlar rad etiladi.
+
+Development rejimida (App Review'dan oldin) faqat ilovaga tester qilib qo'shilgan akkauntlar bilan ishlaydi.

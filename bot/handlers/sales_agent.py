@@ -24,8 +24,8 @@ from aiogram.types import (
     User,
 )
 
-from bot.agent.fallback import HANDOFF_CB, fallback_reply
-from bot.agent.runner import run_agent
+from bot.agent.fallback import HANDOFF_CB
+from bot.agent.service import generate_agent_reply
 from bot.agent.tools import AgentContext, _normalize_phone, car_for_agent
 from bot.ai import AIError, get_ai
 from bot.config import settings
@@ -86,21 +86,32 @@ def _chunks(text: str) -> list[str]:
     return [text[i : i + _TG_LIMIT] for i in range(0, len(text), _TG_LIMIT)] or [""]
 
 
+async def forward_text_to_manager(bot: Bot, leads: LeadRepository, lead: Lead, text: str, *, source: str = "") -> None:
+    """Odam rejimida mijozning matnli xabarini menejer(lar)ga (Instagram va h.k. uchun ham)."""
+    targets = [lead.assigned_admin_id] if lead.assigned_admin_id else list(settings.admin_telegram_ids)
+    header = f"💬 <b>{html.escape(lead.name or 'Mijoz')}</b> (lead #{lead.id}){source}"
+    for aid in targets:
+        try:
+            m = await bot.send_message(aid, f"{header}:\n{html.escape(text)}", parse_mode=ParseMode.HTML)
+            await leads.add_relay(lead, aid, m.message_id)
+        except (TelegramBadRequest, TelegramForbiddenError) as e:
+            logger.warning("Lead #%s xabari admin %s ga uzatilmadi: %s", lead.id, aid, e)
+
+
 async def _forward_to_manager(bot: Bot, leads: LeadRepository, lead: Lead, message: Message, text: str | None) -> None:
     """Odam rejimida mijoz xabarini menejer(lar)ga uzatish — menejer reply qilsa javob mijozga boradi."""
+    if text and not (message.photo or message.video or message.document):
+        await forward_text_to_manager(bot, leads, lead, text)
+        return
     targets = [lead.assigned_admin_id] if lead.assigned_admin_id else list(settings.admin_telegram_ids)
     name = html.escape(lead.name or "Mijoz")
     header = f"💬 <b>{name}</b> (lead #{lead.id})"
     for aid in targets:
         try:
-            if text and not (message.photo or message.video or message.document):
-                m = await bot.send_message(aid, f"{header}:\n{html.escape(text)}", parse_mode=ParseMode.HTML)
-                await leads.add_relay(lead, aid, m.message_id)
-            else:
-                h = await bot.send_message(aid, header + ":", parse_mode=ParseMode.HTML)
-                await leads.add_relay(lead, aid, h.message_id)
-                c = await bot.copy_message(aid, from_chat_id=message.chat.id, message_id=message.message_id)
-                await leads.add_relay(lead, aid, c.message_id)
+            h = await bot.send_message(aid, header + ":", parse_mode=ParseMode.HTML)
+            await leads.add_relay(lead, aid, h.message_id)
+            c = await bot.copy_message(aid, from_chat_id=message.chat.id, message_id=message.message_id)
+            await leads.add_relay(lead, aid, c.message_id)
         except (TelegramBadRequest, TelegramForbiddenError) as e:
             logger.warning("Lead #%s xabari admin %s ga uzatilmadi: %s", lead.id, aid, e)
 
@@ -136,21 +147,13 @@ async def handle_customer_text(
             leads=leads,
             crm=crm,
             business_connection_id=business_connection_id,
+            buttons_supported=business_connection_id is None,
         )
         try:
             await bot.send_chat_action(user.id, ChatAction.TYPING, business_connection_id=business_connection_id)
         except TelegramBadRequest:
             pass
-        kb = None
-        ai = get_ai()
-        if ai.enabled:
-            try:
-                reply = await run_agent(ctx, ai, model=settings.agent_model)
-            except AIError as e:
-                logger.warning("AI agent ishlamadi (lead #%s), oddiy javob: %s", lead.id, e)
-                reply, kb = await fallback_reply(ctx, text)
-        else:
-            reply, kb = await fallback_reply(ctx, text)
+        reply, kb = await generate_agent_reply(ctx, text)
 
         await leads.add_message(lead, "assistant", reply)
         lead.score = lead_score(lead)

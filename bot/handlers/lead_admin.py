@@ -16,6 +16,7 @@ from bot.config import settings
 from bot.db.cars_repo import CarRepository
 from bot.db.leads_repo import LeadRepository
 from bot.db.models import Lead, LeadStatus
+from bot.instagram.client import IGError, get_ig
 from bot.services.lead_cards import HOT_SCORE, LEAD_STATUS_LABELS, lead_admin_kb, lead_card_html, send_lead_card
 
 logger = logging.getLogger(__name__)
@@ -48,8 +49,8 @@ async def _refresh_card(cq: CallbackQuery, lead: Lead, leads: LeadRepository, ca
 
 
 async def _notify_customer(bot: Bot, lead: Lead, text: str) -> None:
-    if lead.business_connection_id:
-        return  # Business chatda mijoz egasi bilan gaplashyapti deb biladi — tizim xabari kerak emas
+    if lead.business_connection_id or lead.channel == "instagram":
+        return  # Business/Instagram chatda mijoz akkaunt bilan gaplashyapti deb biladi — tizim xabari kerak emas
     try:
         await bot.send_message(lead.telegram_id, text, parse_mode=None)
     except (TelegramBadRequest, TelegramForbiddenError) as e:
@@ -62,6 +63,12 @@ class UnsupportedRelay(Exception):
 
 async def send_admin_message_to_customer(bot: Bot, lead: Lead, message: Message) -> None:
     """Menejer javobini mijozga: oddiy chatda nusxa, Business chatda — egasi nomidan (copyMessage u yerda ishlamaydi)."""
+    if lead.channel == "instagram":
+        # Instagram Direct — faqat matn (rasm Graph API'ga ochiq URL bilan kerak)
+        if not message.text:
+            raise UnsupportedRelay()
+        await get_ig().send_text(lead.telegram_id, message.text)
+        return
     bc = lead.business_connection_id
     if not bc:
         await bot.copy_message(lead.telegram_id, from_chat_id=message.chat.id, message_id=message.message_id)
@@ -149,9 +156,9 @@ async def admin_reply_relay(message: Message, bot: Bot, leads: LeadRepository) -
     try:
         await send_admin_message_to_customer(bot, lead, message)
     except UnsupportedRelay:
-        await message.reply("Business chatga faqat matn, rasm yoki ovoz yuboriladi.", parse_mode=None)
+        await message.reply("Bu chatga faqat matn (Instagram) yoki matn/rasm/ovoz (Business) yuboriladi.", parse_mode=None)
         return
-    except (TelegramBadRequest, TelegramForbiddenError) as e:
+    except (TelegramBadRequest, TelegramForbiddenError, IGError) as e:
         await message.reply(f"❌ Mijozga yuborilmadi: {html.escape(str(e))}", parse_mode=ParseMode.HTML)
         return
     await leads.add_message(lead, "admin", message.text or message.caption or "[media]")

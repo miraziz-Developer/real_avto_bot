@@ -35,6 +35,8 @@ from bot.middlewares.errors import UnhandledErrorMiddleware
 from bot.middlewares.rate_limit import RateLimitMiddleware
 from bot.middlewares.workflow import BotUsernameMiddleware
 from bot.ai import get_ai
+from bot.instagram.client import get_ig
+from bot.instagram.webhook import start_instagram_server
 from bot.workers.sale_followup import sale_followup_loop
 from bot.workers.lead_reminder import lead_reminder_loop
 from bot.workers.listing_freeze import listing_freeze_loop
@@ -250,6 +252,7 @@ async def _run() -> None:
     worker_stale = asyncio.create_task(stale_cars_loop(bot, session_factory))
     worker_leads = asyncio.create_task(lead_reminder_loop(bot, session_factory))
     worker_freeze = asyncio.create_task(listing_freeze_loop(bot, session_factory))
+    ig_runner = await start_instagram_server(bot, session_factory, get_ig())
     try:
         # channel_post / edited_channel_post ham kelishi uchun ishlatilayotgan update turlarini aniq so'raymiz
         await dp.start_polling(bot, handle_signals=True, allowed_updates=dp.resolve_used_update_types())
@@ -269,6 +272,9 @@ async def _run() -> None:
             except asyncio.CancelledError:
                 pass
         await get_ai().close()
+        if ig_runner is not None:
+            await ig_runner.cleanup()
+        await get_ig().close()
         try:
             await storage.close()
         except Exception:
