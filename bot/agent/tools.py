@@ -45,9 +45,12 @@ async def send_car_media(
     sent = 0
     try:
         if len(photos) == 1:
-            await bot.send_photo(chat_id, photos[0], caption=caption, business_connection_id=bc)
+            await bot.send_photo(chat_id, photos[0], caption=caption, parse_mode=None, business_connection_id=bc)
         elif photos:
-            media = [InputMediaPhoto(media=photos[0], caption=caption)] + [InputMediaPhoto(media=p) for p in photos[1:]]
+            # Izoh oddiy matn: mashina nomidagi «&» yoki «<» HTML xatosi bilan butun albomni yiqitmasin
+            media = [InputMediaPhoto(media=photos[0], caption=caption, parse_mode=None)] + [
+                InputMediaPhoto(media=p) for p in photos[1:]
+            ]
             await bot.send_media_group(chat_id, media, business_connection_id=bc)
         sent += len(photos)
     except (TelegramBadRequest, TelegramForbiddenError) as e:
@@ -57,7 +60,9 @@ async def send_car_media(
             if v.startswith(VIDEO_NOTE_PREFIX):
                 await bot.send_video_note(chat_id, v[len(VIDEO_NOTE_PREFIX):], business_connection_id=bc)
             else:
-                await bot.send_video(chat_id, v, caption=None if photos else caption, business_connection_id=bc)
+                await bot.send_video(
+                    chat_id, v, caption=None if photos else caption, parse_mode=None, business_connection_id=bc
+                )
             sent += 1
         except (TelegramBadRequest, TelegramForbiddenError) as e:
             logger.warning("Video yuborilmadi (car #%s): %s", car.id, e)
@@ -200,12 +205,15 @@ def _normalize_phone(raw: str) -> str | None:
     return None
 
 
+_INT_MAX = 2_147_483_647  # Postgres int — AI juda katta son yuborsa so'rov yiqilmasin
+
+
 def _int(v: Any) -> int | None:
     try:
         n = int(float(v))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    return n if n > 0 else None
+    return n if 0 < n <= _INT_MAX else None
 
 
 @dataclass
@@ -236,7 +244,9 @@ class AgentContext:
         if handler is None:
             return json.dumps({"error": f"noma'lum asbob: {name}"})
         try:
-            result = await handler(args or {})
+            # Savepoint: asbob ichida DB xatosi bo'lsa faqat shu asbob bekor bo'ladi — sessiya (va suhbat) buzilmaydi
+            async with self.cars.session.begin_nested():
+                result = await handler(args or {})
         except Exception:
             logger.exception("Agent asbobi xatosi: %s %s", name, args)
             result = {"error": "ichki xato — menejerga topshirishni taklif qil"}
@@ -365,7 +375,7 @@ class AgentContext:
             year_min=_int(a.get("year_min")) or 1990,
             year_max=_int(a.get("year_max")) or year_now + 1,
             budget_min=None,
-            budget_max=_int(a.get("budget_max_usd")) or 1_000_000,
+            budget_max=min(_int(a.get("budget_max_usd")) or 1_000_000, 1_000_000),
             condition_key=None,
         )
         return {"saved": True, "alert_id": wish.id, "note": "Mos e'lon kanalga chiqsa mijozga avtomatik xabar boradi."}

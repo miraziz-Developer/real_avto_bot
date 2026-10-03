@@ -277,7 +277,7 @@ publicRouter.post("/alerts", asyncHandler(async (req, res) => {
   const thisYear = new Date().getFullYear() + 1;
   const yearMin = clamp(intOrNull(body.year_min) || 1990, 1950, thisYear);
   const yearMax = clamp(intOrNull(body.year_max) || thisYear, yearMin, thisYear);
-  const budgetMax = clamp(intOrNull(body.budget_max_usd) || 1_000_000, 100, 100_000_000);
+  const budgetMax = clamp(intOrNull(body.budget_max_usd) || 1_000_000, 100, 1_000_000);
   const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ") || null;
   const client = await pool.connect();
   try {

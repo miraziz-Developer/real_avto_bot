@@ -27,3 +27,12 @@ def parse_int_in_range(raw: str | None, lo: int, hi: int, *, allow_separators: b
     if v is None or v < lo or v > hi:
         return None
     return v
+
+
+_DB_INT_MAX = 2_147_483_647
+
+
+def parse_db_id(raw: str | None) -> int | None:
+    """Admin buyrug'i / tugmadagi ID: musbat, Postgres int ga sig'adigan butun son (aks holda None)."""
+    v = parse_int((raw or "").strip().lstrip("#"), allow_separators=False)
+    return v if v is not None and 0 < v <= _DB_INT_MAX else None

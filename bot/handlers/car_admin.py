@@ -23,10 +23,17 @@ from aiogram.types import (
 from bot.config import is_admin, settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import Car, CarStatus
-from bot.services.car_cards import STATUS_LABELS, car_admin_kb, car_can_be_posted, car_card_html, car_channel_caption
 from bot.db.repositories import CrmRepository
+from bot.services.car_cards import (
+    STATUS_LABELS,
+    car_admin_kb,
+    car_can_be_posted,
+    car_card_html,
+    car_channel_caption,
+)
 from bot.services.car_parser import REQUIRED_FIELDS, parse_admin_edit, parse_price_usd
 from bot.services.wishlist_notify import notify_wishlist_matches_car
+from bot.utils.numbers import parse_db_id
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +63,10 @@ class CarEditStates(StatesGroup):
 
 def _parse_cb(data: str | None) -> tuple[str, int] | None:
     parts = (data or "").split(":")
-    if len(parts) != 3 or not parts[2].isdigit():
+    cid = parse_db_id(parts[2]) if len(parts) == 3 else None
+    if cid is None:
         return None
-    return parts[1], int(parts[2])
+    return parts[1], cid
 
 
 async def _refresh_card(cq: CallbackQuery, car: Car, header: str | None = None) -> None:
@@ -129,6 +137,9 @@ async def car_action(cq: CallbackQuery, state: FSMContext, cars: CarRepository, 
 
 
 async def _post_to_channel(cq: CallbackQuery, car: Car, cars: CarRepository, crm: CrmRepository) -> None:
+    # Qatorni qulflaymiz: ikki admin bir vaqtda «Kanalga joylash» bossa — ikkinchisi «allaqachon kanalda» oladi
+    await cars.session.flush()
+    await cars.session.refresh(car, with_for_update=True)
     if not car_can_be_posted(car):
         await cq.answer("Bu mashinani kanalga joylab bo'lmaydi (rasm yo'q yoki allaqachon kanalda)", show_alert=True)
         return
@@ -167,7 +178,7 @@ async def car_edit_apply(message: Message, state: FSMContext, cars: CarRepositor
         await state.clear()
         return
     data = await state.get_data()
-    car = await cars.get(int(data.get("car_id") or 0))
+    car = await cars.get(parse_db_id(str(data.get("car_id") or "")) or 0)
     if car is None:
         await state.clear()
         await message.answer("Mashina topilmadi.")
@@ -201,11 +212,11 @@ async def car_edit_apply(message: Message, state: FSMContext, cars: CarRepositor
 async def cmd_car(message: Message, command: CommandObject, cars: CarRepository) -> None:
     if message.from_user is None or not is_admin(message.from_user.id):
         return
-    arg = (command.args or "").strip().lstrip("#")
-    if not arg.isdigit():
+    car_id = parse_db_id(command.args)
+    if car_id is None:
         await message.answer("Foydalanish: <code>/mashina 12</code>", parse_mode=ParseMode.HTML)
         return
-    car = await cars.get(int(arg))
+    car = await cars.get(car_id)
     if car is None:
         await message.answer("Mashina topilmadi.")
         return
@@ -219,13 +230,14 @@ async def cmd_sold(message: Message, command: CommandObject, cars: CarRepository
     if message.from_user is None or not is_admin(message.from_user.id):
         return
     parts = (command.args or "").split(maxsplit=1)
-    if not parts or not parts[0].lstrip("#").isdigit():
+    car_id = parse_db_id(parts[0]) if parts else None
+    if car_id is None:
         await message.answer(
             "Foydalanish: <code>/sotildi 12</code> yoki narx bilan <code>/sotildi 12 9500</code>",
             parse_mode=ParseMode.HTML,
         )
         return
-    car = await cars.get(int(parts[0].lstrip("#")))
+    car = await cars.get(car_id)
     if car is None:
         await message.answer("Mashina topilmadi.")
         return

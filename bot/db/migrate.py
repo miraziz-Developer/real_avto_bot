@@ -40,6 +40,24 @@ async def apply_listing_extra_details_column(engine: AsyncEngine) -> None:
         )
 
 
+def _usd_rate() -> int:
+    return max(1, int((os.getenv("USD_RATE_UZS", "") or "13000").strip() or "13000"))
+
+
+async def _claim_once(conn, key: str) -> bool:
+    """Bir martalik ma'lumot migratsiyasi: True — shu chaqiruv bajarishi kerak (belgi shu tranzaksiyada qo'yiladi)."""
+    await conn.execute(
+        text("CREATE TABLE IF NOT EXISTS app_meta (key VARCHAR(64) PRIMARY KEY, value TEXT NOT NULL)")
+    )
+    row = (
+        await conn.execute(
+            text("INSERT INTO app_meta (key, value) VALUES (:k, 'done') ON CONFLICT (key) DO NOTHING RETURNING key"),
+            {"k": key},
+        )
+    ).first()
+    return row is not None
+
+
 async def apply_listing_price_ask_usd_rename(engine: AsyncEngine) -> None:
     """Eski ustun nomi price_ask_uzs bo'lsa — price_ask_usd (qiymat: USD butun son)."""
     async with engine.begin() as conn:
@@ -66,16 +84,19 @@ async def apply_listing_price_ask_usd_rename(engine: AsyncEngine) -> None:
                 """
             )
         )
-        rate = max(1, int((os.getenv("USD_RATE_UZS", "") or "13000").strip() or "13000"))
-        await conn.execute(
-            text(
-                f"""
-                UPDATE listing_submissions
-                SET price_ask_usd = GREATEST(1, (price_ask_usd / {rate})::bigint)
-                WHERE price_ask_usd > 1000000;
-                """
+        # Bir martalik (so'm → USD) konvertatsiya. Avval har restartda ishlardi va 1 mln dan katta har qanday
+        # qiymatni qayta-qayta kursga bo'lib yuborardi — endi app_meta belgisi bilan faqat bir marta.
+        if await _claim_once(conn, "migr:listing_price_uzs_to_usd"):
+            rate = _usd_rate()
+            await conn.execute(
+                text(
+                    f"""
+                    UPDATE listing_submissions
+                    SET price_ask_usd = GREATEST(1, (price_ask_usd / {rate})::bigint)
+                    WHERE price_ask_usd > 1000000;
+                    """
+                )
             )
-        )
 
 
 async def apply_wishlist_table(engine: AsyncEngine) -> None:
@@ -108,7 +129,9 @@ async def apply_wishlist_table(engine: AsyncEngine) -> None:
                 """
             )
         )
-        rate = max(1, int((os.getenv("USD_RATE_UZS", "") or "13000").strip() or "13000"))
+        if not await _claim_once(conn, "migr:wishlist_budget_uzs_to_usd"):
+            return
+        rate = _usd_rate()
         await conn.execute(
             text(
                 f"""

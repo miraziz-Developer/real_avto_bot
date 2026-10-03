@@ -250,3 +250,63 @@ async def test_admin_stats_and_pending_queue(factory):
         assert st["submitted_24h"] == 2
         assert st["clients"] == 2
         assert [r.id for r in await crm.list_pending_listings()] == [b]
+
+
+async def test_uzs_to_usd_migrations_run_only_once(factory):
+    """Eski xato: har restartda 1 mln dan katta byudjet/narx qayta-qayta kursga bo'linardi."""
+    from sqlalchemy import text as sql_text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from bot.db.migrate import apply_listing_price_ask_usd_rename, apply_wishlist_table
+
+    engine = create_async_engine(DB_URL)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(sql_text("DELETE FROM app_meta WHERE key LIKE 'migr:%'"))
+        lid = await _new_listing(factory, tg_id=31)
+        async with factory() as s:
+            await s.execute(sql_text("update listing_submissions set price_ask_usd = 130000000 where id=:i"), {"i": lid})
+            await s.commit()
+        # 1-ishga tushish: eski so'mdagi qiymat USD ga o'tadi
+        await apply_listing_price_ask_usd_rename(engine)
+        await apply_wishlist_table(engine)
+        async with factory() as s:
+            assert (await CrmRepository(s).get_listing_submission(lid)).price_ask_usd == 10000
+            await s.execute(sql_text("update listing_submissions set price_ask_usd = 2000000 where id=:i"), {"i": lid})
+            await s.commit()
+        # Keyingi restartlar — tegmaydi
+        await apply_listing_price_ask_usd_rename(engine)
+        await apply_listing_price_ask_usd_rename(engine)
+        async with factory() as s:
+            assert (await CrmRepository(s).get_listing_submission(lid)).price_ask_usd == 2000000
+    finally:
+        await engine.dispose()
+
+
+async def test_parallel_messages_open_one_lead_and_one_admin_takes_it(factory):
+    from bot.db.leads_repo import LeadRepository
+
+    async def open_lead():
+        async with factory() as s:
+            lead, created = await LeadRepository(s).get_or_create_open(4242, name="Aziz")
+            await asyncio.sleep(0.2)  # agent javobi tayyorlanayotgan vaqt
+            await s.commit()
+            return lead.id, created
+
+    results = await asyncio.gather(open_lead(), open_lead())
+    assert results[0][0] == results[1][0]
+    assert sorted(c for _, c in results) == [False, True]
+
+    lead_id = results[0][0]
+
+    async def take(admin_id: int):
+        async with factory() as s:
+            repo = LeadRepository(s)
+            lead = await repo.get(lead_id)
+            ok = await repo.take(lead, admin_id)
+            await asyncio.sleep(0.2)
+            await s.commit()
+            return ok
+
+    outcomes = await asyncio.gather(take(1), take(2))
+    assert sorted(outcomes) == [False, True]
