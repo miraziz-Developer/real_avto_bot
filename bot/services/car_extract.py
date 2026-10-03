@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from bot.ai import AIError, GroqClient
+from bot.ai import AIClient, AIError
 from bot.services.car_parser import ParsedCar, parse_car_text
 
 logger = logging.getLogger(__name__)
@@ -112,7 +112,7 @@ def ai_dict_to_parsed(data: dict, *, usd_rate_uzs: int) -> ParsedCar:
     )
 
 
-async def extract_car(text: str, *, ai: GroqClient | None, usd_rate_uzs: int) -> ParsedCar:
+async def extract_car(text: str, *, ai: AIClient | None, usd_rate_uzs: int) -> ParsedCar:
     parsed = parse_car_text(text, usd_rate_uzs=usd_rate_uzs)
     if ai is None or not ai.enabled or not text.strip():
         parsed.confidence = 0.9 if parsed.is_complete() else 0.4

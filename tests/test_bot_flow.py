@@ -611,3 +611,96 @@ def test_instagram_lead_card_links_to_instagram_not_telegram():
     lead = LeadModel(id=7, telegram_id=17841400000000001, channel="instagram", username="aziz_ig", name="Aziz", status="handed_off")
     html_text = lead_card_html(lead)
     assert "https://instagram.com/aziz_ig" in html_text and "tg://user" not in html_text
+
+
+class _FakeVideoAI:
+    """Gemini o'rniga: videoni «ko'radi», agent javobini qaytaradi."""
+
+    provider = "gemini"
+    supports_video = True
+    model = agent_model = "fake"
+    enabled = True
+
+    def __init__(self) -> None:
+        self.media: list[tuple[int, str | None]] = []
+        self.chats: list[list[dict]] = []
+
+    async def transcribe(self, audio: bytes, *, filename: str = "audio.ogg", mime_type: str | None = None) -> str:
+        self.media.append((len(audio), mime_type))
+        return "kobalt bormi, narxi qancha?\n[Videoda ko'rinadi]: oq Chevrolet Cobalt"
+
+    async def chat(self, messages, *, tools=None, model=None, temperature=0.3, max_tokens=700):
+        self.chats.append(messages)
+        return {"content": "Ha, Cobalt 2020 bor — 9200$.", "tool_calls": []}
+
+    async def chat_json(self, system, user, **kw):
+        return {}
+
+    async def close(self) -> None:
+        pass
+
+
+async def test_customer_video_is_seen_by_ai_and_answered(env, monkeypatch):
+    from aiogram.types import File, Video
+
+    from bot.agent import service as agent_service
+    from bot.handlers import sales_agent
+
+    dp, bot, session, factory, _ = env
+    fake = _FakeVideoAI()
+    monkeypatch.setattr(sales_agent, "get_ai", lambda: fake)
+    monkeypatch.setattr(agent_service, "get_ai", lambda: fake)
+
+    async def get_file(file_id, **kw):
+        return File(file_id=file_id, file_unique_id="u", file_path="videos/v.mp4")
+
+    async def download_file(path, **kw):
+        import io
+
+        return io.BytesIO(b"\x00" * 1234)
+
+    monkeypatch.setattr(bot, "get_file", get_file)
+    monkeypatch.setattr(bot, "download_file", download_file)
+
+    video_msg = Message(
+        message_id=next(_ids),
+        date=datetime.now(timezone.utc),
+        chat=Chat(id=CUSTOMER_ID, type="private"),
+        from_user=User(id=CUSTOMER_ID, is_bot=False, first_name="Aziz"),
+        video=Video(
+            file_id="vid1", file_unique_id="uv1", width=720, height=1280, duration=30,
+            mime_type="video/mp4", file_size=1234,
+        ),
+    )
+    await dp.feed_update(bot, Update(update_id=next(_ids), message=video_msg))
+
+    assert fake.media == [(1234, "video/mp4")]
+    # Agent videodagi savolni oldi va javob berdi
+    assert any("[Video]: kobalt bormi" in (m.get("content") or "") for m in fake.chats[-1] if m["role"] == "user")
+    assert "Cobalt 2020 bor" in session.sent(SendMessage, CUSTOMER_ID)[-1].text
+    async with factory() as s:
+        contents = [m.content for m in (await s.execute(select(AgentMessage).order_by(AgentMessage.id))).scalars()]
+    assert any("[Videoda ko'rinadi]: oq Chevrolet Cobalt" in c for c in contents)
+
+
+async def test_customer_video_too_big_goes_to_manager_only(env, monkeypatch):
+    from aiogram.types import Video
+
+    from bot.handlers import sales_agent
+
+    dp, bot, session, _, _ = env
+    fake = _FakeVideoAI()
+    monkeypatch.setattr(sales_agent, "get_ai", lambda: fake)
+    video_msg = Message(
+        message_id=next(_ids),
+        date=datetime.now(timezone.utc),
+        chat=Chat(id=CUSTOMER_ID, type="private"),
+        from_user=User(id=CUSTOMER_ID, is_bot=False, first_name="Aziz"),
+        video=Video(
+            file_id="big", file_unique_id="ub", width=720, height=1280, duration=300,
+            mime_type="video/mp4", file_size=50 * 1024 * 1024,
+        ),
+    )
+    await dp.feed_update(bot, Update(update_id=next(_ids), message=video_msg))
+    assert fake.media == []  # 20 MB dan katta — Telegram bermaydi, urinmaymiz
+    assert "Menejerimiz ko'rib chiqadi" in session.sent(SendMessage, CUSTOMER_ID)[-1].text

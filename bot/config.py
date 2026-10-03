@@ -97,6 +97,13 @@ def _log_level() -> str:
     return (os.getenv("LOG_LEVEL", "INFO") or "INFO").strip().upper()
 
 
+def _float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return float(raw.replace(",", "."))
+
+
 def _bool(name: str, default: bool) -> bool:
     raw = (os.getenv(name) or "").strip().lower()
     if not raw:
@@ -141,6 +148,17 @@ class Settings:
     groq_stt_model: str
     groq_stt_language: str
     groq_stt_prompt: str
+    ai_provider: str
+    gemini_api_key: str
+    gemini_model: str
+    gemini_agent_model: str
+    gemini_thinking_level: str
+    gemini_media_resolution: str
+    ai_daily_budget_usd: float
+    ai_user_daily_limit: int
+    ai_price_input_per_m: float | None
+    ai_price_output_per_m: float | None
+    ai_price_audio_per_m: float | None
     car_stale_days: int
     agent_enabled: bool
     agent_model: str
@@ -211,6 +229,23 @@ settings = Settings(
             "nasiya, boshlang'ich to'lov, narxi, dollar, million so'm, kelishamiz."
         )
     ).strip(),
+    # AI provayder: auto — GEMINI_API_KEY bo'lsa Gemini (video/ovoz/matnni bitta model tushunadi), aks holda Groq
+    ai_provider=(os.getenv("AI_PROVIDER", "") or "auto").strip().lower(),
+    gemini_api_key=(os.getenv("GEMINI_API_KEY", "") or "").strip(),
+    gemini_model=(os.getenv("GEMINI_MODEL", "") or "gemini-3.1-flash-lite").strip(),
+    gemini_agent_model=(os.getenv("GEMINI_AGENT_MODEL", "") or os.getenv("GEMINI_MODEL", "") or "gemini-3.1-flash-lite").strip(),
+    # «Thinking» tokenlari ham pullik: low — oddiy vazifalar uchun yetarli. Bo'sh — model standarti
+    gemini_thinking_level=(os.getenv("GEMINI_THINKING_LEVEL", "low") or "").strip().lower(),
+    # Video kadrlari sifati: low — ~3 barobar arzon, mashina/probeg/rangni aniqlashga yetarli
+    gemini_media_resolution=(os.getenv("GEMINI_MEDIA_RESOLUTION", "low") or "").strip().lower(),
+    # Kunlik AI xarajati chegarasi (USD, taxminiy). Oshsa AI o'chadi (regex/oddiy javob ishlaydi), adminga xabar. 0 — cheksiz
+    ai_daily_budget_usd=_float("AI_DAILY_BUDGET_USD", 1.0),
+    # Bitta mijozga kuniga shuncha AI javob/ovoz tahlili (spam'dan himoya). 0 — cheksiz
+    ai_user_daily_limit=_int("AI_USER_DAILY_LIMIT", 40),
+    # Narxlar (1M token, USD). Bo'sh — tanlangan provayder uchun standart qiymat
+    ai_price_input_per_m=_float("AI_PRICE_INPUT_PER_M", 0.0) or None,
+    ai_price_output_per_m=_float("AI_PRICE_OUTPUT_PER_M", 0.0) or None,
+    ai_price_audio_per_m=_float("AI_PRICE_AUDIO_PER_M", 0.0) or None,
     # Shuncha kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi
     car_stale_days=_int("CAR_STALE_DAYS", 14),
     # AI savdo agenti: botga yozilgan savollarga mashinalar bazasidan javob beradi

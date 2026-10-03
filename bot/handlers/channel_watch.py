@@ -110,6 +110,24 @@ def _message_text(m: Message) -> str:
     return (m.caption or m.text or "").strip()
 
 
+def _media_mime(m: Message) -> str:
+    if m.voice is not None:
+        return m.voice.mime_type or "audio/ogg"
+    if m.audio is not None:
+        return m.audio.mime_type or "audio/mpeg"
+    if m.video is not None:
+        return m.video.mime_type or "video/mp4"
+    return "video/mp4"  # dumaloq video
+
+
+def _media_filename(m: Message) -> str:
+    if m.voice is not None:
+        return "audio.ogg"
+    if m.audio is not None:
+        return m.audio.file_name or "audio.mp3"
+    return "video.mp4"
+
+
 # (chat_id, message_id) → transkripsiya: bir video bir necha marta (pullik) qayta o'qilmasin
 _transcript_cache: dict[tuple[int, int], str] = {}
 
@@ -135,8 +153,7 @@ async def _transcribe_media(bot: Bot, messages: list[Message]) -> list[str]:
             buf = await bot.download_file(f.file_path)
             if buf is None:
                 continue
-            name = "audio.ogg" if m.voice else "video.mp4"
-            text = await ai.transcribe(buf.read(), filename=name)
+            text = await ai.transcribe(buf.read(), filename=_media_filename(m), mime_type=_media_mime(m))
             if len(_transcript_cache) > 2000:
                 _transcript_cache.clear()
             _transcript_cache[key] = text

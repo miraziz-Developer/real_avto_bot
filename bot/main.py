@@ -36,7 +36,8 @@ from bot.middlewares.database import DbSessionMiddleware
 from bot.middlewares.errors import UnhandledErrorMiddleware
 from bot.middlewares.rate_limit import RateLimitMiddleware
 from bot.middlewares.workflow import BotUsernameMiddleware
-from bot.ai import get_ai
+from bot.ai import close_ai, get_ai, get_budget
+from bot.services.car_cards import notify_admins_text
 from bot.instagram.client import get_ig
 from bot.instagram.webhook import start_instagram_server
 from bot.workers.sale_followup import sale_followup_loop
@@ -267,6 +268,8 @@ async def _run() -> None:
     # await _verify_leaderboard_channel(bot)
     await _verify_reviews_channel(bot)
     await _set_admin_commands(bot)
+    get_ai()  # provayder/model logga yoziladi
+    get_budget().set_alert(lambda text: notify_admins_text(bot, text))
     await _set_catalog_menu_button(bot)
 
     storage = await _fsm_storage()
@@ -316,7 +319,7 @@ async def _run() -> None:
                 await w
             except asyncio.CancelledError:
                 pass
-        await get_ai().close()
+        await close_ai()
         if ig_runner is not None:
             await ig_runner.cleanup()
         await get_ig().close()

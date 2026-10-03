@@ -9,6 +9,8 @@ from typing import Any
 
 import aiohttp
 
+from bot.ai.budget import AIBudget, Prices
+from bot.ai.errors import AIError
 from bot.config import settings
 
 logger = logging.getLogger(__name__)
@@ -18,15 +20,31 @@ _TIMEOUT = aiohttp.ClientTimeout(total=60)
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 
-class AIError(RuntimeError):
-    pass
+# gpt-oss-120b (2026): $0.15 kirish / $0.60 chiqish — 1M token. Whisper soatbay (juda arzon) — hisobga olinmaydi
+DEFAULT_PRICES = Prices(input_per_m=0.15, output_per_m=0.60, audio_per_m=0.0)
 
 
 class GroqClient:
-    def __init__(self, api_key: str, *, model: str, stt_model: str) -> None:
+    provider = "groq"
+    # Whisper faqat ovozni eshitadi — video kadrlarini ko'rmaydi
+    supports_video = False
+
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        model: str,
+        stt_model: str,
+        agent_model: str | None = None,
+        budget: AIBudget | None = None,
+        prices: Prices = DEFAULT_PRICES,
+    ) -> None:
         self._api_key = api_key
         self.model = model
+        self.agent_model = agent_model or model
         self.stt_model = stt_model
+        self.budget = budget
+        self.prices = prices
         self._session: aiohttp.ClientSession | None = None
 
     @property
@@ -48,6 +66,20 @@ class GroqClient:
     async def _post(self, path: str, **kwargs: Any) -> dict:
         if not self.enabled:
             raise AIError("GROQ_API_KEY sozlanmagan")
+        if self.budget is not None:
+            await self.budget.ensure_available()
+        data = await self._post_raw(path, **kwargs)
+        usage = data.get("usage") if isinstance(data, dict) else None
+        if self.budget is not None and isinstance(usage, dict):
+            await self.budget.add_cost(
+                self.prices.cost(
+                    input_tokens=int(usage.get("prompt_tokens") or 0),
+                    output_tokens=int(usage.get("completion_tokens") or 0),
+                )
+            )
+        return data
+
+    async def _post_raw(self, path: str, **kwargs: Any) -> dict:
         last: str = ""
         for attempt in range(3):
             try:
@@ -110,7 +142,7 @@ class GroqClient:
             raise AIError(f"Javob formati noto'g'ri: {e}") from e
         return {"content": msg.get("content"), "tool_calls": msg.get("tool_calls") or []}
 
-    async def transcribe(self, audio: bytes, *, filename: str = "audio.ogg") -> str:
+    async def transcribe(self, audio: bytes, *, filename: str = "audio.ogg", mime_type: str | None = None) -> str:
         """Ovozli xabar / dumaloq video ovozini matnga aylantirish."""
         form = aiohttp.FormData()
         form.add_field("file", audio, filename=filename)
@@ -125,13 +157,3 @@ class GroqClient:
         form.add_field("response_format", "json")
         data = await self._post("/audio/transcriptions", data=form)
         return str(data.get("text") or "").strip()
-
-
-_client: GroqClient | None = None
-
-
-def get_ai() -> GroqClient:
-    global _client
-    if _client is None:
-        _client = GroqClient(settings.groq_api_key, model=settings.groq_model, stt_model=settings.groq_stt_model)
-    return _client

@@ -14,9 +14,10 @@ import html
 import logging
 
 from aiogram import Bot, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BusinessConnection, Message
 
-from bot.ai import AIError, get_ai
+from bot.ai import AIError, get_ai, get_budget
 from bot.config import settings
 from bot.db.cars_repo import CarRepository
 from bot.db.leads_repo import LeadRepository
@@ -81,12 +82,16 @@ async def on_business_message(
     if text is None and (message.voice or message.video_note):
         ai = get_ai()
         media = message.voice or message.video_note
-        if ai.enabled and media is not None:
+        uid = message.from_user.id if message.from_user else 0
+        if ai.enabled and media is not None and await get_budget().allow_user(f"tg:{uid}"):
             try:
                 f = await bot.get_file(media.file_id)
                 buf = await bot.download_file(f.file_path)
-                text = await ai.transcribe(buf.read() if buf else b"", filename="audio.ogg" if message.voice else "video.mp4")
-            except AIError as e:
+                text = await ai.transcribe(
+                    buf.read() if buf else b"",
+                    filename="audio.ogg" if message.voice else "video.mp4",
+                )
+            except (AIError, TelegramBadRequest) as e:
                 logger.warning("Business ovozini o'qib bo'lmadi: %s", e)
     if not text or text.startswith("/"):
         return  # rasm/stiker va h.k. — egasi o'zi ko'radi
