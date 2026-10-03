@@ -97,6 +97,11 @@ def _log_level() -> str:
     return (os.getenv("LOG_LEVEL", "INFO") or "INFO").strip().upper()
 
 
+def _optional_int(name: str) -> int | None:
+    raw = (os.getenv(name) or "").strip()
+    return int(raw) if raw else None
+
+
 def _float(name: str, default: float) -> float:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -170,6 +175,8 @@ class Settings:
     business_enabled: bool
     business_owner_pause_hours: int
     comments_enabled: bool
+    comments_ai_enabled: bool
+    discussion_group_id: int | None
     listing_freeze_hours: int
     work_hour_start: int
     work_hour_end: int
@@ -247,7 +254,7 @@ settings = Settings(
     ai_price_output_per_m=_float("AI_PRICE_OUTPUT_PER_M", 0.0) or None,
     ai_price_audio_per_m=_float("AI_PRICE_AUDIO_PER_M", 0.0) or None,
     # Shuncha kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi
-    car_stale_days=_int("CAR_STALE_DAYS", 14),
+    car_stale_days=_int("CAR_STALE_DAYS", 7),
     # AI savdo agenti: botga yozilgan savollarga mashinalar bazasidan javob beradi
     agent_enabled=_bool("AGENT_ENABLED", True),
     agent_model=(os.getenv("GROQ_AGENT_MODEL", "") or os.getenv("GROQ_MODEL", "") or "openai/gpt-oss-120b").strip(),
@@ -264,6 +271,11 @@ settings = Settings(
     business_owner_pause_hours=_int("BUSINESS_OWNER_PAUSE_HOURS", 6),
     # Kanal kommentlaridagi savollarga bazadan qisqa javob + botga havola
     comments_enabled=_bool("COMMENTS_ENABLED", True),
+    # Kommentlar va muhokama guruhidagi xabarlarni AI o'qib, vaziyatga qarab javob beradi (salbiy fikrga ham).
+    # AI kaliti yo'q / chegara tugasa — eski shablon javob (faqat savollarga)
+    comments_ai_enabled=_bool("COMMENTS_AI_ENABLED", True),
+    # Muhokama guruhi ID (-100...). Bo'sh — kanal postlari avto-forward bo'ladigan guruh o'zi aniqlanadi
+    discussion_group_id=_optional_int("DISCUSSION_GROUP_ID"),
     # Bot orqali kelgan e'lon shuncha ISH soati muzlatiladi (jamoa sotib olishi mumkin), keyin avtomatik kanalga.
     # 0 — avtomatik joylash yo'q (faqat qo'lda tasdiqlash)
     listing_freeze_hours=_int("LISTING_FREEZE_HOURS", 6),

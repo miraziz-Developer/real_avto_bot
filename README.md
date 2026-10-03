@@ -20,7 +20,7 @@ Kanalga tashlangan har bir e'lon avtomatik **mashinalar bazasiga** (`cars`) yozi
 - Ma'lumot to'liq bo'lsa — 🟢 *Sotuvda*; yetishmasa — 🟡 *Tekshiruv* (kartadagi «✏️ Tuzatish» orqali to'ldiriladi).
 - **Sotildi** deb belgilash (istalgani): kanal postini tahrirlab «SOTILDI» yozish · postga «sotildi» deb reply · kartadagi «💰 Sotildi» · `/sotildi ID [narx]` · CRM.
 - Bot orqali berilgan va tasdiqlangan e'lonlar ham bazaga tushadi; egasi «sotildi» desa — bazada ham sotildi.
-- `CAR_STALE_DAYS` (14) kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi (ish vaqtida).
+- `CAR_STALE_DAYS` (7) kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi (ish vaqtida).
 
 **AI (ixtiyoriy)** — `.env` ga `GEMINI_API_KEY` (tavsiya) yoki `GROQ_API_KEY` qo'shilsa: aniqroq tahlil, qisqa xulosa, ovoz va dumaloq videoni tushunish. Gemini videoni **ko'radi** ham (marka, rang, kuzov, spidometr) — Groq faqat ovozni matnga aylantiradi. Kunlik xarajat chegarasi: `AI_DAILY_BUDGET_USD` (standart $1). Kalitsiz ham oddiy (regex) tahlil ishlaydi. Batafsil: [DEPLOY.md 12.10](DEPLOY.md#1210-geminiga-otish-video--ovoz--ozbek-tili).
 
@@ -81,9 +81,15 @@ Botga yozilgan har qanday savolga (matn yoki ovoz) agent **faqat mashinalar baza
 
 Egasi mijozga **o'zi yozsa** — AI shu mijoz bilan `BUSINESS_OWNER_PAUSE_HOURS` (6) soat jim turadi. Business chatda tugmalar yuborilmaydi (Telegram cheklovi); menejer javobi ham akkaunt nomidan ketadi.
 
-**Kommentlar** — kanal postiga «narxi qancha?», «bormi?», «kredit bormi?» kabi savol yozilsa, bot bazadan qisqa javob beradi (sotuvda/bron/sotilgan, narx, probeg) va «🤖 Botda batafsil» tugmasini qo'yadi. Ochiq joyda AI ishlatilmaydi — faqat bazadagi faktlar. Xarid niyati bo'lsa («olaman», «kredit», «raqam») — adminlarga signal.
-- Talab: bot kanalga ulangan **muhokama guruhida admin** bo'lishi kerak.
-- Bir mijozga bitta post bo'yicha 10 daqiqada bir marta javob (guruh to'lib ketmasligi uchun). O'chirish: `COMMENTS_ENABLED=false`.
+**Kommentlar va muhokama guruhi** — AI har bir xabarni (matn, ovoz, dumaloq video, izohli rasm/video) o'qiydi va vaziyatga qarab ishlaydi:
+- **Savol** (narx, bormi, probeg, holat, manzil, kredit) → bazadagi faktlar bilan qisqa javob + «🤖 Botda batafsil» tugmasi. Post ostida bo'lmasa ham («gentra bormi?») — sotuvdagi mos mashinalardan javob.
+- **Xarid niyati** («olaman», «ko'rsam bo'ladimi», raqam so'rash) → javob + adminlarga signal.
+- **Salbiy fikr** (qimmat, aldov, xizmat yomon) → bahslashmasdan, xushmuomala javob + adminlarga «😟 salbiy fikr» signali (xabarga havola bilan).
+- **Haqorat / provokatsiya / spam** → javob yo'q; haqorat bo'lsa adminlarga signal. **Maqtov va mavzudan tashqari suhbat** → jim.
+- Qoidalar: faqat bazadagi faktlar, chegirma/kredit va'dasi yo'q, foydalanuvchi qaysi tilda yozsa shu tilda. Tekshiruvdagi (tasdiqlanmagan) mashina raqamlari ochiq aytilmaydi; xarid narxi, foyda, ichki izohlar hech qachon.
+- Menejerlar (`ADMIN_TELEGRAM_IDS`) guruhda yozsa — AI aralashmaydi. Bitta odamga 10 daqiqada ko'pi bilan 3 ta javob. Bot boshqa guruhga qo'shilsa — u yerda jim.
+- AI kaliti yo'q / kunlik chegara tugagan bo'lsa — eski rejim: post ostidagi savolga bazadan shablon javob.
+- Talab: bot kanalga ulangan **muhokama guruhida admin** bo'lishi kerak. Sozlamalar: `COMMENTS_ENABLED`, `COMMENTS_AI_ENABLED`, `DISCUSSION_GROUP_ID` (ixtiyoriy).
 
 ---
 

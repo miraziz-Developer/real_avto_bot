@@ -61,7 +61,7 @@ services:
       BUSINESS_HOURS: ${BUSINESS_HOURS:-}
       REAL_AVTO_MAP_URL: ${REAL_AVTO_MAP_URL:-}
       USD_RATE_UZS: ${USD_RATE_UZS:-}
-      CAR_STALE_DAYS: ${CAR_STALE_DAYS:-14}
+      CAR_STALE_DAYS: ${CAR_STALE_DAYS:-7}
     init: true
     depends_on:
       db:

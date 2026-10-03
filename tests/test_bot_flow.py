@@ -718,3 +718,190 @@ async def test_admin_overview_and_queue_commands(env):
 
     await dp.feed_update(bot, _text_update(ADMIN_ID, "/navbat"))
     assert "navbati bo'sh" in session.sent(SendMessage, ADMIN_ID)[-1].text
+
+
+# --- Kommentlar: AI rejimi -------------------------------------------------------------------
+class _FakeCommentAI:
+    provider = "gemini"
+    supports_video = True
+    model = agent_model = "fake"
+    enabled = True
+
+    def __init__(self, decisions: list[dict] | None = None, fail: bool = False) -> None:
+        self.decisions = list(decisions or [])
+        self.fail = fail
+        self.calls: list[tuple[str, str]] = []
+
+    async def chat_json(self, system, user, **kw):
+        from bot.ai import AIError
+
+        self.calls.append((system, user))
+        if self.fail:
+            raise AIError("tarmoq")
+        return self.decisions.pop(0)
+
+    async def chat(self, *a, **kw):
+        return {"content": "", "tool_calls": []}
+
+    async def transcribe(self, audio, *, filename="audio.ogg", mime_type=None):
+        return "narxi qancha"
+
+    async def close(self):
+        pass
+
+
+async def _comment_setup(factory, dp, bot, *, status=None):
+    async with factory() as s:
+        car = await CarRepository(s).create_from_parsed(
+            ParsedCar(brand="Chevrolet", model="Gentra", year=2019, mileage_km=120000, price_usd=9800),
+            source=CarSource.CHANNEL,
+            raw_text="Gentra 2019, 120 000 km\n[Ovoz]: narxi 9800",
+            channel_chat_id=CHANNEL_CHAT.id,
+            channel_message_ids=[77],
+        )
+        if status is not None:
+            car.status = status
+        await s.commit()
+        car_id = car.id
+    auto_id = next(_ids)
+    await dp.feed_update(
+        bot,
+        Update(
+            update_id=next(_ids),
+            message=Message(
+                message_id=auto_id,
+                date=datetime.now(timezone.utc),
+                chat=Chat(id=GROUP_ID, type="supergroup"),
+                sender_chat=CHANNEL_CHAT,
+                is_automatic_forward=True,
+                forward_origin=MessageOriginChannel(date=datetime.now(timezone.utc), chat=CHANNEL_CHAT, message_id=77),
+                text="Gentra 2019 ...",
+            ),
+        ),
+    )
+    return car_id, auto_id
+
+
+def _group_msg(uid: int, text_: str, *, thread: int | None, chat_id: int = GROUP_ID) -> Update:
+    return Update(
+        update_id=next(_ids),
+        message=Message(
+            message_id=next(_ids),
+            date=datetime.now(timezone.utc),
+            chat=Chat(id=chat_id, type="supergroup"),
+            from_user=User(id=uid, is_bot=False, first_name="Sardor"),
+            text=text_,
+            message_thread_id=thread,
+        ),
+    )
+
+
+@pytest.fixture
+def comment_ai(monkeypatch):
+    from bot.ai import budget as budget_mod
+    from bot.handlers import channel_comments
+
+    channel_comments._ai_replies.clear()
+    channel_comments._last_reply.clear()
+
+    def install(fake):
+        monkeypatch.setattr(channel_comments, "get_ai", lambda: fake)
+        b = budget_mod.AIBudget(daily_usd=0, user_daily_limit=0)
+        monkeypatch.setattr(channel_comments, "get_budget", lambda: b)
+        return fake
+
+    return install
+
+
+async def test_comment_ai_answers_question_with_db_facts(env, comment_ai):
+    import json as _json
+
+    dp, bot, session, factory, _ = env
+    fake = comment_ai(_FakeCommentAI([{"action": "reply", "category": "question", "reply": "Gentra hali sotuvda, narxi 9 800$."}]))
+    car_id, thread = await _comment_setup(factory, dp, bot)
+
+    await dp.feed_update(bot, _group_msg(9101, "narxi qancha? kraskasi bormi", thread=thread))
+    sent = session.sent(SendMessage, GROUP_ID)
+    assert sent[-1].text == "Gentra hali sotuvda, narxi 9 800$." and sent[-1].parse_mode is None
+    assert sent[-1].reply_markup.inline_keyboard[0][0].url.endswith(f"start=car_{car_id}")
+    payload = _json.loads(fake.calls[0][1])
+    assert payload["shu_post_mashinasi"]["narx_usd"] == 9800
+    assert "[Ovoz]" not in payload.get("post_matni", "")  # tasdiqlanmagan transkript ochiq javobga kirmaydi
+    assert "xarid" not in fake.calls[0][1]  # xarid narxi/foyda kabi ichki maydonlar yo'q
+
+
+async def test_comment_ai_negative_gets_polite_reply_and_admin_alert(env, comment_ai):
+    dp, bot, session, factory, _ = env
+    comment_ai(
+        _FakeCommentAI(
+            [{"action": "reply", "category": "negative", "reply": "Fikringiz uchun rahmat, menejerimiz bog'lanadi.", "admin_note": "narx qimmat deyapti"}]
+        )
+    )
+    _, thread = await _comment_setup(factory, dp, bot)
+    await dp.feed_update(bot, _group_msg(9102, "juda qimmat, aldov narx", thread=thread))
+    assert "rahmat" in session.sent(SendMessage, GROUP_ID)[-1].text
+    alert = session.sent(SendMessage, ADMIN_ID)[-1].text
+    assert "salbiy fikr" in alert and "aldov narx" in alert and "narx qimmat deyapti" in alert
+
+
+async def test_comment_ai_never_replies_to_toxic(env, comment_ai):
+    dp, bot, session, factory, _ = env
+    # Model adashib reply qaytarsa ham — haqoratga ochiq javob yo'q
+    comment_ai(_FakeCommentAI([{"action": "reply", "category": "toxic", "reply": "..."}]))
+    _, thread = await _comment_setup(factory, dp, bot)
+    await dp.feed_update(bot, _group_msg(9103, "hammang firibgarsan", thread=thread))
+    assert session.sent(SendMessage, GROUP_ID) == []
+    assert "haqorat" in session.sent(SendMessage, ADMIN_ID)[-1].text
+
+
+async def test_comment_ai_unverified_car_hides_numbers(env, comment_ai):
+    import json as _json
+
+    dp, bot, session, factory, _ = env
+    fake = comment_ai(_FakeCommentAI([{"action": "ignore", "category": "chat"}]))
+    _, thread = await _comment_setup(factory, dp, bot, status=CarStatus.REVIEW)
+    await dp.feed_update(bot, _group_msg(9104, "probegi qancha", thread=thread))
+    facts = _json.loads(fake.calls[0][1])["shu_post_mashinasi"]
+    assert "narx_usd" not in facts and "probeg_km" not in facts and "tekshirilmoqda" in facts["holati"]
+    assert session.sent(SendMessage, GROUP_ID) == []
+
+
+async def test_comment_ai_skips_admins_emoji_and_foreign_groups(env, comment_ai):
+    dp, bot, session, factory, _ = env
+    fake = comment_ai(_FakeCommentAI([]))
+    _, thread = await _comment_setup(factory, dp, bot)
+    await dp.feed_update(bot, _group_msg(ADMIN_ID, "narxi 9800, keling", thread=thread))  # menejer o'zi yozdi
+    await dp.feed_update(bot, _group_msg(9105, "👍👍", thread=thread))  # bo'sh — AI ga yuborilmaydi
+    await dp.feed_update(bot, _group_msg(9106, "narxi qancha?", thread=None, chat_id=-100999))  # boshqa guruh
+    assert fake.calls == [] and session.sent(SendMessage, GROUP_ID) == []
+
+
+async def test_comment_ai_general_group_question_uses_inventory(env, comment_ai):
+    import json as _json
+
+    dp, bot, session, factory, _ = env
+    fake = comment_ai(_FakeCommentAI([{"action": "reply", "category": "question", "reply": "Ha, Gentra 2019 bor."}]))
+    await _comment_setup(factory, dp, bot)  # guruh endi «bizniki» deb taniladi
+    await dp.feed_update(bot, _group_msg(9107, "gentra bormi sotuvda?", thread=None))
+    payload = _json.loads(fake.calls[0][1])
+    assert payload["sotuvdagi_mos_mashinalar"][0]["mashina"] == "Chevrolet Gentra 2019"
+    assert session.sent(SendMessage, GROUP_ID)[-1].text == "Ha, Gentra 2019 bor."
+
+
+async def test_comment_ai_rate_limited_per_user(env, comment_ai):
+    dp, bot, session, factory, _ = env
+    decisions = [{"action": "reply", "category": "question", "reply": f"javob {i}"} for i in range(5)]
+    fake = comment_ai(_FakeCommentAI(decisions))
+    _, thread = await _comment_setup(factory, dp, bot)
+    for i in range(5):
+        await dp.feed_update(bot, _group_msg(9108, f"savol {i}?", thread=thread))
+    assert len(fake.calls) == 3  # 10 daqiqada ko'pi bilan 3 ta
+
+
+async def test_comment_ai_error_falls_back_to_template(env, comment_ai):
+    dp, bot, session, factory, _ = env
+    comment_ai(_FakeCommentAI(fail=True))
+    _, thread = await _comment_setup(factory, dp, bot)
+    await dp.feed_update(bot, _group_msg(9109, "narxi qancha?", thread=thread))
+    reply = session.sent(SendMessage, GROUP_ID)[-1].text
+    assert "hali sotuvda" in reply and "$9 800" in reply

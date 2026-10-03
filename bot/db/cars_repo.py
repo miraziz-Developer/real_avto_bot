@@ -83,6 +83,15 @@ class CarRepository:
         ).first()
         return (int(row[0]), int(row[1])) if row else None
 
+    async def is_discussion_group(self, group_chat_id: int) -> bool:
+        """Shu guruhga asosiy kanal postlari avto-forward bo'lganmi (ya'ni kanalning muhokama guruhimi)."""
+        row = (
+            await self.session.execute(
+                select(ChannelThread.id).where(ChannelThread.group_chat_id == group_chat_id).limit(1)
+            )
+        ).first()
+        return row is not None
+
     async def get(self, car_id: int) -> Car | None:
         return await self.session.get(Car, car_id)
 

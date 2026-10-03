@@ -7,7 +7,7 @@ import { asyncHandler, getPagination, parseId } from "./utils.js";
 export const carsRouter = express.Router();
 
 const STATUSES = ["review", "active", "reserved", "sold", "archived"];
-const STALE_DAYS = Math.max(1, Number.parseInt(process.env.CAR_STALE_DAYS || "14", 10) || 14);
+const STALE_DAYS = Math.max(1, Number.parseInt(process.env.CAR_STALE_DAYS || "7", 10) || 7);
 
 const LIST_COLUMNS = `id, status, source, brand, model, year, mileage_km, price_usd, color, transmission, fuel,
   position, paint_status, has_accident, location, is_own, purchase_price_usd, expenses_usd, sold_price_usd,
