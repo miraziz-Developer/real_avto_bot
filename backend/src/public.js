@@ -102,8 +102,11 @@ function publicCar(row) {
 }
 
 function intOrNull(v) {
-  const n = Number.parseInt(String(v ?? ""), 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
+  const s = String(v ?? "").trim();
+  if (!/^[0-9]{1,10}$/.test(s)) return null;
+  const n = Number(s);
+  // Postgres int ga sig'maydigan qiymat so'rovni 500 bilan yiqitmasin
+  return n > 0 && n <= 2_147_483_647 ? n : null;
 }
 
 publicRouter.get("/meta", asyncHandler(async (_req, res) => {
@@ -269,9 +272,12 @@ publicRouter.post("/alerts", asyncHandler(async (req, res) => {
   const brand = String(body.brand || "").trim().slice(0, 100);
   if (!brand) return res.status(400).json({ error: "brand_required" });
   const model = String(body.model || "").trim().slice(0, 100) || null;
-  const yearMin = intOrNull(body.year_min) || 1990;
-  const yearMax = intOrNull(body.year_max) || new Date().getFullYear() + 1;
-  const budgetMax = intOrNull(body.budget_max_usd) || 1_000_000;
+  // Chegaralar — int ustunlarga sig'maydigan qiymatlar 500 xato bermasin
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const thisYear = new Date().getFullYear() + 1;
+  const yearMin = clamp(intOrNull(body.year_min) || 1990, 1950, thisYear);
+  const yearMax = clamp(intOrNull(body.year_max) || thisYear, yearMin, thisYear);
+  const budgetMax = clamp(intOrNull(body.budget_max_usd) || 1_000_000, 100, 100_000_000);
   const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ") || null;
   const client = await pool.connect();
   try {
