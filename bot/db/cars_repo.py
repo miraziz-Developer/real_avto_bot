@@ -104,6 +104,31 @@ class CarRepository:
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def find_repost_candidate(self, parsed: ParsedCar, *, within_days: int = 90) -> Car | None:
+        """Kanalga qayta tashlangan (yoki bot e'loni qo'lda qayta joylangan) o'sha mashina.
+
+        Moslik: marka + model + yil bir xil VA probeg bir xil (probeg yo'q bo'lsa — narx bir xil).
+        Faqat sotuvdagi/bron/tekshiruvdagi mashinalar — sotilgani qayta sotuvga chiqqan bo'lsa yangi yozuv.
+        """
+        if not (parsed.model and parsed.year):
+            return None
+        conds = [
+            Car.status.in_((CarStatus.ACTIVE, CarStatus.RESERVED, CarStatus.REVIEW)),
+            Car.year == parsed.year,
+            func.lower(Car.model) == parsed.model.lower(),
+            Car.created_at >= _now() - timedelta(days=within_days),
+        ]
+        if parsed.brand:
+            conds.append(or_(Car.brand.is_(None), func.lower(Car.brand) == parsed.brand.lower()))
+        if parsed.mileage_km is not None:
+            conds.append(Car.mileage_km == parsed.mileage_km)
+        elif parsed.price_usd is not None:
+            conds.append(and_(Car.mileage_km.is_(None), Car.price_usd == parsed.price_usd))
+        else:
+            return None
+        stmt = select(Car).where(*conds).order_by(Car.id.desc()).limit(1)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def find_by_listing(self, listing_id: int) -> Car | None:
         stmt = select(Car).where(Car.listing_submission_id == listing_id).limit(1)
         return (await self.session.execute(stmt)).scalar_one_or_none()

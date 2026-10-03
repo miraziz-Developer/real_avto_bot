@@ -346,6 +346,15 @@ async def _process_channel_post(bot: Bot, messages: list[Message]) -> None:
             status = CarStatus.REVIEW
         else:
             status = None
+
+        # Qayta tashlangan post (narx tushirib «ko'tarish», bot e'lonini qo'lda qayta joylash) — yangi mashina
+        # yaratmaymiz: mavjudiga birlashtiramiz, aks holda agent bitta mashinani ikki marta taklif qiladi
+        if status != CarStatus.SOLD:
+            existing = await cars.find_repost_candidate(parsed)
+            if existing is not None:
+                await _merge_repost(bot, cars, existing, parsed, messages, full_text, allow_activate=status is None)
+                return
+
         car = await cars.create_from_parsed(
             parsed,
             source=CarSource.CHANNEL,
@@ -377,6 +386,41 @@ async def _process_channel_post(bot: Bot, messages: list[Message]) -> None:
         # «Chiqsa xabar ber» qidiruvini saqlagan mijozlarga
         await notify_wishlist_matches_car(bot, CrmRepository(session), cars, car)
         await session.commit()
+
+
+async def _merge_repost(
+    bot: Bot,
+    cars: CarRepository,
+    car,
+    parsed,
+    messages: list[Message],
+    full_text: str,
+    *,
+    allow_activate: bool,
+) -> None:
+    was_active = car.status == CarStatus.ACTIVE
+    changes = await cars.apply_parsed(
+        car, parsed, raw_text=f"{car.raw_text}\n{full_text}".strip(), allow_activate=allow_activate
+    )
+    new_ids = [m.message_id for m in messages if m.message_id not in car.channel_message_ids]
+    car.channel_message_ids = [*car.channel_message_ids, *new_ids]
+    if car.channel_chat_id is None and messages:
+        car.channel_chat_id = messages[0].chat.id
+    photos, videos = _media_of(messages)
+    if photos and not car.photo_file_ids:
+        car.photo_file_ids = photos
+    if videos:
+        car.video_file_ids = [*car.video_file_ids, *videos]
+    await cars.add_event(car, "reposted", {"message_ids": new_ids})
+    await cars.session.commit()
+    header = f"♻️ <b>Kanalga qayta joylandi</b> — mavjud <code>#{car.id}</code> bilan birlashtirildi (dublikat yaratilmadi)"
+    if "price_usd" in changes:
+        header += "\n💰 Narx yangilandi"
+    await send_car_card_to_admins(bot, car, header=header)
+    logger.info("Kanal posti %s → mavjud mashina #%s ga birlashtirildi", [m.message_id for m in messages], car.id)
+    if not was_active and car.status == CarStatus.ACTIVE:
+        await notify_wishlist_matches_car(bot, CrmRepository(cars.session), cars, car)
+        await cars.session.commit()
 
 
 async def _flush_album(bot: Bot, group_id: str) -> None:

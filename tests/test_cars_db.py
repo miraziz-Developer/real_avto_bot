@@ -421,3 +421,47 @@ async def test_two_silent_videos_then_description_make_one_car(session_factory, 
         car = (await s.execute(select(Car))).scalar_one()
         assert car.model == "Nexia 3" and car.channel_message_ids == [600, 601, 602]
         assert car.video_file_ids == ["vn:s1", "vn:s2"] and car.status == CarStatus.ACTIVE
+
+
+async def test_reposted_post_merges_into_existing_car(session_factory, watch):
+    """Admin mashinani narx tushirib qayta tashladi — ikkinchi mashina yaratilmaydi, narx yangilanadi."""
+    bot = FakeBot()
+    await watch.process_channel_post(
+        bot, [_channel_msg(700, text_="Cobalt 2020, probeg 98 000 km, narxi 9500$")]
+    )
+    await watch.process_channel_post(
+        bot, [_channel_msg(710, text_="🔥 Narx tushdi! Cobalt 2020, probeg 98 000 km, narxi 9200$")]
+    )
+    async with session_factory() as s:
+        rows = (await s.execute(select(Car))).scalars().all()
+        assert len(rows) == 1
+        car = rows[0]
+        assert car.price_usd == 9200 and car.channel_message_ids == [700, 710]
+    assert "qayta joylandi" in bot.sent[-1][2]
+
+    # Yangi postga «sotildi» reply ham shu mashinani topadi
+    await watch.process_channel_post(bot, [_channel_msg(711, text_="sotildi", reply_to=_channel_msg(710, text_="x"))])
+    async with session_factory() as s:
+        assert (await s.execute(select(Car))).scalar_one().status == CarStatus.SOLD
+
+
+async def test_same_model_different_car_is_not_merged(session_factory, watch):
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(720, text_="Cobalt 2020, probeg 98 000 km, narxi 9500$")])
+    await watch.process_channel_post(bot, [_channel_msg(721, text_="Cobalt 2020, probeg 45 000 km, narxi 10500$")])
+    await watch.process_channel_post(bot, [_channel_msg(722, text_="Cobalt 2021, probeg 98 000 km, narxi 11000$")])
+    async with session_factory() as s:
+        assert len((await s.execute(select(Car))).scalars().all()) == 3
+
+
+async def test_sold_car_reposted_creates_new_record(session_factory, watch):
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(730, text_="Nexia 3 2018, probeg 120 000 km, narxi 7500$")])
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        await CarRepository(s).set_status(car, CarStatus.SOLD)
+        await s.commit()
+    await watch.process_channel_post(bot, [_channel_msg(731, text_="Nexia 3 2018, probeg 120 000 km, narxi 7500$")])
+    async with session_factory() as s:
+        statuses = sorted(c.status for c in (await s.execute(select(Car))).scalars().all())
+        assert statuses == sorted([CarStatus.SOLD, CarStatus.ACTIVE])
