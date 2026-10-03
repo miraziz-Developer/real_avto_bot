@@ -13,7 +13,9 @@ node_modules
 frontend
 backend
 catalog
-scripts
+# scripts dan faqat kanal importi image'ga kiradi (Dockerfile uni COPY qiladi)
+scripts/*
+!scripts/import_channel_export.py
 .github
 .claude
 .DS_Store

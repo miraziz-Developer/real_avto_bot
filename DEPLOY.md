@@ -234,6 +234,10 @@ CRM'ni tashqi internetga ochmaslik ham mumkin (faqat VPN / IP cheklovi) — u ic
 - [ ] (ixtiyoriy) Telegram Business: egasining akkauntida *Chatbotlar* → bot, **kontaktlarni chiqarib tashlang**
 
 ### 12.7 Kanal tarixini import qilish
+Yangilangan bot **birinchi ishga tushganda** avvaldan tasdiqlangan (sotuvdagi) bot e'lonlarini mashinalar bazasiga
+o'zi ko'chiradi — AI agent ularni darhol taklif qila oladi (logda: «Eski tasdiqlangan e'lonlardan N ta mashina
+bazaga qo'shildi»). Kanal tarixini importni **shundan keyin** qiling — bot e'lonlari ikki marta tushmaydi.
+
 Telegram Desktop → kanal → Export chat history (JSON, rasmlarsiz) → serverga `/opt/real_avto_bot/import/result.json`:
 ```bash
 docker compose cp import/result.json bot:/app/result.json

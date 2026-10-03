@@ -200,6 +200,21 @@ async def _heartbeat_loop(bot: Bot) -> None:
         await asyncio.sleep(HEARTBEAT_EVERY_SECONDS)
 
 
+async def _backfill_cars(bot: Bot) -> None:
+    """Yangilanishdan oldin tasdiqlangan e'lonlar ham agent/katalog bazasida bo'lsin (bir martalik, xavfsiz)."""
+    from bot.services.backfill import backfill_listing_cars
+
+    channel_chat_id: int | None = None
+    try:
+        channel_chat_id = (await bot.get_chat(settings.channel_id)).id
+    except Exception as e:
+        logger.warning("Kanal ID sini aniqlab bo'lmadi (backfill kanal havolasisiz): %s", e)
+    try:
+        await backfill_listing_cars(get_session_factory(), channel_chat_id=channel_chat_id)
+    except Exception:
+        logger.exception("Eski e'lonlarni mashinalar bazasiga ko'chirib bo'lmadi")
+
+
 async def _set_admin_commands(bot: Bot) -> None:
     """Adminlar uchun «/» menyusi (oddiy foydalanuvchilarga ko'rinmaydi)."""
     from aiogram.types import BotCommand, BotCommandScopeChat
@@ -268,6 +283,7 @@ async def _run() -> None:
     # await _verify_leaderboard_channel(bot)
     await _verify_reviews_channel(bot)
     await _set_admin_commands(bot)
+    await _backfill_cars(bot)
     get_ai()  # provayder/model logga yoziladi
     get_budget().set_alert(lambda text: notify_admins_text(bot, text))
     await _set_catalog_menu_button(bot)

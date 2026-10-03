@@ -310,3 +310,33 @@ async def test_parallel_messages_open_one_lead_and_one_admin_takes_it(factory):
 
     outcomes = await asyncio.gather(take(1), take(2))
     assert sorted(outcomes) == [False, True]
+
+
+async def test_backfill_old_approved_listings_into_cars(factory):
+    from sqlalchemy import select as sa_select
+
+    from bot.db.models import Car
+    from bot.db.cars_repo import CarRepository
+    from bot.services.backfill import backfill_listing_cars
+
+    on_sale = await _new_listing(factory, tg_id=51)
+    sold = await _new_listing(factory, tg_id=52, photos=("s1", "s2", "s3"))
+    pending = await _new_listing(factory, tg_id=53, photos=("q1", "q2", "q3"))
+    async with factory() as s:
+        crm = CrmRepository(s)
+        for lid in (on_sale, sold):
+            await crm.lock_pending_listing(lid)
+            await crm.try_mark_listing_approved(lid, channel_message_id=900 + lid)
+        (await crm.get_listing_submission(sold)).sale_status = "sold"
+        await s.commit()
+
+    assert await backfill_listing_cars(factory, channel_chat_id=-100777) == 1
+    assert await backfill_listing_cars(factory, channel_chat_id=-100777) == 0  # takroriy ishga tushish — dublikat yo'q
+    async with factory() as s:
+        cars = (await s.execute(sa_select(Car))).scalars().all()
+        assert [c.listing_submission_id for c in cars] == [on_sale]
+        car = cars[0]
+        assert car.status == "active" and car.channel_chat_id == -100777 and car.channel_message_ids == [900 + on_sale]
+        # Kanal eksporti importi yoki «sotildi» reply shu postni topadi
+        assert (await CarRepository(s).find_by_channel_message(-100777, 900 + on_sale)).id == car.id
+    assert pending  # tasdiqlanmagan e'lon ko'chirilmaydi
