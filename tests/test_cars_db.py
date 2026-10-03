@@ -465,3 +465,123 @@ async def test_sold_car_reposted_creates_new_record(session_factory, watch):
     async with session_factory() as s:
         statuses = sorted(c.status for c in (await s.execute(select(Car))).scalars().all())
         assert statuses == sorted([CarStatus.SOLD, CarStatus.ACTIVE])
+
+
+# --- Kanal kuzatuvi: sotildi/bron aniqligi va o'chirilgan postlar ------------------------------
+async def test_separate_sold_announcement_marks_existing_car(session_factory, watch):
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(800, text_="Cobalt 2020, probeg 98 000 km, narxi 9500$")])
+    # Yangi alohida post (reply emas): «sotildi»
+    await watch.process_channel_post(bot, [_channel_msg(801, text_="✅ Cobalt 2020, probeg 98 000 km — SOTILDI")])
+    async with session_factory() as s:
+        rows = (await s.execute(select(Car))).scalars().all()
+        assert len(rows) == 1 and rows[0].status == CarStatus.SOLD and rows[0].channel_message_ids == [800, 801]
+
+
+async def test_question_or_negated_sold_reply_does_not_mark_sold(session_factory, watch):
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(810, text_="Nexia 3 2019, probeg 60 000 km, narxi 8200$")])
+    for i, t in enumerate(("sotildimi?", "sotildi?", "hali sotilgan emas")):
+        await watch.process_channel_post(bot, [_channel_msg(811 + i, text_=t, reply_to=_channel_msg(810, text_="x"))])
+    async with session_factory() as s:
+        assert (await s.execute(select(Car))).scalar_one().status == CarStatus.ACTIVE
+
+
+async def test_edit_adding_and_removing_bron(session_factory, watch):
+    bot = FakeBot()
+    base = "Gentra 2021, probeg 40 000 km, narxi 12500$"
+    await watch.process_channel_post(bot, [_channel_msg(820, text_=base)])
+    async with session_factory() as s:
+        await watch.on_channel_post_edited(_channel_msg(820, text_=base + "\nBRON ✅"), bot, CarRepository(s))
+    async with session_factory() as s:
+        assert (await s.execute(select(Car))).scalar_one().status == CarStatus.RESERVED
+    async with session_factory() as s:
+        await watch.on_channel_post_edited(_channel_msg(820, text_=base), bot, CarRepository(s))
+    async with session_factory() as s:
+        assert (await s.execute(select(Car))).scalar_one().status == CarStatus.ACTIVE
+    # «Bron qilish mumkin» — taklif, bron emas
+    async with session_factory() as s:
+        await watch.on_channel_post_edited(
+            _channel_msg(820, text_=base + "\nBron qilish mumkin"), bot, CarRepository(s)
+        )
+    async with session_factory() as s:
+        assert (await s.execute(select(Car))).scalar_one().status == CarStatus.ACTIVE
+
+
+class _ProbeBot(FakeBot):
+    """editMessageReplyMarkup: ro'yxatdagi xabarlar o'chirilgan, qolganlari — boshqa admin posti."""
+
+    def __init__(self, deleted: set[int]) -> None:
+        super().__init__()
+        self.deleted = deleted
+        self.probed: list[int] = []
+
+    async def edit_message_reply_markup(self, chat_id, message_id, reply_markup=None, **kw):
+        from aiogram.exceptions import TelegramBadRequest
+        from aiogram.methods import EditMessageReplyMarkup
+
+        self.probed.append(message_id)
+        m = EditMessageReplyMarkup(chat_id=chat_id, message_id=message_id)
+        if message_id in self.deleted:
+            raise TelegramBadRequest(method=m, message="Bad Request: message to edit not found")
+        raise TelegramBadRequest(method=m, message="Bad Request: message can't be edited")
+
+
+async def test_deleted_channel_post_takes_car_off_sale(session_factory, watch, monkeypatch):
+    from bot.workers import post_watch
+
+    monkeypatch.setattr(post_watch, "PROBE_PAUSE_SECONDS", 0)
+    monkeypatch.setattr(post_watch, "settings", watch.settings)
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(830, text_="Spark 2018, probeg 70 000 km, narxi 6500$")])
+    await watch.process_channel_post(bot, [_channel_msg(831, text_="Malibu 2019, probeg 90 000 km, narxi 19500$")])
+    await watch.process_channel_post(bot, [_channel_msg(832, text_="Tracker 2022, probeg 20 000 km, narxi 21000$")])
+
+    probe = _ProbeBot(deleted={830})
+    assert await post_watch.check_deleted_posts_once(probe, session_factory) == 1
+    async with session_factory() as s:
+        by_model = {c.model: c.status for c in (await s.execute(select(Car))).scalars().all()}
+    assert by_model == {"Spark": CarStatus.ARCHIVED, "Malibu": CarStatus.ACTIVE, "Tracker": CarStatus.ACTIVE}
+    assert any("post o'chirilgan" in t for _, _, t in probe.sent)
+
+    # Agent arxivdagi mashinani taklif qilmaydi
+    async with session_factory() as s:
+        offer = await CarRepository(s).search_offerable(model="Spark")
+        assert offer == []
+
+
+async def test_mass_deletion_guard_changes_nothing(session_factory, watch, monkeypatch):
+    from bot.workers import post_watch
+
+    monkeypatch.setattr(post_watch, "PROBE_PAUSE_SECONDS", 0)
+    monkeypatch.setattr(post_watch, "settings", watch.settings)
+    monkeypatch.setattr(post_watch, "notify_admins_text", _noop_notify)
+    bot = FakeBot()
+    models = ["Spark", "Nexia 3", "Cobalt", "Gentra", "Malibu", "Tracker"]
+    for i, m in enumerate(models):
+        await watch.process_channel_post(bot, [_channel_msg(840 + i, text_=f"{m} 2020, probeg {50 + i} 000 km, narxi {8000 + i}$")])
+    probe = _ProbeBot(deleted=set(range(840, 846)))  # hammasi «o'chirilgan» — shubhali
+    assert await post_watch.check_deleted_posts_once(probe, session_factory) == 0
+    async with session_factory() as s:
+        assert {c.status for c in (await s.execute(select(Car))).scalars().all()} == {CarStatus.ACTIVE}
+
+
+async def _noop_notify(bot, text):
+    return None
+
+
+async def test_posts_with_buttons_are_not_probed(session_factory, watch, monkeypatch):
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from bot.workers import post_watch
+
+    monkeypatch.setattr(post_watch, "PROBE_PAUSE_SECONDS", 0)
+    bot = FakeBot()
+    msg = _channel_msg(850, text_="Damas 2021, probeg 30 000 km, narxi 8800$")
+    msg = msg.model_copy(update={"reply_markup": InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="👍", callback_data="like")]]
+    )})
+    await watch.process_channel_post(bot, [msg])
+    probe = _ProbeBot(deleted={850})
+    await post_watch.check_deleted_posts_once(probe, session_factory)
+    assert probe.probed == []  # tugmasi o'chib ketmasligi uchun tekshirilmaydi

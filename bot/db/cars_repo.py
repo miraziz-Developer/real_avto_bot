@@ -129,6 +129,20 @@ class CarRepository:
         stmt = select(Car).where(*conds).order_by(Car.id.desc()).limit(1)
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def cars_with_live_posts(self, *, limit: int = 1000) -> list[Car]:
+        """Kanal posti bor va hali sotuvdagi/bron/tekshiruvdagi mashinalar — post o'chirilganini tekshirish uchun."""
+        stmt = (
+            select(Car)
+            .where(
+                Car.status.in_((CarStatus.ACTIVE, CarStatus.RESERVED, CarStatus.REVIEW)),
+                Car.channel_chat_id.is_not(None),
+                func.cardinality(Car.channel_message_ids) > 0,
+            )
+            .order_by(Car.id)
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def find_by_listing(self, listing_id: int) -> Car | None:
         stmt = select(Car).where(Car.listing_submission_id == listing_id).limit(1)
         return (await self.session.execute(stmt)).scalar_one_or_none()

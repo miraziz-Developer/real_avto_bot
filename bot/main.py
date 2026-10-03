@@ -40,6 +40,7 @@ from bot.ai import close_ai, get_ai, get_budget
 from bot.services.car_cards import notify_admins_text
 from bot.instagram.client import get_ig
 from bot.instagram.webhook import start_instagram_server
+from bot.workers.post_watch import post_watch_loop
 from bot.workers.sale_followup import sale_followup_loop
 from bot.workers.lead_reminder import lead_reminder_loop
 from bot.workers.listing_freeze import listing_freeze_loop
@@ -311,6 +312,7 @@ async def _run() -> None:
     worker_stale = asyncio.create_task(stale_cars_loop(bot, session_factory))
     worker_leads = asyncio.create_task(lead_reminder_loop(bot, session_factory))
     worker_freeze = asyncio.create_task(listing_freeze_loop(bot, session_factory))
+    worker_posts = asyncio.create_task(post_watch_loop(bot, session_factory))
     ig_runner = await start_instagram_server(bot, session_factory, get_ig())
     try:
         # channel_post / edited_channel_post ham kelishi uchun ishlatilayotgan update turlarini aniq so'raymiz
@@ -326,11 +328,12 @@ async def _run() -> None:
         worker_stale.cancel()
         worker_leads.cancel()
         worker_freeze.cancel()
+        worker_posts.cancel()
         # try:
         #     await worker_lb
         # except asyncio.CancelledError:
         #     pass
-        for w in (worker_sale, worker_stale, worker_leads, worker_freeze):
+        for w in (worker_sale, worker_stale, worker_leads, worker_freeze, worker_posts):
             try:
                 await w
             except asyncio.CancelledError:

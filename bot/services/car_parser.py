@@ -31,16 +31,45 @@ _RESERVED_RE = re.compile(r"(?<![\w])(bron|bronlandi|бронь|брон|zakalat
 _PHONE_RE = re.compile(r"(?:\+?998[\s\-]?)?\(?\d{2}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}(?!\d)")
 
 
+# «sotildi?» (savol), «sotilgan emas», «hali sotilmadi», «не продан» — sotildi EMAS
+_AFTER_NEGATION_RE = re.compile(r"^\s*(\?|emas\b|yo'q\b|эмас|эмас\b|йўқ|нет\b|ли\b|mi\b|ми\b)", re.IGNORECASE)
+_BEFORE_NEGATION_RE = re.compile(r"(\bне|\bhali|\bхали)\s*$", re.IGNORECASE)
+
+
+def _affirmed(rx: re.Pattern, t: str) -> bool:
+    """Kalit so'z savol yoki inkor bilan emas, tasdiq ma'nosida kelganmi."""
+    for m in rx.finditer(t):
+        after = t[m.end() : m.end() + 12]
+        before = t[max(0, m.start() - 8) : m.start()]
+        if _AFTER_NEGATION_RE.match(after) or _BEFORE_NEGATION_RE.search(before):
+            continue
+        return True
+    return False
+
+
 def is_sold_text(text: str | None, *, extended: bool = False) -> bool:
     """extended=True — tahrir/reply uchun: «baraka bo'ldi», «olib ketildi» ham sotildi hisoblanadi."""
     if not text:
         return False
     t = normalize_text(text)
-    return bool(_SOLD_RE.search(t) or (extended and _SOLD_EXTRA_RE.search(t)))
+    return _affirmed(_SOLD_RE, t) or (extended and _affirmed(_SOLD_EXTRA_RE, t))
+
+
+# «Bron qilish mumkin», «bron uchun yozing» — taklif, bron qilingan degani emas
+_RESERVE_OFFER_RE = re.compile(r"^\s*(qilish\w*|qiling\b|qilinglar\b|qilsa\w*|qilmoq\w*|uchun|mumkin|qabul|olamiz|бронировать|для)\b", re.IGNORECASE)
 
 
 def is_reserved_text(text: str | None) -> bool:
-    return bool(text and _RESERVED_RE.search(normalize_text(text)))
+    if not text:
+        return False
+    t = normalize_text(text)
+    for m in _RESERVED_RE.finditer(t):
+        after = t[m.end() : m.end() + 15]
+        if m.group(1).lower() in ("bron", "брон", "бронь") and _RESERVE_OFFER_RE.match(after):
+            continue
+        if _affirmed(_RESERVED_RE, t[m.start() : m.end() + 15]):
+            return True
+    return False
 
 
 def has_phone(text: str | None) -> bool:

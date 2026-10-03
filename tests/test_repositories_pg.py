@@ -271,7 +271,9 @@ async def test_uzs_to_usd_migrations_run_only_once(factory):
         await apply_listing_price_ask_usd_rename(engine)
         await apply_wishlist_table(engine)
         async with factory() as s:
-            assert (await CrmRepository(s).get_listing_submission(lid)).price_ask_usd == 10000
+            from bot.db.migrate import _usd_rate
+
+            assert (await CrmRepository(s).get_listing_submission(lid)).price_ask_usd == 130000000 // _usd_rate()
             await s.execute(sql_text("update listing_submissions set price_ask_usd = 2000000 where id=:i"), {"i": lid})
             await s.commit()
         # Keyingi restartlar — tegmaydi

@@ -25,8 +25,11 @@ from bot.services.car_extract import extract_car
 from bot.db.repositories import CrmRepository
 from bot.services.car_parser import has_phone, is_reserved_text, is_sold_text, parse_car_text
 from bot.services.wishlist_notify import notify_wishlist_matches_car
+from bot.workers.post_watch import HAS_MARKUP_EVENT
 
 logger = logging.getLogger(__name__)
+
+STATUS_TITLES = {CarStatus.RESERVED: "Bron qilindi", CarStatus.ACTIVE: "Yana sotuvda"}
 
 router = Router(name="channel_watch")
 
@@ -347,6 +350,25 @@ async def _process_channel_post(bot: Bot, messages: list[Message]) -> None:
         else:
             status = None
 
+        # «Cobalt 2020 sotildi ✅» — alohida yangi post (eski postga reply emas): sotuvdagi o'sha mashinani
+        # sotildi qilamiz, yangi «sotilgan» yozuv yaratmaymiz (aks holda eski mashina sotuvda qolib ketardi)
+        if status == CarStatus.SOLD:
+            existing = await cars.find_repost_candidate(parsed)
+            if existing is not None:
+                new_ids = [m.message_id for m in messages if m.message_id not in existing.channel_message_ids]
+                existing.channel_message_ids = [*existing.channel_message_ids, *new_ids]
+                if await cars.set_status(existing, CarStatus.SOLD):
+                    await session.commit()
+                    await send_car_card_to_admins(
+                        bot,
+                        existing,
+                        header="🔴 <b>Sotildi deb belgilandi</b> — kanalda «sotildi» posti chiqdi.\n"
+                        "Xato bo'lsa: «↩️ Qayta sotuvga».",
+                    )
+                else:
+                    await session.commit()
+                return
+
         # Qayta tashlangan post (narx tushirib «ko'tarish», bot e'lonini qo'lda qayta joylash) — yangi mashina
         # yaratmaymiz: mavjudiga birlashtiramiz, aks holda agent bitta mashinani ikki marta taklif qiladi
         if status != CarStatus.SOLD:
@@ -366,6 +388,9 @@ async def _process_channel_post(bot: Bot, messages: list[Message]) -> None:
             status=status,
             published_at=_original_date(first),
         )
+        if any(m.reply_markup for m in messages):
+            # Boshqa bot orqali tugmali post — o'chirilganini tekshiruv uni chetlab o'tadi (tugmasi o'chmasin)
+            await cars.add_event(car, HAS_MARKUP_EVENT)
         await session.commit()
         if has_media and not text:
             _recent_media_car[chat_id] = (time.monotonic(), car.id)
@@ -483,6 +508,21 @@ async def _on_channel_post_edited(message: Message, bot: Bot, cars: CarRepositor
     ):
         # Jamoa odati: sotilgach postdan telefon raqami olib tashlanadi
         reason = "postdan telefon raqami olib tashlandi"
+    if not reason and text and car.status in (CarStatus.ACTIVE, CarStatus.RESERVED):
+        # Postga «BRON» yozildi yoki olib tashlandi
+        now_reserved, was_reserved = is_reserved_text(text), is_reserved_text(old_text)
+        target = None
+        if now_reserved and not was_reserved and car.status == CarStatus.ACTIVE:
+            target, why = CarStatus.RESERVED, "postga «bron» yozildi"
+        elif was_reserved and not now_reserved and car.status == CarStatus.RESERVED:
+            target, why = CarStatus.ACTIVE, "postdan «bron» olib tashlandi"
+        if target is not None:
+            await cars.set_status(car, target)
+            car.raw_text = text
+            await cars.session.commit()
+            icon = "🔵" if target == CarStatus.RESERVED else "🟢"
+            await send_car_card_to_admins(bot, car, header=f"{icon} <b>{STATUS_TITLES[target]}</b> — {why}.")
+            return
     if reason:
         if await cars.set_status(car, CarStatus.SOLD):
             car.raw_text = text
