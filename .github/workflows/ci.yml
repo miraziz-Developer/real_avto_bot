@@ -73,6 +73,12 @@ jobs:
           POSTGRES_PASSWORD=ci docker compose config -q
       - name: Barcha image'larni build qilish (bot, backend, CRM, katalog)
         run: POSTGRES_PASSWORD=ci docker compose build
+      - name: Bot image ichida (Python 3.13, root emas) butun kod import bo'ladimi
+        run: |
+          POSTGRES_PASSWORD=ci docker compose run --rm --no-deps \
+            -e DATABASE_URL=postgresql+asyncpg://x:x@db/x -e BOT_TOKEN=1:x -e CHANNEL_ID=@x \
+            -e CHANNEL_USERNAME=x -e INSTAGRAM_USERNAME=x \
+            bot python -c "import bot.main, scripts.import_channel_export, os; assert os.getuid() != 0; print('bot image OK')"
 
   backend-smoke:
     name: Backend — haqiqiy PostgreSQL bilan ishga tushirish
