@@ -22,7 +22,7 @@ Kanalga tashlangan har bir e'lon avtomatik **mashinalar bazasiga** (`cars`) yozi
 - Bot orqali berilgan va tasdiqlangan e'lonlar ham bazaga tushadi; egasi «sotildi» desa — bazada ham sotildi.
 - `CAR_STALE_DAYS` (14) kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi (ish vaqtida).
 
-**AI (ixtiyoriy)** — `.env` ga `GROQ_API_KEY` qo'shilsa: aniqroq tahlil, qisqa xulosa, dumaloq video/ovozni matnga aylantirish. Kalitsiz ham oddiy (regex) tahlil ishlaydi.
+**AI (ixtiyoriy)** — `.env` ga `GEMINI_API_KEY` (tavsiya) yoki `GROQ_API_KEY` qo'shilsa: aniqroq tahlil, qisqa xulosa, ovoz va dumaloq videoni tushunish. Gemini videoni **ko'radi** ham (marka, rang, kuzov, spidometr) — Groq faqat ovozni matnga aylantiradi. Kunlik xarajat chegarasi: `AI_DAILY_BUDGET_USD` (standart $1). Kalitsiz ham oddiy (regex) tahlil ishlaydi. Batafsil: [DEPLOY.md 12.10](DEPLOY.md#1210-geminiga-otish-video--ovoz--ozbek-tili).
 
 **Admin buyruqlari (botda)**: `/statistika [kun]` · `/sotuvda` · `/tekshiruv` · `/mashina ID` · `/sotildi ID [narx]`
 Kartada: ✏️ Tuzatish — `narx 9800`, `yil 2021`, `probeg 76000`, o'zimiz olgan bo'lsak `xarid 8000`, `xarajat 300`.
@@ -55,7 +55,7 @@ Botga yozilgan har qanday savolga (matn yoki ovoz) agent **faqat mashinalar baza
 - «Cobalt bormi?», «10 000$ gacha avtomat», ovozli xabar — agent sotuvdagi mashinalarni topadi (sotilganini hech qachon taklif qilmaydi), rasmlarini yuboradi, savollarga javob beradi.
 - Mos mashina yo'q bo'lsa — o'xshashlarini taklif qiladi yoki «chiqsa xabar beraman» (qidiruv saqlaydi). Kanalga mos mashina tushishi bilan mijozga xabar boradi.
 - Mijoz tayyor bo'lsa (ko'rishga kelmoqchi, «olaman», narx/kredit so'rayapti, odam bilan gaplashmoqchi) — menejerga topshiriladi.
-- `GROQ_API_KEY` bo'lmasa ham ishlaydi: matndan model/byudjetni ajratib, bazadan ro'yxat + «Menejer bilan bog'lanish» tugmasi.
+- AI kaliti (`GEMINI_API_KEY` / `GROQ_API_KEY`) bo'lmasa yoki kunlik chegara tugasa ham ishlaydi: matndan model/byudjetni ajratib, bazadan ro'yxat + «Menejer bilan bog'lanish» tugmasi.
 - Chegirma, kredit, hujjat bo'yicha va'da bermaydi; ma'lumot yo'q bo'lsa o'ylab topmaydi.
 
 **Menejer tomoni (botda)**
@@ -67,7 +67,7 @@ Botga yozilgan har qanday savolga (matn yoki ovoz) agent **faqat mashinalar baza
 
 **CRM** → «Mijozlar (AI)»: ochiq mijozlar, menejer kutayotganlar, konversiya, topshirishgacha vaqt, har bir suhbat to'liq.
 
-**Sozlamalar** (`.env`): `AGENT_ENABLED`, `GROQ_API_KEY`, `GROQ_AGENT_MODEL`, `BUSINESS_NAME`, `BUSINESS_ADDRESS`, `BUSINESS_HOURS` (bo'sh bo'lsa agent ish vaqtini aytmaydi), `REAL_AVTO_MAP_URL`, `LEAD_REMINDER_MINUTES`.
+**Sozlamalar** (`.env`): `AGENT_ENABLED`, `GEMINI_API_KEY` / `GROQ_API_KEY`, `GEMINI_AGENT_MODEL` / `GROQ_AGENT_MODEL`, `AI_USER_DAILY_LIMIT`, `BUSINESS_NAME`, `BUSINESS_ADDRESS`, `BUSINESS_HOURS` (bo'sh bo'lsa agent ish vaqtini aytmaydi), `REAL_AVTO_MAP_URL`, `LEAD_REMINDER_MINUTES`.
 
 **Kanaldan botga yo'naltirish**: istalgan mashina uchun havola `https://t.me/<bot>?start=car_<ID>` — mijoz shu mashina rasmlari va ma'lumoti bilan suhbatni boshlaydi.
 

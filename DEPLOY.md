@@ -112,11 +112,15 @@ Standart `docker-compose.yml`:
 
 | Xizmat   | Host port |
 |----------|-------------|
-| Frontend | **3000** → konteyner 80 |
-| Backend  | **3001** |
+| Frontend (CRM) | **3000** → konteyner 80 (`/api/` backendga proksi) |
+| Katalog | **3002** → konteyner 80 |
+| Backend  | **127.0.0.1:3001** — faqat server ichidan (Caddy / nginx orqali) |
+| Bot (Instagram webhook) | **127.0.0.1:8081** |
 | Postgres / Redis | faqat ichki tarmoq |
 
-Tashqi dunyoga faqat kerak bo‘lganini oching (masalan 3000 CRM uchun). 5432 ni internetga ochmang.
+Tashqi dunyoga faqat kerak bo‘lganini oching (443 — HTTPS). 5432 va 3001 ni internetga ochmang.
+
+> Docker o‘z portlarini `ufw` qoidalaridan chetlab ochadi — shuning uchun backend `127.0.0.1` ga bog‘langan.
 
 ## 8. Yangilash (deploy)
 
@@ -191,7 +195,8 @@ Keyin shu parolni yozing:
 ### 12.3 Yangi `.env` sozlamalari (ildiz)
 | O'zgaruvchi | Nima uchun |
 |---|---|
-| `GROQ_API_KEY` | AI tahlil va savdo agenti (bo'sh bo'lsa oddiy rejim ishlaydi) |
+| `GEMINI_API_KEY` (yoki `GROQ_API_KEY`) | AI: kanal postlari, ovoz/video tahlili, savdo agenti (bo'sh bo'lsa oddiy rejim) — 12.10 |
+| `AI_DAILY_BUDGET_USD`, `AI_USER_DAILY_LIMIT` | AI xarajat chegarasi (standart $1/kun, 40 so'rov/mijoz) |
 | `BUSINESS_NAME`, `BUSINESS_ADDRESS`, `BUSINESS_HOURS`, `REAL_AVTO_MAP_URL` | Agent va katalog javoblari |
 | `BOT_USERNAME`, `CATALOG_URL` | Katalog (Mini App uchun HTTPS) |
 | `LISTING_FREEZE_HOURS`, `WORK_HOUR_START/END`, `BUYOUT_REPLY_HOURS` | E'lon muzlatish va «Sotib olamiz» |
@@ -252,3 +257,39 @@ git checkout <oldingi-commit> && docker compose build && docker compose up -d
 gunzip -c ~/backup_before_ai_crm_YYYY-MM-DD.sql.gz | docker compose exec -T db psql -U postgres real_avto_konkurs
 ```
 Yangi jadvallar eski kodga xalaqit bermaydi — faqat kodni qaytarish yetarli bo'lishi mumkin.
+
+### 12.10 Gemini'ga o'tish (video + ovoz + o'zbek tili)
+
+1. Kalit oling: <https://aistudio.google.com/apikey> → loyihada **billing** yoqing (bepul tarif limiti prod uchun kichik).
+2. Ildiz `.env`:
+   ```env
+   AI_PROVIDER=auto          # GEMINI_API_KEY bo'lsa Gemini tanlanadi
+   GEMINI_API_KEY=...
+   AI_DAILY_BUDGET_USD=1     # kunlik chegara, oshsa AI ertangacha o'chadi va adminlarga xabar keladi
+   ```
+   `GROQ_API_KEY` ni qoldirish mumkin — `AI_PROVIDER=groq` qilib bir zumda qaytsa bo'ladi.
+3. `docker compose up -d --build bot` → logda `AI: gemini (model=gemini-3.1-flash-lite, yoqilgan=True ...)` chiqadi.
+4. **Sinov:** kanalga gapirilgan dumaloq video va ovozsiz (faqat mashina ko'rsatilgan) video tashlang — admin kartasida
+   «🎙 Eshitilgani» ichida nutq va `[Videoda ko'rinadi]: ...` chiqishi kerak. Faqat ovoz/videodan olingan faktlar
+   avvalgidek **tekshiruv** holatida qoladi (admin tasdiqlaydi).
+5. 20–30 ta haqiqiy namuna bilan aniqlikni tekshiring. Yetmasa: `GEMINI_MODEL=gemini-3.7-flash` (~3x qimmat) yoki
+   `GEMINI_MEDIA_RESOLUTION=medium`.
+
+**Cheklov:** Telegram bot 20 MB dan katta faylni yuklab bera olmaydi — bunday video AI'siz qayta ishlanadi
+(kanalda saqlanadi, mijozga yuboriladi, faqat tahlil qilinmaydi). Dumaloq video va ovozli xabarlar doim kichik.
+
+**Taxminiy narx (Flash-Lite):** matn ~$0.0008, 30 s ovoz ~$0.001, 40 s dumaloq video ~$0.003 — oyiga bir necha ming
+xabar bilan **$5–7**. Bugungi xarajat logda va chegara tugaganda adminga keladigan xabarda ko'rinadi.
+
+### 12.11 Xavfsizlik yangilanishi (shu versiyada)
+
+- **Backend porti** endi faqat `127.0.0.1:3001`. Brauzerda `http://IP:3001/...` ishlamaydi — CRM: `http://IP:3000`
+  yoki HTTPS domen. Host'dagi Caddy `localhost:3001` ga proksi qilsa — o'zgarish shart emas.
+- **`backend/.env`:** `NODE_ENV=production` bo'lsa `JWT_SECRET` kamida 32 belgi va `CRM_ADMIN_PASSWORD`
+  `admin123` bo'lmasligi shart — aks holda backend ishga tushmaydi (`docker compose logs backend` → `[FATAL]`).
+- **CRM login:** 15 daqiqada IP+login bo'yicha 8 ta xato urinishdan keyin vaqtincha bloklanadi (429).
+- **Redis** FSM ma'lumotini diskka yozadi (`redis_data` volume) va xotira to'lsa o'chirmaydi — restartda
+  foydalanuvchilarning yarim to'ldirilgan formalari yo'qolmaydi.
+- **Bot healthcheck:** `docker compose ps` da bot `healthy` — Telegram API ga har 30 soniyada ulanish tekshiriladi.
+- **Yangi admin buyruqlari:** `/navbat` — moderatsiya kutayotgan foydalanuvchi e'lonlarini tugmalar bilan qayta
+  yuboradi; `/umumiy` — foydalanuvchi/e'lon/sotuv statistikasi.
