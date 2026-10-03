@@ -15,6 +15,7 @@ from bot.db.migrate import (
     apply_contest_tables,
     apply_listing_extra_details_column,
     apply_listing_location_column,
+    apply_listing_payment_unique_id_column,
     apply_listing_payment_screenshot_column,
     apply_listing_price_ask_usd_rename,
     apply_listing_sale_followup_columns,
@@ -87,8 +88,7 @@ async def _bootstrap_database() -> None:
             await apply_performance_indexes(get_engine())
             await apply_listing_payment_screenshot_column(get_engine())
             await apply_listing_location_column(get_engine())
-
-
+            await apply_listing_payment_unique_id_column(get_engine())
             return
         except BaseException as e:
             last_exc = e
@@ -188,13 +188,17 @@ async def _run() -> None:
     dp = Dispatcher(storage=storage)
     session_factory = get_session_factory()
 
+    # Tartib muhim (birinchi = eng tashqi):
+    #   xato ushlash → flood cheklovi → bot username → DB sessiya → handler.
+    # Xato DB sessiyasidan o'tib (rollback) keyin ushlanadi; cheklangan update DB ga tegmaydi.
+    dp.update.middleware(UnhandledErrorMiddleware())
+    dp.update.middleware(RateLimitMiddleware())
     dp.update.middleware(BotUsernameMiddleware())
     dp.update.middleware(DbSessionMiddleware(session_factory))
-    dp.update.middleware(RateLimitMiddleware())
     register_handlers(dp)
-    dp.update.middleware(UnhandledErrorMiddleware())
 
-    await bot.delete_webhook(drop_pending_updates=True)
+    # Restart paytida yozilgan xabarlar yo‘qolmasin (flood’dan rate limit himoya qiladi).
+    await bot.delete_webhook(drop_pending_updates=False)
 
     # LEADERBOARD LOOP MUZLATILDI - Foydalanuvchi botdan chiqdi
     # worker_lb = asyncio.create_task(leaderboard_loop(bot, session_factory))

@@ -14,7 +14,8 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 'RvT^7pK_xL9_mQ_vB2n_ZwQ8'
+      # Parol ildiz .env faylidan olinadi (git'ga tushmaydi). `$` belgisisiz parol ishlating.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD ildiz .env faylida yozilmagan (DEPLOY.md)}
       POSTGRES_DB: real_avto_konkurs
     volumes:
       - pg_data:/var/lib/postgresql/data
@@ -30,7 +31,10 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # FSM (e'lon formasi) ma'lumotlari o'chib ketmasligi uchun: noeviction + AOF.
+    command: redis-server --maxmemory 256mb --maxmemory-policy noeviction --appendonly yes
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -59,8 +63,9 @@ services:
       timeout: 5s
       retries: 5
       start_period: 25s
+    # Faqat server ichidan (frontend nginx /api/ orqali proksilaydi). Internetga ochilmaydi.
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     restart: unless-stopped
     stop_grace_period: 25s
     logging: *default-logging
@@ -112,3 +117,4 @@ services:
 
 volumes:
   pg_data:
+  redis_data:

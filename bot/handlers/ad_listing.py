@@ -10,6 +10,7 @@ from aiogram import Bot, F, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
@@ -905,8 +906,11 @@ async def ad_phone_fallback_msg(message: Message) -> None:
 
 @router.message(StateFilter(AdListingStates.listing_payment), F.photo)
 async def ad_payment_screenshot(message: Message, state: FSMContext) -> None:
-    file_id = message.photo[-1].file_id
-    await state.update_data(payment_screenshot_file_id=file_id)
+    photo = message.photo[-1]
+    await state.update_data(
+        payment_screenshot_file_id=photo.file_id,
+        payment_screenshot_unique_id=photo.file_unique_id,
+    )
     await _go_confirm_after_payment(message, state)
 
 
@@ -946,6 +950,10 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
     phone = str(data.get("phone") or "")
     location = str(data.get("location") or "").strip()
     payment_screenshot_file_id = data.get("payment_screenshot_file_id")
+    payment_screenshot_unique_id = data.get("payment_screenshot_unique_id")
+    if settings.listing_price_uzs > 0 and not payment_screenshot_file_id:
+        await cq.answer("To'lov skrinshoti topilmadi. E'lonni qaytadan boshlang.", show_alert=True)
+        return
     if not location or len(location) < 2:
         await cq.answer("Hudud ma'lumotlari yetarli emas. Iltimos, qayta yuboring.", show_alert=True)
         return
@@ -956,6 +964,24 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
     # Tugma "yuklanmoqda" holatini yopish — adminlarga media yuborish uzoq davom etishi mumkin.
     await cq.answer()
 
+    # Ikki marta bosish / parallel update: foydalanuvchi bo'yicha qulf + takroriy e'lonni tekshirish.
+    await crm.acquire_user_submit_lock(cq.from_user.id)
+    duplicate = await crm.find_recent_duplicate_listing(
+        user_telegram_id=cq.from_user.id,
+        photo_file_ids=photos,
+    )
+    if duplicate is not None:
+        await state.clear()
+        if cq.message:
+            try:
+                await cq.message.edit_reply_markup(reply_markup=None)
+            except TelegramBadRequest:
+                pass
+            await cq.message.answer(
+                f"ℹ️ Bu e'lon allaqachon moderatsiyaga yuborilgan (#{duplicate.id}). "
+                "Admin javobini kuting."
+            )
+        return
 
     try:
         client = await crm.get_or_create_client(
@@ -980,14 +1006,26 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
             phone=phone,
             photo_file_ids=photos,
             payment_screenshot_file_id=payment_screenshot_file_id,
+            payment_screenshot_unique_id=payment_screenshot_unique_id,
         )
 
         lid = row.id
+        # Adminlarga yuborishdan OLDIN saqlaymiz: aks holda admin tez bossa e'lon hali bazada
+        # ko'rinmaydi («allaqachon qayta ishlangan» xatosi), qulf ham uzoq ushlanib qoladi.
+        await crm.session.commit()
     except Exception:
         logging.exception("ad_confirm_yes: DB yoki saqlash")
+        await crm.session.rollback()
         if cq.message:
             await cq.message.reply("❌ Saqlanmadi (baza yoki tarmoq). Qayta urinib ko'ring.")
         return
+
+    await state.clear()
+    if cq.message:
+        try:
+            await cq.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
 
     mod_kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -997,6 +1035,25 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
             ]
         ]
     )
+
+    reuse_warning = ""
+    if payment_screenshot_unique_id:
+        try:
+            reused = await crm.listings_with_payment_screenshot(payment_screenshot_unique_id, exclude_id=lid)
+        except Exception:
+            logging.exception("To'lov skrinshotini tekshirish (#%s)", lid)
+            reused = []
+        if reused:
+            refs = ", ".join(
+                f"#{r.id} ({html.escape(str(r.status))}"
+                + (", boshqa foydalanuvchi" if int(r.user_telegram_id) != cq.from_user.id else "")
+                + ")"
+                for r in reused
+            )
+            reuse_warning = (
+                f"⚠️ <b>Diqqat: e'lon #{lid}</b> uchun yuborilgan to'lov skrinshoti avval ishlatilgan: "
+                f"{refs}.\nTo'lovni kartadan tekshirib, keyin tasdiqlang."
+            )
 
     cname = client.full_name or "Mijoz"
     seller_un = cq.from_user.username
@@ -1025,6 +1082,8 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
                     mod_kb=mod_kb,
                     payment_screenshot_file_id=payment_screenshot_file_id,
                 )
+                if reuse_warning:
+                    await cq.bot.send_message(aid, reuse_warning, parse_mode=ParseMode.HTML)
 
             except Exception:
                 logging.exception("Admin #%s ga e'lon yuborish muvaffaqiyatsiz", aid)
@@ -1032,7 +1091,6 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
     else:
         logging.warning("ADMIN_TELEGRAM_IDS bo'sh — e'lon #%s adminlarga yuborilmadi", lid)
 
-    await state.clear()
     if cq.message:
         await cq.message.answer(
             "✅ E'loningiz moderatsiyaga yuborildi.\n\n"

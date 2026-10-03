@@ -140,7 +140,8 @@ settings = Settings(
     channel_id=_req("CHANNEL_ID"),
     channel_username=_req("CHANNEL_USERNAME"),
     instagram_username=_req("INSTAGRAM_USERNAME"),
-    leaderboard_channel_id=_req("LEADERBOARD_CHANNEL_ID"),
+    # TOP/reyting hozircha muzlatilgan — bo'sh bo'lsa asosiy kanal ishlatiladi.
+    leaderboard_channel_id=_normalize_chat_id(os.getenv("LEADERBOARD_CHANNEL_ID") or "") or _req("CHANNEL_ID"),
     sales_phone=_sales_phone(),
     prize_usd=_int("PRIZE_USD", 50),
     leaderboard_interval_days=_int("LEADERBOARD_INTERVAL_DAYS", 3),

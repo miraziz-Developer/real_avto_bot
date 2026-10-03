@@ -11,4 +11,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY bot/ ./bot/
 
+RUN useradd --system --uid 10001 --no-create-home botuser
+USER botuser
+
 CMD ["python", "-m", "bot.main"]

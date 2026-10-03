@@ -365,3 +365,24 @@ async def apply_listing_location_column(engine: AsyncEngine) -> None:
         )
 
 
+
+
+async def apply_listing_payment_unique_id_column(engine: AsyncEngine) -> None:
+    """To'lov skrinshotining file_unique_id si (qayta ishlatishni aniqlash)."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE listing_submissions
+                    ADD COLUMN IF NOT EXISTS payment_screenshot_unique_id VARCHAR(64)
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_listing_submissions_payment_screenshot_unique_id
+                    ON listing_submissions (payment_screenshot_unique_id)
+                """
+            )
+        )

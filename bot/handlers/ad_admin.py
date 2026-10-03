@@ -18,7 +18,7 @@ from aiogram.types import (
     Message,
 )
 
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 from bot.config import settings
 from bot.db.models import ListingSubmissionStatus
@@ -54,8 +54,10 @@ async def listing_approve(cq: CallbackQuery, crm: CrmRepository) -> None:
         return
     lid = int(raw[1])
 
-    sub = await crm.get_listing_submission(lid)
-    if sub is None or sub.status != ListingSubmissionStatus.PENDING:
+    # Qatorni qulflaymiz: ikkinchi admin shu yerda kutadi va keyin «allaqachon qayta ishlangan» oladi —
+    # e'lon kanalga ikki marta chiqmaydi.
+    sub = await crm.lock_pending_listing(lid)
+    if sub is None:
         await cq.answer("Bu e'lon allaqachon qayta ishlangan", show_alert=True)
         return
 
@@ -108,6 +110,10 @@ async def listing_approve(cq: CallbackQuery, crm: CrmRepository) -> None:
             pass
         return
 
+    # Tasdiqni darhol saqlaymiz (qulf bo'shaydi); keyingi Telegram so'rovlari xato bersa ham
+    # e'lon holati kanal bilan mos qoladi.
+    await crm.session.commit()
+
     try:
         await cq.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
@@ -157,10 +163,13 @@ async def listing_approve(cq: CallbackQuery, crm: CrmRepository) -> None:
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
         )
-    except TelegramBadRequest:
+    except (TelegramBadRequest, TelegramForbiddenError):
         pass
 
-    await notify_wishlist_matches(cq.bot, crm, updated)
+    try:
+        await notify_wishlist_matches(cq.bot, crm, updated)
+    except Exception:
+        logging.exception("Wishlist xabarnomalari (e'lon #%s)", lid)
 
 
 @router.callback_query(F.data.startswith("lad_r:"))
@@ -263,7 +272,7 @@ async def listing_reject_reason(message: Message, state: FSMContext, crm: CrmRep
             parse_mode=ParseMode.HTML,
             reply_markup=user_kb,
         )
-    except TelegramBadRequest as e:
+    except (TelegramBadRequest, TelegramForbiddenError) as e:
         logging.warning("Rad xabari foydalanuvchiga yuborilmadi #%s: %s", lid, e)
         await message.answer(
             f"⚠️ #{lid} bazada rad etildi, lekin foydalanuvchiga xabar yuborilmadi "

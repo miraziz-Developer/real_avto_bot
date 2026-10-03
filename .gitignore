@@ -8,3 +8,7 @@ __pycache__/
 **/__pycache__/
 *.pyc
 .Python
+node_modules/
+dist/
+.pytest_cache/
+.DS_Store
