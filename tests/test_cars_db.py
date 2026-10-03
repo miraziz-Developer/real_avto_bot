@@ -160,6 +160,7 @@ def watch(monkeypatch):
     monkeypatch.setattr(channel_watch, "settings", patched)
     channel_watch._orphan_media.clear()  # testlar orasida «egasiz media» buferi aralashmasin
     channel_watch._recent_media_car.clear()
+    channel_watch._transcript_cache.clear()
     return channel_watch
 
 
@@ -369,3 +370,54 @@ async def test_audio_only_facts_wait_for_admin_but_text_posts_go_live(session_fa
     async with session_factory() as s:
         gentra = (await s.execute(select(Car).where(Car.model == "Gentra"))).scalar_one()
         assert gentra.status == CarStatus.ACTIVE
+
+
+
+def _vnote(mid: int, uid: str) -> Message:
+    from aiogram.types import VideoNote
+
+    return Message(
+        message_id=mid,
+        date=datetime.now(timezone.utc),
+        chat=Chat(id=CHANNEL_ID, type="channel", username="real_avto_test"),
+        video_note=VideoNote(file_id=uid, file_unique_id=f"u{mid}", length=240, duration=55),
+    )
+
+
+async def test_two_round_videos_for_one_car_and_next_car_separately(session_factory, watch, monkeypatch):
+    speech = {
+        500: "Kobalt 2020 yil, mexanika",
+        501: "yurgani 98 ming, kraskasi toza",  # o'sha Cobalt'ning davomi
+        502: "Spark 2015 yil sotiladi",  # boshqa mashina
+    }
+
+    async def fake_transcribe(bot, messages):
+        return [speech[m.message_id] for m in messages if m.message_id in speech]
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    bot = FakeBot()
+    for mid in (500, 501, 502):
+        await watch.process_channel_post(bot, [_vnote(mid, f"v{mid}")])
+    async with session_factory() as s:
+        rows = (await s.execute(select(Car).order_by(Car.id))).scalars().all()
+        assert [r.model for r in rows] == ["Cobalt", "Spark"]
+        cobalt = rows[0]
+        assert cobalt.channel_message_ids == [500, 501] and cobalt.video_file_ids == ["vn:v500", "vn:v501"]
+        assert cobalt.mileage_km == 98000
+        assert cobalt.status == CarStatus.REVIEW  # faqat ovozdan — 2-video ham o'zicha sotuvga chiqarmaydi
+    assert any("yana video qo'shildi" in t for _, _, t in bot.sent)
+
+
+async def test_two_silent_videos_then_description_make_one_car(session_factory, watch, monkeypatch):
+    async def silent(bot, messages):
+        return []
+
+    monkeypatch.setattr(watch, "_transcribe_media", silent)
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_vnote(600, "s1")])
+    await watch.process_channel_post(bot, [_vnote(601, "s2")])
+    await watch.process_channel_post(bot, [_channel_msg(602, text_="Nexia 3, yili 2018, probeg 120 000 km")])
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert car.model == "Nexia 3" and car.channel_message_ids == [600, 601, 602]
+        assert car.video_file_ids == ["vn:s1", "vn:s2"] and car.status == CarStatus.ACTIVE

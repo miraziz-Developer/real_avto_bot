@@ -51,6 +51,14 @@ def _channel_lock(chat_id: int) -> asyncio.Lock:
     return _channel_locks.setdefault(chat_id, asyncio.Lock())
 
 
+def _peek_recent_media_car(chat_id: int) -> int | None:
+    item = _recent_media_car.get(chat_id)
+    if item is None:
+        return None
+    ts, car_id = item
+    return car_id if time.monotonic() - ts <= ORPHAN_MEDIA_SECONDS else None
+
+
 def _take_recent_media_car(chat_id: int) -> int | None:
     item = _recent_media_car.pop(chat_id, None)
     if item is None:
@@ -102,6 +110,10 @@ def _message_text(m: Message) -> str:
     return (m.caption or m.text or "").strip()
 
 
+# (chat_id, message_id) → transkripsiya: bir video bir necha marta (pullik) qayta o'qilmasin
+_transcript_cache: dict[tuple[int, int], str] = {}
+
+
 async def _transcribe_media(bot: Bot, messages: list[Message]) -> list[str]:
     ai = get_ai()
     if not ai.enabled:
@@ -110,6 +122,11 @@ async def _transcribe_media(bot: Bot, messages: list[Message]) -> list[str]:
     for m in messages:
         media = m.video_note or m.voice or m.audio or m.video
         if media is None:
+            continue
+        key = (m.chat.id, m.message_id)
+        if key in _transcript_cache:
+            if _transcript_cache[key]:
+                out.append(_transcript_cache[key])
             continue
         if (getattr(media, "file_size", 0) or 0) > _MAX_TRANSCRIBE_BYTES:
             continue
@@ -120,6 +137,9 @@ async def _transcribe_media(bot: Bot, messages: list[Message]) -> list[str]:
                 continue
             name = "audio.ogg" if m.voice else "video.mp4"
             text = await ai.transcribe(buf.read(), filename=name)
+            if len(_transcript_cache) > 2000:
+                _transcript_cache.clear()
+            _transcript_cache[key] = text
             if text:
                 out.append(text)
         except AIError as e:
@@ -144,7 +164,15 @@ def _media_of(messages: list[Message]) -> tuple[list[str], list[str]]:
     return photos, videos
 
 
-async def _apply_reply_to_car(bot: Bot, cars: CarRepository, car, messages: list[Message], text: str) -> None:
+async def _apply_reply_to_car(
+    bot: Bot,
+    cars: CarRepository,
+    car,
+    messages: list[Message],
+    text: str,
+    *,
+    header: str = "✏️ <b>Kanaldagi reply bilan yangilandi</b>",
+) -> None:
     """Postga reply bilan qo'shilgan ma'lumot (narx, probeg, holat...) — mavjud mashinani yangilaydi."""
     transcripts = await _transcribe_media(bot, messages)
     full = "\n".join([text, *[f"[Ovoz]: {t}" for t in transcripts]]).strip()
@@ -155,7 +183,10 @@ async def _apply_reply_to_car(bot: Bot, cars: CarRepository, car, messages: list
     changes: dict = {}
     if full:
         parsed = await extract_car(full, ai=get_ai(), usd_rate_uzs=settings.usd_rate_uzs)
-        changes = await cars.apply_parsed(car, parsed, raw_text=f"{car.raw_text}\n{full}".strip())
+        # Faqat ovoz (matnsiz video) — tekshiruvdagi mashinani o'zicha sotuvga chiqarmaydi
+        changes = await cars.apply_parsed(
+            car, parsed, raw_text=f"{car.raw_text}\n{full}".strip(), allow_activate=bool(text)
+        )
     # Yangi list beramiz — ARRAY ustunidagi o'zgarish saqlanishi uchun
     new_ids = [m.message_id for m in messages if m.message_id not in car.channel_message_ids]
     car.channel_message_ids = [*car.channel_message_ids, *new_ids]
@@ -165,7 +196,10 @@ async def _apply_reply_to_car(bot: Bot, cars: CarRepository, car, messages: list
         car.video_file_ids = [*car.video_file_ids, *videos]
     await cars.session.commit()
     if changes or photos or videos:
-        await send_car_card_to_admins(bot, car, header="✏️ <b>Kanaldagi reply bilan yangilandi</b>")
+        if transcripts and not text:
+            heard = html.escape(" ".join(transcripts)[:300])
+            header += f"\n🎙 Eshitilgani: <i>«{heard}»</i>"
+        await send_car_card_to_admins(bot, car, header=header)
     if not was_active and car.status == CarStatus.ACTIVE:
         await notify_wishlist_matches_car(bot, CrmRepository(cars.session), cars, car)
         await cars.session.commit()
@@ -222,6 +256,29 @@ async def _process_channel_post(bot: Bot, messages: list[Message]) -> None:
 
         if await cars.find_by_channel_message(chat_id, msg_ids[0]) is not None:
             return  # takroriy update
+
+        # Matnsiz media (masalan 2-dumaloq video) ketma-ket kelsa — bitta mashinaga tegishli
+        if not text and reply_to is None and any(m.photo or m.video or m.video_note for m in messages):
+            recent_car_id = _peek_recent_media_car(chat_id)
+            recent_car = await cars.get(recent_car_id) if recent_car_id else None
+            if recent_car is not None:
+                heard = parse_car_text(" ".join(await _transcribe_media(bot, messages)), usd_rate_uzs=settings.usd_rate_uzs)
+                other_model = heard.model and recent_car.model and (
+                    heard.model.split()[0].lower() != recent_car.model.split()[0].lower()
+                )
+                if not other_model:
+                    await _apply_reply_to_car(
+                        bot, cars, recent_car, messages, "", header="🎥 <b>Shu mashinaga yana video qo'shildi</b>"
+                    )
+                    _recent_media_car[chat_id] = (time.monotonic(), recent_car.id)  # oyna uzayadi
+                    return
+                _recent_media_car.pop(chat_id, None)  # boshqa model — yangi mashina
+            orphan = _take_orphan_media(chat_id)
+            if orphan:
+                # Oldingi matnsiz media bilan birga ko'rib chiqamiz (2 ta video — bitta mashina)
+                messages = [*orphan, *messages]
+                first = messages[0]
+                msg_ids = [m.message_id for m in messages]
 
         transcripts = await _transcribe_media(bot, messages)
         full_text = "\n".join([text, *[f"[Ovoz]: {t}" for t in transcripts]]).strip()

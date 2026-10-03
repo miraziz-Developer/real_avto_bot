@@ -136,7 +136,9 @@ class CarRepository:
         await self._event(car, "created", {"source": source, "status": status, "price_usd": car.price_usd})
         return car
 
-    async def apply_parsed(self, car: Car, parsed: ParsedCar, *, raw_text: str | None = None) -> dict[str, Any]:
+    async def apply_parsed(
+        self, car: Car, parsed: ParsedCar, *, raw_text: str | None = None, allow_activate: bool = True
+    ) -> dict[str, Any]:
         """Tahrirlangan post: topilgan qiymatlarni yangilash. O'zgarishlar ro'yxatini qaytaradi."""
         changes: dict[str, Any] = {}
         for f in PARSED_FIELDS:
@@ -156,7 +158,8 @@ class CarRepository:
         if changes:
             await self._event(car, "edited", {k: v for k, v in changes.items() if k != "price_usd"} or None)
         # Admin tekshiruvidagi mashina tahrirdan keyin to'liq bo'lib qolsa — sotuvga chiqadi
-        if car.status == CarStatus.REVIEW and all(getattr(car, f) for f in REQUIRED_FIELDS):
+        # allow_activate=False — ma'lumot faqat ovozdan kelgan: admin tasdig'isiz sotuvga chiqarmaymiz
+        if allow_activate and car.status == CarStatus.REVIEW and all(getattr(car, f) for f in REQUIRED_FIELDS):
             await self.set_status(car, CarStatus.ACTIVE)
         return changes
 
