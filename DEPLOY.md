@@ -2,9 +2,7 @@
 
 Bu qo‘llanma **barcha stack**ni bir serverda ko‘tarish uchun: PostgreSQL, Redis, Node backend (CRM API), Nginx+React frontend, Python Telegram bot.
 
-**Ishlab chiqarishda albatta**: ildiz `.env` da `POSTGRES_PASSWORD`, `ADMIN_TELEGRAM_IDS`, `SALES_PHONE`, haqiqiy `BOT_TOKEN` / kanallar; `backend/.env` da `NODE_ENV=production`, kuchli `JWT_SECRET` (≥32 belgi), `CRM_ADMIN_PASSWORD` va kerak bo‘lsa `CORS_ORIGIN`.
-
-> **Mavjud serverni yangilayapsizmi?** Avval [12-bo‘lim](#12-mavjud-serverni-yangilash-xavfsizlik-yangilanishi)ni o‘qing — `POSTGRES_PASSWORD` ni `.env` ga qo‘shmasangiz `docker compose` ishga tushmaydi.
+**Ishlab chiqarishda albatta**: ildiz `.env` da `ADMIN_TELEGRAM_IDS`, `SALES_PHONE`, haqiqiy `BOT_TOKEN` / kanallar; `backend/.env` da kuchli `JWT_SECRET`, `CRM_ADMIN_PASSWORD`, `NODE_ENV=production` va kerak bo‘lsa `CORS_ORIGIN`; Postgres paroli ildiz `.env` dagi `POSTGRES_PASSWORD` dan olinadi (kodda saqlanmaydi) — u `DATABASE_URL` lardagi parol bilan bir xil bo‘lishi kerak.
 
 ## 1. Server talablari
 
@@ -43,17 +41,10 @@ cp .env.example .env
 nano .env
 ```
 
-Postgres paroli **faqat** shu faylda saqlanadi (`docker-compose.yml` uni `${POSTGRES_PASSWORD}` orqali oladi, git'ga tushmaydi):
-
-```bash
-openssl rand -hex 24   # natijani quyida ikki joyga yozing
-```
-
 **Docker ichida** `DATABASE_URL` hosti **`db`** bo‘lishi kerak:
 
 ```env
-POSTGRES_PASSWORD=<parol>
-DATABASE_URL=postgresql+asyncpg://postgres:<parol>@db:5432/real_avto_konkurs
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/real_avto_konkurs
 ```
 
 `REDIS_URL` ni odatda qo‘lda yozmasangiz ham bo‘ladi — `docker-compose.yml` botga `redis://redis:6379/0` beradi.
@@ -68,10 +59,10 @@ nano backend/.env
 **Docker** uchun `DATABASE_URL` (Node `pg` — `+asyncpg` yo‘q):
 
 ```env
-DATABASE_URL=postgresql://postgres:<parol>@db:5432/real_avto_konkurs
+DATABASE_URL=postgresql://postgres:postgres@db:5432/real_avto_konkurs
 ```
 
-**Majburiy ishlab chiqarish**: `JWT_SECRET` ni uzun random bilan almashtiring (`openssl rand -hex 32`), `CRM_ADMIN_PASSWORD` ni kuchli qiling. `NODE_ENV=production` bo‘lsa standart/zaif sirlar bilan backend **ishga tushmaydi** (`docker compose logs backend` da `[FATAL]`).
+**Majburiy ishlab chiqarish**: `JWT_SECRET` ni uzun random bilan almashtiring (`openssl rand -hex 32`), `CRM_ADMIN_PASSWORD` ni kuchli qiling.
 
 Backend uchun:
 
@@ -113,9 +104,7 @@ BOOTSTRAP_NO_CACHE=1 bash scripts/server_bootstrap.sh
 2. **Asosiy kanal** (`CHANNEL_ID`) — bot **admin** (post yozish, a’zolar soni / obuna tekshiruvi uchun kerak bo‘lgan huquqlar).
 3. **LEADERBOARD_CHANNEL_ID** — TOP postlari shu yerga; odatda asosiy kanal bilan bir xil bo‘lishi mumkin.
 4. **@real_avto_otzivlar** (sharhlar) — bot **admin**; kodda default shu kanal ishlatiladi, kerak bo‘lsa `REVIEWS_CHANNEL_ID` bilan almashtiring.
-5. **ADMIN_TELEGRAM_IDS** — e’lon moderatsiyasi (vergul bilan bir nechta ID). Adminlar botda:
-   - `/pending` — kutilayotgan e'lonlarni tugmalar bilan qayta yuboradi (moderatsiya xabari yo'qolsa);
-   - `/stats` — foydalanuvchilar, e'lonlar, sotilganlar statistikasi.
+5. **ADMIN_TELEGRAM_IDS** — e’lon moderatsiyasi (vergul bilan bir nechta ID).
 
 ## 7. Portlar va firewall
 
@@ -123,20 +112,11 @@ Standart `docker-compose.yml`:
 
 | Xizmat   | Host port |
 |----------|-------------|
-| Frontend (CRM) | **3000** → konteyner 80 (`/api/` backendga proksi) |
-| Backend  | **127.0.0.1:3001** — faqat server ichidan |
+| Frontend | **3000** → konteyner 80 |
+| Backend  | **3001** |
 | Postgres / Redis | faqat ichki tarmoq |
 
-CRM'ni internetga faqat **HTTPS** orqali chiqaring (Caddy / Nginx + Let's Encrypt yoki Cloudflare): parol va JWT oddiy HTTP'da ochiq ketadi. Firewall misoli:
-
-```bash
-sudo ufw allow OpenSSH
-sudo ufw allow 443/tcp          # HTTPS proksi
-# HTTPS hali yo'q bo'lsa vaqtincha: sudo ufw allow 3000/tcp
-sudo ufw enable
-```
-
-> Diqqat: Docker o‘z portlarini `ufw` qoidalaridan chetlab ochadi — shuning uchun backend `127.0.0.1` ga bog‘langan.
+Tashqi dunyoga faqat kerak bo‘lganini oching (masalan 3000 CRM uchun). 5432 ni internetga ochmang.
 
 ## 8. Yangilash (deploy)
 
@@ -161,8 +141,8 @@ Migratsiyalar bot **birinchi marta** ishga tushganda PostgreSQLga qo‘llanadi (
 ## 9. Tekshirish
 
 - **CRM**: brauzerda `http://SERVER_IP:3000` — login `backend/.env` dagi `CRM_ADMIN_USER` / `CRM_ADMIN_PASSWORD`.
-- **API**: `curl -s http://127.0.0.1:3001/health` serverda (tashqaridan 3001 ochilmaydi — bu to‘g‘ri).
-- **Bot**: `docker compose logs -f bot` — xatolarsiz polling, kanal tekshiruvi loglari. `docker compose ps` da bot `healthy` bo'lishi kerak: bot har 30 soniyada Telegram API ga ulanishni tekshiradi; 3 daqiqa ulana olmasa `unhealthy` bo'ladi.
+- **API**: `curl -s http://127.0.0.1:3001/health` serverda.
+- **Bot**: `docker compose logs -f bot` — xatolarsiz polling, kanal tekshiruvi loglari.
 
 ## 10. Avtomatik testlar (CI yoki mahalliy)
 
@@ -170,13 +150,7 @@ Migratsiyalar bot **birinchi marta** ishga tushganda PostgreSQLga qo‘llanadi (
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 pytest tests -q
-# Postgres ustida parallel (qulf) testlari ham:
-TEST_DATABASE_URL=postgresql+asyncpg://postgres:PAROL@localhost:5432/ra_test pytest tests -q
-
-cd backend && npm ci && npm test
 ```
-
-GitHub'da har push/PR uchun `.github/workflows/ci.yml` hammasini (bot + Postgres, backend, frontend build, compose config) avtomatik tekshiradi.
 
 Docker image buildni tekshirish:
 
@@ -190,33 +164,91 @@ docker compose build
 - **Mahalliy** ishlab chiqishda bot `DATABASE_URL` da `localhost` ishlatadi; Dockerda **`db`** hostname `docker-compose` tarmog‘ida DNS bo‘ladi.
 - **Webhook** ishlatilmaydi — bot process doimiy ishlashi kerak (systemd yoki Docker `restart: unless-stopped` allaqachon bor).
 
-## 12. Mavjud serverni yangilash (xavfsizlik yangilanishi)
+---
 
-Bu yangilanishda Postgres paroli `docker-compose.yml` dan olib tashlandi (u git tarixida ochiq turgan edi). Tartib:
+## 12. AI CRM yangilanishi (kanal kuzatuvchi, AI agent, katalog, Instagram)
 
-1. **Hozirgi parol bilan ishga tushirish** (ma'lumotlar o‘zgarmaydi — parol faqat bazani birinchi yaratishda o‘rnatiladi):
+Bir martalik qadamlar — eski versiyadan yangisiga o'tishda **tartib bilan**.
 
-   ```bash
-   cd /opt/real_avto_konkurs && git pull
-   echo "POSTGRES_PASSWORD=<docker-compose.yml dagi eski parol>" >> .env
-   docker compose build && docker compose up -d
-   ```
+### 12.1 Zaxira nusxa (majburiy)
+```bash
+cd /opt/real_avto_bot
+docker compose exec -T db pg_dump -U postgres real_avto_konkurs | gzip > ~/backup_before_ai_crm_$(date +%F).sql.gz
+ls -lh ~/backup_before_ai_crm_*.sql.gz   # hajmi 0 emasligini tekshiring
+```
 
-2. **Parolni almashtirish** (eski parol git tarixida — almashtirish shart). `$` va `@` belgisiz parol oling:
+### 12.2 DB parolini almashtirish
+Eski parol `docker-compose.yml` ichida edi va git tarixida qolgan — **almashtirish shart**.
+`POSTGRES_PASSWORD` faqat **yangi** bazani yaratishda ishlatiladi, mavjud bazada parolni qo'lda o'zgartiring:
+```bash
+NEW_PW="$(openssl rand -hex 24)"; echo "$NEW_PW"     # saqlab qo'ying
+docker compose exec -T db psql -U postgres -c "ALTER USER postgres WITH PASSWORD '$NEW_PW';"
+```
+Keyin shu parolni yozing:
+- ildiz `.env`: `POSTGRES_PASSWORD=...` va `DATABASE_URL=postgresql+asyncpg://postgres:...@db:5432/real_avto_konkurs`
+- `backend/.env`: `DATABASE_URL=postgresql://postgres:...@db:5432/real_avto_konkurs`
 
-   ```bash
-   NEW=$(openssl rand -hex 24); echo "$NEW"
-   docker compose exec db psql -U postgres -c "ALTER USER postgres PASSWORD '$NEW';"
-   ```
+### 12.3 Yangi `.env` sozlamalari (ildiz)
+| O'zgaruvchi | Nima uchun |
+|---|---|
+| `GROQ_API_KEY` | AI tahlil va savdo agenti (bo'sh bo'lsa oddiy rejim ishlaydi) |
+| `BUSINESS_NAME`, `BUSINESS_ADDRESS`, `BUSINESS_HOURS`, `REAL_AVTO_MAP_URL` | Agent va katalog javoblari |
+| `BOT_USERNAME`, `CATALOG_URL` | Katalog (Mini App uchun HTTPS) |
+| `LISTING_FREEZE_HOURS`, `WORK_HOUR_START/END`, `BUYOUT_REPLY_HOURS` | E'lon muzlatish va «Sotib olamiz» |
+| `INSTAGRAM_ENABLED`, `IG_*` | Instagram (Meta ruxsatidan keyin) |
+To'liq ro'yxat va izohlar: `.env.example`.
 
-   Keyin yangi parolni **uch joyga** yozing: ildiz `.env` (`POSTGRES_PASSWORD` va `DATABASE_URL`), `backend/.env` (`DATABASE_URL`). So‘ng:
+### 12.4 Yangilash
+```bash
+git fetch && git checkout main && git pull
+docker compose build
+docker compose up -d
+docker compose logs -f bot backend catalog | head -100
+```
+Bot ishga tushganda yangi jadvallar (`cars`, `leads`, ...) va ustunlar avtomatik yaratiladi — qayta ishga tushirish xavfsiz.
 
-   ```bash
-   docker compose up -d --force-recreate backend bot
-   ```
+### 12.5 HTTPS (katalog Mini App va Instagram webhook uchun)
+Masalan Caddy (sertifikat avtomatik):
+```
+katalog.realavto.uz {
+    reverse_proxy 127.0.0.1:3002
+}
+crm.realavto.uz {
+    reverse_proxy 127.0.0.1:3000
+}
+hook.realavto.uz {
+    reverse_proxy /webhooks/instagram 127.0.0.1:8081
+}
+```
+CRM'ni tashqi internetga ochmaslik ham mumkin (faqat VPN / IP cheklovi) — u ichki panel.
 
-3. **Backend**: `backend/.env` da `NODE_ENV=production`, `JWT_SECRET` ≥ 32 belgi. CRM parollari birinchi ishga tushishda avtomatik tuzli scrypt xeshga o‘tkaziladi — qo‘shimcha ish kerak emas. Login 15 daqiqada IP+login bo‘yicha 8 ta xato urinishdan keyin vaqtincha bloklanadi.
+### 12.6 Telegram sozlamalari
+- [ ] Bot asosiy kanalda **admin** (postlarni o'qish va joylash)
+- [ ] Bot kanalning **muhokama guruhida admin** (kommentlarga javob)
+- [ ] `ADMIN_TELEGRAM_IDS` — lead va mashina kartalarini oladigan jamoa
+- [ ] (ixtiyoriy) Telegram Business: egasining akkauntida *Chatbotlar* → bot, **kontaktlarni chiqarib tashlang**
 
-4. **Port 3001** endi faqat `127.0.0.1` da. Brauzerda `http://IP:3001/login` ishlamaydi — CRM: `http://IP:3000` (yaxshisi HTTPS domen).
+### 12.7 Kanal tarixini import qilish
+Telegram Desktop → kanal → Export chat history (JSON, rasmlarsiz) → serverga `/opt/real_avto_bot/import/result.json`:
+```bash
+docker compose cp import/result.json bot:/app/result.json
+docker compose exec bot python -m scripts.import_channel_export /app/result.json --dry-run
+docker compose exec bot python -m scripts.import_channel_export /app/result.json --ai
+```
 
-5. **Redis** endi FSM ma'lumotlarini diskka yozadi (`redis_data` volume) va xotira to‘lsa ularni o‘chirmaydi — bot restartida foydalanuvchilarning yarim to‘ldirilgan e'lon formalari yo‘qolmaydi.
+### 12.8 Tekshiruv (smoke test)
+- [ ] Kanalga test post tashlang → adminlarga «🆕 Kanalda yangi mashina» kartasi keldi
+- [ ] Postni tahrirlab «SOTILDI» yozing → «🔴 sotildi» xabari
+- [ ] Botga boshqa akkauntdan «Cobalt bormi?» → bazadan javob; «menejer bilan gaplashmoqchiman» → lead kartasi
+- [ ] Lead kartasiga reply → javob mijozga bordi
+- [ ] Botda test e'lon → kartada «⏳ … da avtomatik chiqadi» va «💰 Sotib olamiz»
+- [ ] `/statistika`, CRM «Mashinalar» va «Mijozlar (AI)» sahifalari ochiladi
+- [ ] Katalog: `https://katalog…` ochiladi, rasmlar ko'rinadi, botda «🚗 Katalog» tugmasi bor
+
+### 12.9 Orqaga qaytarish
+```bash
+git checkout <oldingi-commit> && docker compose build && docker compose up -d
+# Ma'lumotni qaytarish kerak bo'lsa:
+gunzip -c ~/backup_before_ai_crm_YYYY-MM-DD.sql.gz | docker compose exec -T db psql -U postgres real_avto_konkurs
+```
+Yangi jadvallar eski kodga xalaqit bermaydi — faqat kodni qaytarish yetarli bo'lishi mumkin.

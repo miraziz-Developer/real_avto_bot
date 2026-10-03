@@ -1,5 +1,6 @@
 ROOT_WELCOME = (
     "🚘 <b>Real Avto botiga xush kelibsiz!</b>\n\n"
+    "🤖 <b>Savolingizni shu yerga yozing</b> — qaysi mashina bor, narxi, holati: darhol javob beramiz.\n"
     "📢 <b>Elon berish</b> — mashinangizni e‘lon qilish (moderatsiya, keyin kanal).\n"
     "🔍 <b>Qidiruv saqlash</b> — parametrlar bo‘yicha mos e‘lon chiqqanda avtomatik xabar."
 )

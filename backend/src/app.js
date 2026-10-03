@@ -6,8 +6,9 @@ import { errorHandler, securityHeaders } from "./middleware.js";
 export function createApp() {
   const app = express();
   app.disable("x-powered-by");
-  // Faqat bitta ishonchli proksi (frontend nginx) — X-Forwarded-For shundan olinadi.
-  app.set("trust proxy", 1);
+  // Caddy/nginx → catalog nginx → backend: barcha ichki (loopback / docker) hoplarga ishonamiz,
+  // shunda req.ip haqiqiy mijoz IP si bo'ladi (login va ochiq API rate-limit har mijozga alohida).
+  app.set("trust proxy", process.env.TRUST_PROXY || "loopback, linklocal, uniquelocal");
   app.use(securityHeaders);
   app.use(createCorsMiddleware());
   app.use(express.json({ limit: "512kb" }));

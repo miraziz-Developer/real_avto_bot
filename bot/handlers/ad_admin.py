@@ -14,21 +14,17 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    InputMediaPhoto,
     Message,
 )
 
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
-from bot.config import settings
+from bot.config import is_admin
+from bot.db.cars_repo import CarRepository
 from bot.db.models import ListingSubmissionStatus
 from bot.db.repositories import CrmRepository
-from bot.handlers.ad_listing import (
-    listing_caption_from_sub_public,
-    send_admin_listing_album_with_actions,
-    truncate_caption_html,
-)
-from bot.services.wishlist_notify import notify_wishlist_matches
+from bot.handlers.ad_listing import send_admin_listing_album_with_actions
+from bot.services.listing_publish import PublishError, publish_listing
 
 router = Router(name="ad_admin")
 
@@ -36,11 +32,6 @@ router = Router(name="ad_admin")
 class AdAdminRejectStates(StatesGroup):
     waiting_reason = State()
 
-
-def _is_admin(uid: int | None) -> bool:
-    if uid is None:
-        return False
-    return uid in settings.admin_telegram_ids
 
 
 PENDING_RESEND_LIMIT = 10
@@ -57,13 +48,13 @@ def moderation_keyboard(lid: int) -> InlineKeyboardMarkup:
     )
 
 
-@router.message(Command("stats"), F.chat.type == "private")
+@router.message(Command("umumiy"), F.chat.type == "private")
 async def admin_stats(message: Message, crm: CrmRepository) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         return
     st = await crm.admin_stats()
     await message.answer(
-        "📊 <b>Real Avto — statistika</b>\n\n"
+        "📈 <b>Real Avto — umumiy statistika</b>\n\n"
         f"👤 Bot foydalanuvchilari: <b>{st['users']}</b>\n"
         f"🗂 Mijozlar (CRM): <b>{st['clients']}</b>\n\n"
         f"📝 E'lonlar: kutilmoqda <b>{st['pending']}</b> · tasdiqlangan <b>{st['approved']}</b> · "
@@ -72,15 +63,15 @@ async def admin_stats(message: Message, crm: CrmRepository) -> None:
         f"✅ Sotildi: <b>{st['sold']}</b>\n\n"
         f"🔎 Faol qidiruvlar: <b>{st['wishlists_active']}</b>\n"
         f"💬 Savol-javob suhbatlari: <b>{st['threads']}</b>\n\n"
-        "Kutilayotgan e'lonlarni qayta ko'rish: /pending",
+        "Kutilayotgan e'lonlarni qayta ko'rish: /navbat",
         parse_mode=ParseMode.HTML,
     )
 
 
-@router.message(Command("pending"), F.chat.type == "private")
+@router.message(Command("navbat"), F.chat.type == "private")
 async def admin_pending(message: Message, crm: CrmRepository) -> None:
     """Moderatsiya xabari yo'qolgan / o'chirilgan bo'lsa — kutilayotgan e'lonlarni qayta yuborish."""
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         return
     rows = await crm.list_pending_listings(limit=PENDING_RESEND_LIMIT)
     if not rows:
@@ -122,7 +113,7 @@ async def admin_pending(message: Message, crm: CrmRepository) -> None:
                 payment_screenshot_file_id=sub.payment_screenshot_file_id,
             )
         except TelegramBadRequest as e:
-            logging.warning("/pending: #%s yuborilmadi: %s", sub.id, e)
+            logging.warning("/navbat: #%s yuborilmadi: %s", sub.id, e)
             await message.answer(
                 f"⚠️ #{sub.id} albomi yuborilmadi: <code>{html.escape(str(e))}</code>",
                 parse_mode=ParseMode.HTML,
@@ -131,8 +122,8 @@ async def admin_pending(message: Message, crm: CrmRepository) -> None:
 
 
 @router.callback_query(F.data.startswith("lad_a:"))
-async def listing_approve(cq: CallbackQuery, crm: CrmRepository) -> None:
-    if cq.from_user is None or not _is_admin(cq.from_user.id):
+async def listing_approve(cq: CallbackQuery, crm: CrmRepository, cars: CarRepository) -> None:
+    if cq.from_user is None or not is_admin(cq.from_user.id):
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
     if cq.message is None:
@@ -151,60 +142,26 @@ async def listing_approve(cq: CallbackQuery, crm: CrmRepository) -> None:
     if sub is None:
         await cq.answer("Bu e'lon allaqachon qayta ishlangan", show_alert=True)
         return
-
-    caption = truncate_caption_html(listing_caption_from_sub_public(sub))
-    photos = list(sub.photo_file_ids or [])
-    if not photos:
+    if not sub.photo_file_ids:
         await cq.answer("Rasmlar yo'q", show_alert=True)
         return
 
-    media = [InputMediaPhoto(media=photos[0], caption=caption, parse_mode="HTML")]
-    media.extend(InputMediaPhoto(media=p) for p in photos[1:])
-
     # Telegram spinner: answerCallbackQuery bitta marta; kanalga yuborishdan OLDIN yopamiz.
     await cq.answer()
-
     try:
-        msgs = await cq.bot.send_media_group(settings.channel_id, media)
-    except TelegramBadRequest as e:
-        logging.exception("Kanalga e'lon yuborish: %s", e)
-        err = html.escape(str(e))
-        hint = ""
-        if "chat not found" in str(e).lower():
-            hint = (
-                "\n\n<b>Nima qilish kerak</b>\n"
-                "• <code>.env</code> dagi <code>CHANNEL_ID</code> — "
-                "tasdiqlangan e'lonlar shu kanalga chiqadi (<code>-100…</code> yoki <code>@kanal</code>).\n"
-                "• Botni shu kanalga qo‘shing va <b>Post messages</b> (yoki admin) huquqi bo‘lsin.\n"
-                "• ID ni @RawDataBot / @getidsbot orqali kanaldan oling."
-            )
+        msgs = await publish_listing(cq.bot, crm, cars, sub)
+    except PublishError as e:
         try:
-            await cq.message.reply(
-                f"❌ Kanal xatosi: {err}{hint}",
-                parse_mode=ParseMode.HTML,
-            )
+            await cq.message.reply(e.html_text, parse_mode=ParseMode.HTML)
         except TelegramBadRequest:
             pass
         return
-
-    first_id = msgs[0].message_id if msgs else None
-    updated = await crm.try_mark_listing_approved(lid, channel_message_id=first_id)
-    if updated is None:
-        for m in msgs:
-            try:
-                await cq.bot.delete_message(settings.channel_id, m.message_id)
-            except TelegramBadRequest:
-                pass
+    if msgs is None:
         try:
             await cq.message.reply("⚠️ Boshqa admin allaqachon tasdiqlagan.")
         except TelegramBadRequest:
             pass
         return
-
-    # Tasdiqni darhol saqlaymiz (qulf bo'shaydi); keyingi Telegram so'rovlari xato bersa ham
-    # e'lon holati kanal bilan mos qoladi.
-    await crm.session.commit()
-
     try:
         await cq.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
@@ -214,58 +171,10 @@ async def listing_approve(cq: CallbackQuery, crm: CrmRepository) -> None:
     except TelegramBadRequest:
         pass
 
-    bot_un = ""
-    try:
-        bot_me = await cq.bot.get_me()
-        bot_un = (bot_me.username or "").strip().lstrip("@")
-    except Exception:
-        logging.exception("get_me muvaffaqiyatsiz — kanal ostidagi anonim havola yuborilmaydi")
-
-    if bot_un and first_id is not None:
-        try:
-            ask = f"https://t.me/{bot_un}?start=lq_{lid}"
-            await cq.bot.send_message(
-                settings.channel_id,
-                "💬 <b>Mashina haqida savol</b> — bot orqali yozishingiz mumkin.",
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [InlineKeyboardButton(text="💬 Savol yozish", url=ask)],
-                    ],
-                ),
-                reply_to_message_id=first_id,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-        except TelegramBadRequest as e:
-            logging.warning("Kanalga savol tugmasi yuborilmadi: %s", e)
-
-    try:
-        ask_dm = f"https://t.me/{bot_un}?start=lq_{lid}" if bot_un else ""
-        extra = ""
-        if ask_dm:
-            extra = (
-                '\n\nKanaldagi post ostida «<a href="'
-                + html.escape(ask_dm)
-                + '">Savol yozish</a>» tugmasi ham bor.'
-            )
-        await cq.bot.send_message(
-            sub.user_telegram_id,
-            "✅ E'loningiz tasdiqlandi va kanalda e'lon qilindi. Rahmat!" + extra,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-    except (TelegramBadRequest, TelegramForbiddenError):
-        pass
-
-    try:
-        await notify_wishlist_matches(cq.bot, crm, updated)
-    except Exception:
-        logging.exception("Wishlist xabarnomalari (e'lon #%s)", lid)
-
 
 @router.callback_query(F.data.startswith("lad_r:"))
 async def listing_reject_start(cq: CallbackQuery, state: FSMContext, crm: CrmRepository) -> None:
-    if cq.from_user is None or not _is_admin(cq.from_user.id):
+    if cq.from_user is None or not is_admin(cq.from_user.id):
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
     if cq.message is None:
@@ -299,7 +208,7 @@ async def listing_reject_start(cq: CallbackQuery, state: FSMContext, crm: CrmRep
 
 @router.message(Command("cancel"), StateFilter(AdAdminRejectStates.waiting_reason))
 async def listing_reject_cancel(message: Message, state: FSMContext) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         await state.clear()
         return
     await state.clear()
@@ -315,7 +224,7 @@ async def listing_reject_cancel(message: Message, state: FSMContext) -> None:
     ~F.text.startswith("/"),
 )
 async def listing_reject_reason(message: Message, state: FSMContext, crm: CrmRepository) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         await state.clear()
         return
 
@@ -377,7 +286,7 @@ async def listing_reject_reason(message: Message, state: FSMContext, crm: CrmRep
 
 @router.message(StateFilter(AdAdminRejectStates.waiting_reason))
 async def listing_reject_need_text(message: Message) -> None:
-    if message.from_user is None or not _is_admin(message.from_user.id):
+    if message.from_user is None or not is_admin(message.from_user.id):
         return
     await message.answer(
         "Rad sababini oddiy <b>matn</b> bilan yozing (kamida 4 belgi). "

@@ -9,11 +9,13 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand, BotCommandScopeChat
 
 from bot.config import settings
 from bot.db.base import create_tables, dispose_engine, get_engine, get_session_factory, init_engine
 from bot.db.migrate import (
+    apply_car_indexes,
+    apply_lead_business_columns,
+    apply_listing_freeze_columns,
     apply_contest_tables,
     apply_listing_extra_details_column,
     apply_listing_location_column,
@@ -34,7 +36,13 @@ from bot.middlewares.database import DbSessionMiddleware
 from bot.middlewares.errors import UnhandledErrorMiddleware
 from bot.middlewares.rate_limit import RateLimitMiddleware
 from bot.middlewares.workflow import BotUsernameMiddleware
+from bot.ai import get_ai
+from bot.instagram.client import get_ig
+from bot.instagram.webhook import start_instagram_server
 from bot.workers.sale_followup import sale_followup_loop
+from bot.workers.lead_reminder import lead_reminder_loop
+from bot.workers.listing_freeze import listing_freeze_loop
+from bot.workers.stale_cars import stale_cars_loop
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +99,9 @@ async def _bootstrap_database() -> None:
             await apply_listing_payment_screenshot_column(get_engine())
             await apply_listing_location_column(get_engine())
             await apply_listing_payment_unique_id_column(get_engine())
+            await apply_car_indexes(get_engine())
+            await apply_lead_business_columns(get_engine())
+            await apply_listing_freeze_columns(get_engine())
             return
         except BaseException as e:
             last_exc = e
@@ -189,17 +200,55 @@ async def _heartbeat_loop(bot: Bot) -> None:
 
 
 async def _set_admin_commands(bot: Bot) -> None:
-    """Admin chatlarida /stats va /pending menyuda ko'rinsin (oddiy foydalanuvchilarda emas)."""
+    """Adminlar uchun «/» menyusi (oddiy foydalanuvchilarga ko'rinmaydi)."""
+    from aiogram.types import BotCommand, BotCommandScopeChat
+
     commands = [
-        BotCommand(command="start", description="Bosh menyu"),
-        BotCommand(command="pending", description="Moderatsiya navbati"),
-        BotCommand(command="stats", description="Statistika"),
+        BotCommand(command="panel", description="🛠 Admin panel (CRM)"),
+        BotCommand(command="leadlar", description="🔥 Ochiq mijozlar (leadlar)"),
+        BotCommand(command="statistika", description="📊 Mashinalar statistikasi (30 kun)"),
+        BotCommand(command="sotuvda", description="🟢 Sotuvdagi mashinalar"),
+        BotCommand(command="tekshiruv", description="🟡 Tekshiruv kutayotgan postlar"),
+        BotCommand(command="navbat", description="📝 Moderatsiya navbati (foydalanuvchi e'lonlari)"),
+        BotCommand(command="umumiy", description="📈 Umumiy statistika (foydalanuvchi, e'lon, sotuv)"),
+        BotCommand(command="mashina", description="🚗 Mashina kartasi: /mashina ID"),
+        BotCommand(command="sotildi", description="🔴 Sotildi: /sotildi ID [narx]"),
+        BotCommand(command="start", description="Asosiy menyu"),
     ]
     for aid in settings.admin_telegram_ids:
         try:
             await bot.set_my_commands(commands, scope=BotCommandScopeChat(chat_id=aid))
         except TelegramBadRequest as e:
             logger.warning("Admin %s uchun buyruqlar menyusi o'rnatilmadi: %s", aid, e)
+
+
+async def _set_catalog_menu_button(bot: Bot) -> None:
+    """Chat pastidagi Mini App tugmasi: hamma uchun «🚗 Katalog», adminlarga — «🛠 Admin panel» (CRM).
+
+    Telegram menyu tugmasini har bir chat uchun alohida qo'yishga ruxsat beradi. Faqat HTTPS manzillar.
+    """
+    from aiogram.types import MenuButtonWebApp, WebAppInfo
+
+    for name, url in (("CATALOG_URL", settings.catalog_url), ("CRM_URL", settings.crm_url)):
+        if url and not url.startswith("https://"):
+            logger.warning("%s https emas — Mini App tugmasi o'rnatilmadi: %s", name, url)
+    if settings.catalog_url.startswith("https://"):
+        try:
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text="🚗 Katalog", web_app=WebAppInfo(url=settings.catalog_url))
+            )
+        except TelegramBadRequest as e:
+            logger.warning("Katalog menyu tugmasi o'rnatilmadi: %s", e)
+    if settings.crm_url.startswith("https://"):
+        for aid in settings.admin_telegram_ids:
+            try:
+                await bot.set_chat_menu_button(
+                    chat_id=aid,
+                    menu_button=MenuButtonWebApp(text="🛠 Admin panel", web_app=WebAppInfo(url=settings.crm_url)),
+                )
+            except TelegramBadRequest as e:
+                # Admin hali botga /start bosmagan bo'lsa — chat yo'q
+                logger.warning("Admin %s uchun panel tugmasi o'rnatilmadi: %s", aid, e)
 
 
 async def _run() -> None:
@@ -217,6 +266,8 @@ async def _run() -> None:
     # LEADERBOARD MUZLATILDI - Foydalanuvchi botdan chiqdi
     # await _verify_leaderboard_channel(bot)
     await _verify_reviews_channel(bot)
+    await _set_admin_commands(bot)
+    await _set_catalog_menu_button(bot)
 
     storage = await _fsm_storage()
     dp = Dispatcher(storage=storage)
@@ -231,16 +282,20 @@ async def _run() -> None:
     dp.update.middleware(DbSessionMiddleware(session_factory))
     register_handlers(dp)
 
-    # Restart paytida yozilgan xabarlar yo‘qolmasin (flood’dan rate limit himoya qiladi).
+    # Bot o'chiq paytda kelgan kanal postlari va mijoz xabarlari yo'qolmasin — Telegram ularni 24 soat saqlaydi
     await bot.delete_webhook(drop_pending_updates=False)
 
     # LEADERBOARD LOOP MUZLATILDI - Foydalanuvchi botdan chiqdi
     # worker_lb = asyncio.create_task(leaderboard_loop(bot, session_factory))
-    await _set_admin_commands(bot)
     worker_sale = asyncio.create_task(sale_followup_loop(bot, session_factory))
     heartbeat = asyncio.create_task(_heartbeat_loop(bot))
+    worker_stale = asyncio.create_task(stale_cars_loop(bot, session_factory))
+    worker_leads = asyncio.create_task(lead_reminder_loop(bot, session_factory))
+    worker_freeze = asyncio.create_task(listing_freeze_loop(bot, session_factory))
+    ig_runner = await start_instagram_server(bot, session_factory, get_ig())
     try:
-        await dp.start_polling(bot, handle_signals=True)
+        # channel_post / edited_channel_post ham kelishi uchun ishlatilayotgan update turlarini aniq so'raymiz
+        await dp.start_polling(bot, handle_signals=True, allowed_updates=dp.resolve_used_update_types())
     finally:
         # worker_lb.cancel()
         heartbeat.cancel()
@@ -249,14 +304,22 @@ async def _run() -> None:
         except asyncio.CancelledError:
             pass
         worker_sale.cancel()
+        worker_stale.cancel()
+        worker_leads.cancel()
+        worker_freeze.cancel()
         # try:
         #     await worker_lb
         # except asyncio.CancelledError:
         #     pass
-        try:
-            await worker_sale
-        except asyncio.CancelledError:
-            pass
+        for w in (worker_sale, worker_stale, worker_leads, worker_freeze):
+            try:
+                await w
+            except asyncio.CancelledError:
+                pass
+        await get_ai().close()
+        if ig_runner is not None:
+            await ig_runner.cleanup()
+        await get_ig().close()
         try:
             await storage.close()
         except Exception:

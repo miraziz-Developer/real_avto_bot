@@ -19,3 +19,10 @@ def fmt_usd_from_uzs(uzs: int | float) -> str:
 
 def fmt_usd(usd: int | float) -> str:
     return f"${float(usd):,.0f}"
+
+
+def fmt_price(usd: int | float | None, *, empty: str = "") -> str:
+    """Kartalar va xabarlar uchun narx: «$9 200» (bo'sh joy bilan); narx yo'q bo'lsa `empty`."""
+    if not usd:
+        return empty
+    return f"${int(usd):,}".replace(",", " ")

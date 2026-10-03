@@ -97,6 +97,13 @@ def _log_level() -> str:
     return (os.getenv("LOG_LEVEL", "INFO") or "INFO").strip().upper()
 
 
+def _bool(name: str, default: bool) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _optional_positive_int(name: str) -> int | None:
     raw = (os.getenv(name) or "").strip()
     if not raw:
@@ -125,9 +132,39 @@ class Settings:
     db_pool_timeout: int
     log_level: str
     reviews_channel_id: str
+    listing_payment_enabled: bool
     listing_price_uzs: int
     payment_card: str
     payment_card_holder: str
+    groq_api_key: str
+    groq_model: str
+    groq_stt_model: str
+    groq_stt_language: str
+    groq_stt_prompt: str
+    car_stale_days: int
+    agent_enabled: bool
+    agent_model: str
+    business_name: str
+    business_address: str
+    business_hours: str
+    map_url: str
+    lead_reminder_minutes: int
+    business_enabled: bool
+    business_owner_pause_hours: int
+    comments_enabled: bool
+    listing_freeze_hours: int
+    work_hour_start: int
+    work_hour_end: int
+    buyout_reply_hours: int
+    catalog_url: str
+    crm_url: str
+    instagram_enabled: bool
+    ig_access_token: str
+    ig_app_secret: str
+    ig_verify_token: str
+    ig_account_id: str
+    ig_webhook_port: int
+    ig_graph_version: str
     sale_followup_interval_hours: int
     sale_followup_interval_minutes: int | None
     parking_location_text: str
@@ -154,10 +191,65 @@ settings = Settings(
     db_pool_timeout=_int("DB_POOL_TIMEOUT", 30),
     log_level=_log_level(),
     reviews_channel_id=_reviews_channel_id(),
+    # Hozircha e'lon bepul; pullik rejimga qaytish uchun LISTING_PAYMENT_ENABLED=true
+    listing_payment_enabled=_bool("LISTING_PAYMENT_ENABLED", False),
     listing_price_uzs=_int("LISTING_PRICE_UZS", 50000),
     payment_card=(os.getenv("PAYMENT_CARD", "") or "").strip(),
     payment_card_holder=(os.getenv("PAYMENT_CARD_HOLDER", "") or "").strip(),
-
+    # AI (kanal postlarini tahlil, ovoz/dumaloq video → matn). Kalit bo'lmasa faqat regex parser ishlaydi.
+    groq_api_key=(os.getenv("GROQ_API_KEY", "") or "").strip(),
+    groq_model=(os.getenv("GROQ_MODEL", "") or "openai/gpt-oss-120b").strip(),
+    groq_stt_model=(os.getenv("GROQ_STT_MODEL", "") or "whisper-large-v3").strip(),
+    # Ovozli xabar tili (ISO-639-1). Bo'sh — Whisper o'zi aniqlaydi (o'zbekchada xato qiladi)
+    groq_stt_language=(os.getenv("GROQ_STT_LANGUAGE", "uz") or "").strip(),
+    groq_stt_prompt=(
+        os.getenv("GROQ_STT_PROMPT", "")
+        or (
+            "Real Avto, Yangiyo'l avtosaloni. Chevrolet Cobalt, Gentra, Nexia, Spark, Damas, Labo, Matiz, "
+            "Lacetti, Malibu, Tracker, Captiva, Onix, Monza, Equinox, BYD, Kia, Hyundai, JAC. "
+            "Yili, probeg, ming kilometr, pozitsiya, kraska toza, mexanika, avtomat, metan, propan, "
+            "nasiya, boshlang'ich to'lov, narxi, dollar, million so'm, kelishamiz."
+        )
+    ).strip(),
+    # Shuncha kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi
+    car_stale_days=_int("CAR_STALE_DAYS", 14),
+    # AI savdo agenti: botga yozilgan savollarga mashinalar bazasidan javob beradi
+    agent_enabled=_bool("AGENT_ENABLED", True),
+    agent_model=(os.getenv("GROQ_AGENT_MODEL", "") or os.getenv("GROQ_MODEL", "") or "openai/gpt-oss-120b").strip(),
+    business_name=(os.getenv("BUSINESS_NAME", "") or "Real Avto").strip(),
+    business_address=(os.getenv("BUSINESS_ADDRESS", "") or "Yangiyo'l").strip(),
+    # Bo'sh bo'lsa agent ish vaqtini aytmaydi (o'ylab topmaslik uchun) — menejer aniqlaydi
+    business_hours=(os.getenv("BUSINESS_HOURS", "") or "").strip(),
+    map_url=(os.getenv("REAL_AVTO_MAP_URL", "") or _REAL_AVTO_MAP_DEFAULT).strip(),
+    # Adminga topshirilgan lead shuncha daqiqada olinmasa — barcha adminlarga qayta eslatma
+    lead_reminder_minutes=_int("LEAD_REMINDER_MINUTES", 5),
+    # Telegram Business: agent akkaunt egasining shaxsiy chatlarida javob beradi
+    business_enabled=_bool("BUSINESS_ENABLED", True),
+    # Akkaunt egasi mijozga o'zi yozsa — AI shu mijoz bilan shuncha soat jim turadi
+    business_owner_pause_hours=_int("BUSINESS_OWNER_PAUSE_HOURS", 6),
+    # Kanal kommentlaridagi savollarga bazadan qisqa javob + botga havola
+    comments_enabled=_bool("COMMENTS_ENABLED", True),
+    # Bot orqali kelgan e'lon shuncha ISH soati muzlatiladi (jamoa sotib olishi mumkin), keyin avtomatik kanalga.
+    # 0 — avtomatik joylash yo'q (faqat qo'lda tasdiqlash)
+    listing_freeze_hours=_int("LISTING_FREEZE_HOURS", 6),
+    # Ish vaqti (Toshkent): muzlatish faqat shu soatlarda «sanaladi», avtomatik joylash ham shu vaqtda
+    work_hour_start=_int("WORK_HOUR_START", 9),
+    work_hour_end=_int("WORK_HOUR_END", 21),
+    # Sotuvchi sotib olish taklifiga shuncha soatda javob bermasa — e'lon avtomatik kanalga chiqadi
+    buyout_reply_hours=_int("BUYOUT_REPLY_HOURS", 24),
+    # Mashinalar katalogi (sayt + Telegram Mini App). Mini App uchun HTTPS bo'lishi shart
+    catalog_url=(os.getenv("CATALOG_URL", "") or "").strip().rstrip("/"),
+    # Admin panel (CRM) — adminlarga bot ichida Mini App bo'lib ochiladi (HTTPS shart)
+    crm_url=(os.getenv("CRM_URL", "") or "").strip().rstrip("/"),
+    # Instagram (Meta App Review'dan keyin): Direct va kommentlarga agent javobi, webhook orqali
+    instagram_enabled=_bool("INSTAGRAM_ENABLED", False),
+    ig_access_token=(os.getenv("IG_ACCESS_TOKEN", "") or "").strip(),
+    ig_app_secret=(os.getenv("IG_APP_SECRET", "") or "").strip(),
+    ig_verify_token=(os.getenv("IG_VERIFY_TOKEN", "") or "").strip(),
+    # O'zimizning Instagram akkaunt ID si (o'z kommentlarimizga javob bermaslik uchun)
+    ig_account_id=(os.getenv("IG_ACCOUNT_ID", "") or "").strip(),
+    ig_webhook_port=_int("IG_WEBHOOK_PORT", 8081),
+    ig_graph_version=(os.getenv("IG_GRAPH_VERSION", "") or "v21.0").strip(),
     sale_followup_interval_hours=_int("SALE_FOLLOWUP_INTERVAL_HOURS", 24),
     sale_followup_interval_minutes=_optional_positive_int("SALE_FOLLOWUP_INTERVAL_MINUTES"),
     parking_location_text=_parking_location_text(),
@@ -194,3 +286,8 @@ def sale_followup_retry_hint(s: Settings = settings) -> str:
         m = max(1, s.sale_followup_interval_minutes)
         return f"{m} daqiqadan so‘ng"
     return f"{max(1, s.sale_followup_interval_hours)} soatdan so‘ng"
+
+
+def is_admin(uid: int | None) -> bool:
+    """Admin (jamoa a'zosi) — ADMIN_TELEGRAM_IDS dagi foydalanuvchi."""
+    return uid is not None and uid in settings.admin_telegram_ids

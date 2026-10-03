@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import logging
 import re
+from datetime import datetime, timezone
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ParseMode
@@ -45,6 +46,7 @@ from bot.handlers.form_limits import (
     PRICE_USD_MIN,
 )
 from bot.handlers.render import present_root_menu
+from bot.services.work_hours import TASHKENT, add_work_hours
 from bot.utils.contact_html import phone_link_html
 from bot.utils.currency import fmt_usd
 from bot.utils.numbers import parse_int_in_range
@@ -404,6 +406,7 @@ async def send_admin_listing_album_with_actions(
     photo_file_ids: list[str],
     mod_kb: InlineKeyboardMarkup,
     payment_screenshot_file_id: str | None = None,
+    note_html: str | None = None,
 ) -> None:
     cap = listing_album_caption_moderation(
         lid,
@@ -437,7 +440,8 @@ async def send_admin_listing_album_with_actions(
         )
     await bot.send_message(
         admin_chat_id,
-        f"🛎 E'lon <b>#{lid}</b> — yuqoridagi to'plam bo'yicha tasdiqlang yoki rad eting.",
+        f"🛎 E'lon <b>#{lid}</b> — yuqoridagi to'plam bo'yicha tasdiqlang yoki rad eting."
+        + (f"\n{note_html}" if note_html else ""),
         reply_markup=mod_kb,
         reply_to_message_id=msgs[0].message_id,
         parse_mode=ParseMode.HTML,
@@ -857,6 +861,14 @@ async def ad_photo_fallback(message: Message, state: FSMContext) -> None:
     )
 
 
+async def _go_next_after_phone(message: Message, state: FSMContext) -> None:
+    """Telefondan keyin: pullik rejimda to'lov bosqichi, aks holda darhol xulosa."""
+    if settings.listing_payment_enabled:
+        await _go_payment_after_phone(message, state)
+    else:
+        await _go_confirm_after_payment(message, state)
+
+
 async def _go_payment_after_phone(message: Message, state: FSMContext) -> None:
     await state.set_state(AdListingStates.listing_payment)
     lines = [
@@ -890,7 +902,7 @@ async def ad_phone_contact(message: Message, state: FSMContext) -> None:
     phone = message.contact.phone_number
     un = message.from_user.username or ""
     await state.update_data(phone=phone, preview_username=un)
-    await _go_payment_after_phone(message, state)
+    await _go_next_after_phone(message, state)
 
 
 
@@ -905,7 +917,7 @@ async def ad_phone_text(message: Message, state: FSMContext) -> None:
         return
     un = (message.from_user.username or "") if message.from_user else ""
     await state.update_data(phone=parsed, preview_username=un)
-    await _go_payment_after_phone(message, state)
+    await _go_next_after_phone(message, state)
 
 
 
@@ -961,7 +973,7 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
     location = str(data.get("location") or "").strip()
     payment_screenshot_file_id = data.get("payment_screenshot_file_id")
     payment_screenshot_unique_id = data.get("payment_screenshot_unique_id")
-    if settings.listing_price_uzs > 0 and not payment_screenshot_file_id:
+    if settings.listing_payment_enabled and not payment_screenshot_file_id:
         await cq.answer("To'lov skrinshoti topilmadi. E'lonni qaytadan boshlang.", show_alert=True)
         return
     if not location or len(location) < 2:
@@ -1020,6 +1032,13 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
         )
 
         lid = row.id
+        if settings.listing_freeze_hours > 0:
+            row.frozen_until = add_work_hours(
+                datetime.now(timezone.utc),
+                settings.listing_freeze_hours,
+                start_hour=settings.work_hour_start,
+                end_hour=settings.work_hour_end,
+            )
         # Adminlarga yuborishdan OLDIN saqlaymiz: aks holda admin tez bossa e'lon hali bazada
         # ko'rinmaydi («allaqachon qayta ishlangan» xatosi), qulf ham uzoq ushlanib qoladi.
         await crm.session.commit()
@@ -1042,9 +1061,17 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
             [
                 InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"lad_a:{lid}"),
                 InlineKeyboardButton(text="❌ Rad etish", callback_data=f"lad_r:{lid}"),
-            ]
+            ],
+            [InlineKeyboardButton(text="💰 Sotib olamiz (narx taklifi)", callback_data=f"lad_b:{lid}")],
         ]
     )
+    freeze_note = None
+    if row.frozen_until is not None:
+        local = row.frozen_until.astimezone(TASHKENT)
+        freeze_note = (
+            f"⏳ Hech kim javob bermasa <b>{local:%d.%m %H:%M}</b> da avtomatik kanalga chiqadi. "
+            "Sotib olmoqchi bo'lsak — undan oldin «💰 Sotib olamiz»."
+        )
 
     reuse_warning = ""
     if payment_screenshot_unique_id:
@@ -1091,6 +1118,7 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
                     photo_file_ids=photos,
                     mod_kb=mod_kb,
                     payment_screenshot_file_id=payment_screenshot_file_id,
+                    note_html=freeze_note,
                 )
                 if reuse_warning:
                     await cq.bot.send_message(aid, reuse_warning, parse_mode=ParseMode.HTML)
@@ -1102,10 +1130,15 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
         logging.warning("ADMIN_TELEGRAM_IDS bo'sh — e'lon #%s adminlarga yuborilmadi", lid)
 
     if cq.message:
+        if row.frozen_until is not None:
+            when_txt = f"{row.frozen_until.astimezone(TASHKENT):%d.%m %H:%M}"
+            status_line = f"Kanalda <b>{when_txt}</b> gacha chiqadi (ehtimol, undan ham oldinroq).\n\n"
+        else:
+            status_line = "Admin tekshirgach, tasdiqlansa kanalda chiqadi; rad etilsa sabab bilan xabar beramiz.\n\n"
         await cq.message.answer(
             "✅ E'loningiz moderatsiyaga yuborildi.\n\n"
-            "Admin tekshirgach, tasdiqlansa kanalda chiqadi; rad etilsa sabab bilan xabar beramiz.\n\n"
-            "Rad etilganda «Elon berish»dan qayta yuborishingiz mumkin.",
+            + status_line
+            + "Rad etilganda «Elon berish»dan qayta yuborishingiz mumkin.",
             parse_mode=ParseMode.HTML,
         )
         await present_root_menu(callback=cq)

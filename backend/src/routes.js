@@ -6,6 +6,9 @@ import { requireAuth, requireRole } from "./middleware.js";
 import { burnPasswordCheck, hashPassword, isLegacyHash, verifyPassword } from "./password.js";
 import { loginBlockedFor, recordLoginFailure, recordLoginSuccess } from "./loginLimiter.js";
 import { asyncHandler, getPagination, parseId } from "./utils.js";
+import { carsRouter } from "./cars.js";
+import { leadsRouter } from "./leads.js";
+import { publicRouter, verifyInitData } from "./public.js";
 
 export const router = express.Router();
 
@@ -70,7 +73,32 @@ router.post('/auth/login', asyncHandler(async (req, res) => {
   return res.json({ token: signAccessToken(user), user });
 }));
 
+/**
+ * Telegram Mini App orqali CRM'ga parolsiz kirish: initData imzosi bot tokeni bilan tekshiriladi,
+ * foydalanuvchi ADMIN_TELEGRAM_IDS da bo'lsa — admin JWT beriladi.
+ */
+router.post('/auth/telegram', asyncHandler(async (req, res) => {
+  const tgUser = verifyInitData(String((req.body || {}).init_data || ''), (process.env.BOT_TOKEN || '').trim());
+  if (!tgUser?.id) return res.status(401).json({ error: 'telegram_auth_failed' });
+  const admins = new Set(
+    String(process.env.ADMIN_TELEGRAM_IDS || '')
+      .split(/[\s,;]+/)
+      .map((v) => Number.parseInt(v, 10))
+      .filter(Number.isFinite),
+  );
+  if (!admins.has(Number(tgUser.id))) return res.status(403).json({ error: 'not_admin' });
+  const username = tgUser.username ? `@${tgUser.username}` : `tg:${tgUser.id}`;
+  const user = { id: 0, username, role: 'admin' };
+  return res.json({ token: signAccessToken(user), user: { username, role: 'admin' } });
+}));
+
+// Ochiq katalog (sayt + Telegram Mini App) — login talab qilinmaydi
+router.use('/public', publicRouter);
+
 router.use(requireAuth);
+
+router.use('/cars', carsRouter);
+router.use('/leads', leadsRouter);
 
 router.get('/stats', asyncHandler(async (_req, res) => {
   const [

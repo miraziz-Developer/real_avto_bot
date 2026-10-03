@@ -386,3 +386,33 @@ async def apply_listing_payment_unique_id_column(engine: AsyncEngine) -> None:
                 """
             )
         )
+
+
+async def apply_car_indexes(engine: AsyncEngine) -> None:
+    """Kanal tahriri/reply qaysi albom xabariga kelsa ham mashinani tez topish uchun GIN indeks."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_cars_channel_message_ids ON cars USING GIN (channel_message_ids)")
+        )
+
+
+async def apply_lead_business_columns(engine: AsyncEngine) -> None:
+    """leads jadvali Telegram Business ustunlaridan oldin yaratilgan bo'lsa — qo'shish."""
+    async with engine.begin() as conn:
+        await conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS human_until TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS business_connection_id VARCHAR(100)"))
+
+
+async def apply_listing_freeze_columns(engine: AsyncEngine) -> None:
+    """E'lon muzlatish va sotib olish taklifi ustunlari."""
+    async with engine.begin() as conn:
+        for ddl in (
+            "ALTER TABLE listing_submissions ADD COLUMN IF NOT EXISTS frozen_until TIMESTAMPTZ",
+            "ALTER TABLE listing_submissions ADD COLUMN IF NOT EXISTS buyout_status VARCHAR(20)",
+            "ALTER TABLE listing_submissions ADD COLUMN IF NOT EXISTS buyout_price_usd BIGINT",
+            "ALTER TABLE listing_submissions ADD COLUMN IF NOT EXISTS buyout_admin_id BIGINT",
+            "ALTER TABLE listing_submissions ADD COLUMN IF NOT EXISTS buyout_offered_at TIMESTAMPTZ",
+            "ALTER TABLE listing_submissions ADD COLUMN IF NOT EXISTS auto_published BOOLEAN NOT NULL DEFAULT FALSE",
+            "CREATE INDEX IF NOT EXISTS ix_listing_submissions_frozen_until ON listing_submissions (frozen_until)",
+        ):
+            await conn.execute(text(ddl))

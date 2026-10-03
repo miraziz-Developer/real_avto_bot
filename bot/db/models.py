@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -13,7 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -226,9 +227,219 @@ class ListingSubmission(Base):
     # open | feedback_pending | sold | not_sold | None (pending/rejected e'lonlar)
     sale_status: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     sale_last_prompt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Muzlatish: shu vaqtgacha jamoa ko'rib chiqadi (sotib olish imkoniyati), keyin avtomatik kanalga
+    frozen_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    # Sotib olish taklifi: offered | accepted | declined | negotiating | expired | bought
+    buyout_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    buyout_price_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    buyout_admin_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    buyout_offered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    auto_published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+class CarStatus(StrEnum):
+    REVIEW = "review"  # AI ma'lumotni to'liq ajrata olmadi — admin tekshiruvi kerak
+    ACTIVE = "active"  # sotuvda
+    RESERVED = "reserved"  # bron qilingan
+    SOLD = "sold"
+    ARCHIVED = "archived"  # e'lon emas / o'chirilgan
+
+
+class CarSource(StrEnum):
+    CHANNEL = "channel"  # jamoa kanalga o'zi tashlagan post
+    BOT = "bot"  # foydalanuvchi bot orqali bergan e'lon (listing_submissions)
+    ADMIN = "admin"
+    IMPORT = "import"  # Telegram Desktop eksportidan
+
+
+class Car(Base):
+    """Bitta mashina — bitta yozuv, qayerdan kelganidan qat'i nazar. Savdo agenti shu jadvaldan javob beradi."""
+
+    __tablename__ = "cars"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    status: Mapped[str] = mapped_column(String(20), default=CarStatus.REVIEW, nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(20), default=CarSource.CHANNEL, nullable=False, index=True)
+
+    brand: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    mileage_km: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    price_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    color: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    transmission: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    fuel: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    position: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    paint_status: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    has_accident: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    location: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)  # AI qisqa xulosasi (holat, kamchiliklar)
+
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False, default="")  # post matni + ovoz transkripti
+    photo_file_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
+    video_file_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
+
+    channel_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Albomdagi barcha xabarlar (tahrir/reply qaysi biriga kelsa ham topish uchun)
+    channel_message_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), nullable=False, default=list)
+    listing_submission_id: Mapped[int | None] = mapped_column(
+        ForeignKey("listing_submissions.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+    )
+
+    # Biz o'zimiz sotib olgan mashina bo'lsa — foyda hisobi uchun
+    is_own: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    purchase_price_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    expenses_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sold_price_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    ai_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    stale_prompted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    @property
+    def title(self) -> str:
+        name = " ".join(p for p in (self.brand, self.model) if p) or "Mashina"
+        return f"{name} {self.year}" if self.year else name
+
+
+class CarEvent(Base):
+    """Mashina tarixi: yaratildi, narx o'zgardi, status o'zgardi — statistika va narx tarixi shu yerdan."""
+
+    __tablename__ = "car_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    car_id: Mapped[int] = mapped_column(ForeignKey("cars.id", ondelete="CASCADE"), index=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    actor_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class LeadStatus(StrEnum):
+    ACTIVE = "active"  # AI mijoz bilan gaplashmoqda
+    HANDED_OFF = "handed_off"  # AI adminga topshirdi, hali hech kim olmadi
+    IN_PROGRESS = "in_progress"  # admin oldi, odam gaplashmoqda (AI jim)
+    WON = "won"  # sotuv bo'ldi
+    LOST = "lost"  # yopildi
+
+
+OPEN_LEAD_STATUSES = (LeadStatus.ACTIVE, LeadStatus.HANDED_OFF, LeadStatus.IN_PROGRESS)
+
+
+class Lead(Base):
+    """Xaridor bilan bitta savdo jarayoni (bir mijozda bir vaqtda bitta ochiq lead)."""
+
+    __tablename__ = "leads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True)
+    channel: Mapped[str] = mapped_column(String(20), default="bot", nullable=False)  # bot | business | comments | instagram
+    status: Mapped[str] = mapped_column(String(20), default=LeadStatus.ACTIVE, nullable=False, index=True)
+    score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    car_id: Mapped[int | None] = mapped_column(ForeignKey("cars.id", ondelete="SET NULL"), nullable=True, index=True)
+    budget_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(30), nullable=True)  # naqd | kredit | bo'lib to'lash | trade-in
+    visit_time: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    wants: Mapped[str | None] = mapped_column(Text, nullable=True)  # nima qidiryapti (erkin matn)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)  # AI topshirishdagi xulosa
+    handoff_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    human_mode: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # admin oldi — AI javob bermaydi
+    # Business akkaunt egasi o'zi yozdi — shu vaqtgacha AI jim (keyin avtomatik qaytadi)
+    human_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    business_connection_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    assigned_admin_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    handed_off_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class AgentMessage(Base):
+    """Lead suhbati tarixi (AI konteksti va CRM uchun)."""
+
+    __tablename__ = "agent_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id", ondelete="CASCADE"), index=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)  # user | assistant | admin
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class LeadRelay(Base):
+    """Adminga yuborilgan xabar → lead. Admin shu xabarga reply qilsa, javob mijozga boradi."""
+
+    __tablename__ = "lead_relays"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id", ondelete="CASCADE"), index=True, nullable=False)
+    admin_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    admin_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("admin_chat_id", "admin_message_id", name="uq_lead_relays_admin_msg"),
+    )
+
+
+class BusinessConnection(Base):
+    """Telegram Business: akkaunt egasi botni «chatbot» qilib ulagan (Sozlamalar → Telegram Business → Chatbotlar)."""
+
+    __tablename__ = "business_connections"
+
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    owner_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    can_reply: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class ChannelThread(Base):
+    """Muhokama guruhidagi avto-forward xabar → kanal posti (kommentni qaysi mashinaga yozilganini bilish uchun)."""
+
+    __tablename__ = "channel_threads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    thread_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    channel_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    channel_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("group_chat_id", "thread_message_id", name="uq_channel_threads_group_msg"),
     )
