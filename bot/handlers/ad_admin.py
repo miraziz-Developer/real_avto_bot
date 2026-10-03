@@ -23,7 +23,11 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from bot.config import settings
 from bot.db.models import ListingSubmissionStatus
 from bot.db.repositories import CrmRepository
-from bot.handlers.ad_listing import listing_caption_from_sub_public, truncate_caption_html
+from bot.handlers.ad_listing import (
+    listing_caption_from_sub_public,
+    send_admin_listing_album_with_actions,
+    truncate_caption_html,
+)
 from bot.services.wishlist_notify import notify_wishlist_matches
 
 router = Router(name="ad_admin")
@@ -37,6 +41,93 @@ def _is_admin(uid: int | None) -> bool:
     if uid is None:
         return False
     return uid in settings.admin_telegram_ids
+
+
+PENDING_RESEND_LIMIT = 10
+
+
+def moderation_keyboard(lid: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"lad_a:{lid}"),
+                InlineKeyboardButton(text="❌ Rad etish", callback_data=f"lad_r:{lid}"),
+            ]
+        ]
+    )
+
+
+@router.message(Command("stats"), F.chat.type == "private")
+async def admin_stats(message: Message, crm: CrmRepository) -> None:
+    if message.from_user is None or not _is_admin(message.from_user.id):
+        return
+    st = await crm.admin_stats()
+    await message.answer(
+        "📊 <b>Real Avto — statistika</b>\n\n"
+        f"👤 Bot foydalanuvchilari: <b>{st['users']}</b>\n"
+        f"🗂 Mijozlar (CRM): <b>{st['clients']}</b>\n\n"
+        f"📝 E'lonlar: kutilmoqda <b>{st['pending']}</b> · tasdiqlangan <b>{st['approved']}</b> · "
+        f"rad etilgan <b>{st['rejected']}</b>\n"
+        f"🕐 So'nggi 24 soat: yuborilgan <b>{st['submitted_24h']}</b> · tasdiqlangan <b>{st['approved_24h']}</b>\n"
+        f"✅ Sotildi: <b>{st['sold']}</b>\n\n"
+        f"🔎 Faol qidiruvlar: <b>{st['wishlists_active']}</b>\n"
+        f"💬 Savol-javob suhbatlari: <b>{st['threads']}</b>\n\n"
+        "Kutilayotgan e'lonlarni qayta ko'rish: /pending",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.message(Command("pending"), F.chat.type == "private")
+async def admin_pending(message: Message, crm: CrmRepository) -> None:
+    """Moderatsiya xabari yo'qolgan / o'chirilgan bo'lsa — kutilayotgan e'lonlarni qayta yuborish."""
+    if message.from_user is None or not _is_admin(message.from_user.id):
+        return
+    rows = await crm.list_pending_listings(limit=PENDING_RESEND_LIMIT)
+    if not rows:
+        await message.answer("✅ Moderatsiya navbati bo'sh.")
+        return
+    await message.answer(
+        f"🛎 Kutilayotgan e'lonlar: <b>{len(rows)}</b>"
+        + (f" (eng eski {PENDING_RESEND_LIMIT} tasi)" if len(rows) >= PENDING_RESEND_LIMIT else "")
+        + ". Har biri pastda tugmalar bilan.",
+        parse_mode=ParseMode.HTML,
+    )
+    for sub in rows:
+        client = await crm.get_client_by_id(sub.client_id)
+        photos = list(sub.photo_file_ids or [])
+        if not photos:
+            await message.answer(f"⚠️ #{sub.id}: rasmlar yo'q.", reply_markup=moderation_keyboard(sub.id))
+            continue
+        try:
+            await send_admin_listing_album_with_actions(
+                message.bot,
+                message.chat.id,
+                lid=sub.id,
+                tg_id=int(sub.user_telegram_id),
+                client_name=(client.full_name if client else None) or "Mijoz",
+                brand=sub.brand,
+                model=sub.model,
+                year=sub.year,
+                mileage=sub.mileage,
+                location=sub.location,
+                condition_key=sub.condition_key,
+                has_accident=sub.has_accident,
+                price_ask_usd=sub.price_ask_usd,
+                paint_status=sub.paint_status,
+                phone=sub.phone,
+                extra_details=sub.extra_details or "",
+                seller_username=sub.seller_username,
+                photo_file_ids=photos,
+                mod_kb=moderation_keyboard(sub.id),
+                payment_screenshot_file_id=sub.payment_screenshot_file_id,
+            )
+        except TelegramBadRequest as e:
+            logging.warning("/pending: #%s yuborilmadi: %s", sub.id, e)
+            await message.answer(
+                f"⚠️ #{sub.id} albomi yuborilmadi: <code>{html.escape(str(e))}</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=moderation_keyboard(sub.id),
+            )
 
 
 @router.callback_query(F.data.startswith("lad_a:"))

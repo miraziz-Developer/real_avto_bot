@@ -173,3 +173,80 @@ async def test_sale_feedback_double_click_only_once(factory):
 
     results = await asyncio.gather(click(), click())
     assert sorted(results) == [False, True]
+
+
+async def test_stale_feedback_pending_is_prompted_again(factory):
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import text
+
+    lid = await _new_listing(factory, tg_id=11)
+    async with factory() as s:
+        crm = CrmRepository(s)
+        await crm.lock_pending_listing(lid)
+        await crm.try_mark_listing_approved(lid, channel_message_id=1)
+        await s.commit()
+    async with factory() as s:
+        assert await CrmRepository(s).try_set_sale_feedback_pending(lid, user_telegram_id=11) is not None
+        await s.commit()
+    # Foydalanuvchi sharh yozmay 2 kun o'tdi.
+    async with factory() as s:
+        await s.execute(
+            text("update listing_submissions set updated_at = now() - interval '2 days' where id=:i"), {"i": lid}
+        )
+        await s.commit()
+
+    now = datetime.now(timezone.utc)
+    async with factory() as s:
+        due = await CrmRepository(s).listings_due_for_sale_followup(
+            now=now, interval=timedelta(hours=24), first_after=timedelta(hours=1)
+        )
+        assert [d.id for d in due] == [lid]
+        await CrmRepository(s).mark_sale_prompt_sent(lid)
+        await s.commit()
+    async with factory() as s:
+        crm = CrmRepository(s)
+        sub = await crm.get_listing_submission(lid)
+        assert sub.sale_status == "open"
+        # Yangi so'rovdagi «Sotildi» tugmasi yana ishlaydi.
+        assert await crm.try_set_sale_feedback_pending(lid, user_telegram_id=11) is not None
+
+
+async def test_fresh_feedback_pending_is_not_interrupted(factory):
+    from datetime import datetime, timedelta, timezone
+
+    lid = await _new_listing(factory, tg_id=12)
+    async with factory() as s:
+        crm = CrmRepository(s)
+        await crm.lock_pending_listing(lid)
+        await crm.try_mark_listing_approved(lid, channel_message_id=1)
+        await s.commit()
+    async with factory() as s:
+        await CrmRepository(s).try_set_sale_feedback_pending(lid, user_telegram_id=12)
+        await s.commit()
+    async with factory() as s:
+        due = await CrmRepository(s).listings_due_for_sale_followup(
+            now=datetime.now(timezone.utc) + timedelta(hours=2),
+            interval=timedelta(hours=24),
+            first_after=timedelta(hours=1),
+        )
+        assert due == []
+
+
+async def test_admin_stats_and_pending_queue(factory):
+    a = await _new_listing(factory, tg_id=21)
+    b = await _new_listing(factory, tg_id=22, photos=("1", "2", "3"))
+    async with factory() as s:
+        crm = CrmRepository(s)
+        await crm.lock_pending_listing(a)
+        await crm.try_mark_listing_approved(a, channel_message_id=5)
+        await s.commit()
+    async with factory() as s:
+        crm = CrmRepository(s)
+        st = await crm.admin_stats()
+        assert st["pending"] == 1
+        assert st["approved"] == 1
+        assert st["approved_24h"] == 1
+        assert st["submitted_24h"] == 2
+        assert st["clients"] == 2
+        assert [r.id for r in await crm.list_pending_listings()] == [b]

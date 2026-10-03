@@ -34,10 +34,20 @@ from bot.data.car_catalog import (
     MODELS_PER_PAGE,
     subvariants_for,
 )
-from bot.handlers.form_limits import CAR_YEAR_MAX, CAR_YEAR_MIN
+from bot.handlers.form_limits import (
+    CAR_YEAR_MAX,
+    CAR_YEAR_MIN,
+    MILEAGE_MAX_KM,
+    MODEL_NAME_MAX,
+    PHONE_DIGITS_MAX,
+    PHONE_DIGITS_MIN,
+    PRICE_USD_MAX,
+    PRICE_USD_MIN,
+)
 from bot.handlers.render import present_root_menu
 from bot.utils.contact_html import phone_link_html
 from bot.utils.currency import fmt_usd
+from bot.utils.numbers import parse_int_in_range
 
 router = Router(name="ad_listing")
 
@@ -233,8 +243,8 @@ def parse_phone_from_text(raw: str) -> str | None:
     s = (raw or "").strip()
     if not s:
         return None
-    digits = re.sub(r"\D", "", s)
-    if len(digits) < 9:
+    digits = re.sub(r"[^0-9]", "", s)
+    if len(digits) < PHONE_DIGITS_MIN or len(digits) > PHONE_DIGITS_MAX:
         return None
     if s.startswith("+"):
         return f"+{digits}"
@@ -661,6 +671,9 @@ async def ad_custom_model(message: Message, state: FSMContext) -> None:
     if len(model) < 2:
         await message.answer("Model nomi juda qisqa.")
         return
+    if len(model) > MODEL_NAME_MAX:
+        await message.answer(f"Model nomi {MODEL_NAME_MAX} belgidan oshmasin.")
+        return
     await state.update_data(model=model)
     await state.set_state(AdListingStates.listing_year)
     await message.answer(f"📅 Yilini kiriting ({CAR_YEAR_MIN}-{CAR_YEAR_MAX}):")
@@ -668,13 +681,9 @@ async def ad_custom_model(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(AdListingStates.listing_year), F.text)
 async def ad_year(message: Message, state: FSMContext) -> None:
-    raw = (message.text or "").strip()
-    if not raw.isdigit():
-        await message.answer("Yil raqam bo'lishi kerak.")
-        return
-    year = int(raw)
-    if year < CAR_YEAR_MIN or year > CAR_YEAR_MAX:
-        await message.answer(f"Yil {CAR_YEAR_MIN}–{CAR_YEAR_MAX} oralig'ida bo'lsin.")
+    year = parse_int_in_range(message.text, CAR_YEAR_MIN, CAR_YEAR_MAX, allow_separators=False)
+    if year is None:
+        await message.answer(f"Yil raqam bilan, {CAR_YEAR_MIN}–{CAR_YEAR_MAX} oralig'ida bo'lsin.")
         return
     await state.update_data(year=year)
     await state.set_state(AdListingStates.listing_location)
@@ -698,11 +707,10 @@ async def ad_location(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(AdListingStates.listing_mileage), F.text)
 async def ad_mileage(message: Message, state: FSMContext) -> None:
-    raw = (message.text or "").replace(" ", "").replace(".", "").replace(",", "")
-    if not raw.isdigit():
-        await message.answer("Yurish raqam bo'lishi kerak.")
+    mileage = parse_int_in_range(message.text, 0, MILEAGE_MAX_KM)
+    if mileage is None:
+        await message.answer(f"Yurish raqam bilan (km), 0 dan {MILEAGE_MAX_KM:,} gacha bo'lsin.")
         return
-    mileage = int(raw)
     await state.update_data(mileage=mileage)
     await state.set_state(AdListingStates.listing_condition)
     await message.answer("⚙️ Mashina holatini tanlang:", reply_markup=_condition_kb())
@@ -733,11 +741,13 @@ async def ad_accident(cq: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(StateFilter(AdListingStates.listing_price_usd), F.text)
 async def ad_price(message: Message, state: FSMContext) -> None:
-    raw = (message.text or "").replace(" ", "")
-    if not raw.isdigit():
-        await message.answer("Narx raqam bo'lishi kerak.")
+    price = parse_int_in_range(message.text, PRICE_USD_MIN, PRICE_USD_MAX)
+    if price is None:
+        await message.answer(
+            f"Narx raqam bilan (USD), {PRICE_USD_MIN:,} dan {PRICE_USD_MAX:,} gacha bo'lsin. Masalan: 12500"
+        )
         return
-    await state.update_data(price_ask=int(raw))
+    await state.update_data(price_ask=price)
     await state.set_state(AdListingStates.listing_paint)
     await message.answer("🎨 Kraska holatini tanlang:", reply_markup=_paint_kb())
 
@@ -889,7 +899,7 @@ async def ad_phone_text(message: Message, state: FSMContext) -> None:
     parsed = parse_phone_from_text(message.text or "")
     if not parsed:
         await message.answer(
-            "Raqamni tushunarli qilib yozing (kamida 9 ta raqam), yoki pastdagi tugmadan kontakt yuboring.",
+            f"Raqamni tushunarli qilib yozing ({PHONE_DIGITS_MIN}–{PHONE_DIGITS_MAX} ta raqam), yoki pastdagi tugmadan kontakt yuboring.",
             reply_markup=_phone_kb(),
         )
         return

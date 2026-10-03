@@ -113,7 +113,9 @@ BOOTSTRAP_NO_CACHE=1 bash scripts/server_bootstrap.sh
 2. **Asosiy kanal** (`CHANNEL_ID`) — bot **admin** (post yozish, a’zolar soni / obuna tekshiruvi uchun kerak bo‘lgan huquqlar).
 3. **LEADERBOARD_CHANNEL_ID** — TOP postlari shu yerga; odatda asosiy kanal bilan bir xil bo‘lishi mumkin.
 4. **@real_avto_otzivlar** (sharhlar) — bot **admin**; kodda default shu kanal ishlatiladi, kerak bo‘lsa `REVIEWS_CHANNEL_ID` bilan almashtiring.
-5. **ADMIN_TELEGRAM_IDS** — e’lon moderatsiyasi (vergul bilan bir nechta ID).
+5. **ADMIN_TELEGRAM_IDS** — e’lon moderatsiyasi (vergul bilan bir nechta ID). Adminlar botda:
+   - `/pending` — kutilayotgan e'lonlarni tugmalar bilan qayta yuboradi (moderatsiya xabari yo'qolsa);
+   - `/stats` — foydalanuvchilar, e'lonlar, sotilganlar statistikasi.
 
 ## 7. Portlar va firewall
 
@@ -160,7 +162,7 @@ Migratsiyalar bot **birinchi marta** ishga tushganda PostgreSQLga qo‘llanadi (
 
 - **CRM**: brauzerda `http://SERVER_IP:3000` — login `backend/.env` dagi `CRM_ADMIN_USER` / `CRM_ADMIN_PASSWORD`.
 - **API**: `curl -s http://127.0.0.1:3001/health` serverda (tashqaridan 3001 ochilmaydi — bu to‘g‘ri).
-- **Bot**: `docker compose logs -f bot` — xatolarsiz polling, kanal tekshiruvi loglari.
+- **Bot**: `docker compose logs -f bot` — xatolarsiz polling, kanal tekshiruvi loglari. `docker compose ps` da bot `healthy` bo'lishi kerak: bot har 30 soniyada Telegram API ga ulanishni tekshiradi; 3 daqiqa ulana olmasa `unhealthy` bo'ladi.
 
 ## 10. Avtomatik testlar (CI yoki mahalliy)
 

@@ -321,6 +321,39 @@ class CrmRepository:
         r = await self.session.execute(stmt.order_by(ListingSubmission.id.desc()).limit(limit))
         return list(r.scalars().all())
 
+    async def list_pending_listings(self, *, limit: int = 10) -> list[ListingSubmission]:
+        r = await self.session.execute(
+            select(ListingSubmission)
+            .where(ListingSubmission.status == ListingSubmissionStatus.PENDING)
+            .order_by(ListingSubmission.created_at.asc())
+            .limit(limit)
+        )
+        return list(r.scalars().all())
+
+    async def admin_stats(self) -> dict[str, int]:
+        """Admin /stats uchun asosiy ko'rsatkichlar (bitta so'rov)."""
+        r = await self.session.execute(
+            text(
+                """
+                select
+                  (select count(*) from users) as users,
+                  (select count(*) from clients) as clients,
+                  (select count(*) from listing_submissions where lower(status::text) = 'pending') as pending,
+                  (select count(*) from listing_submissions where lower(status::text) = 'approved') as approved,
+                  (select count(*) from listing_submissions where lower(status::text) = 'rejected') as rejected,
+                  (select count(*) from listing_submissions
+                     where lower(status::text) = 'approved' and listing_approved_at >= now() - interval '24 hours')
+                     as approved_24h,
+                  (select count(*) from listing_submissions where created_at >= now() - interval '24 hours')
+                     as submitted_24h,
+                  (select count(*) from listing_submissions where sale_status = 'sold') as sold,
+                  (select count(*) from wishlist where is_active) as wishlists_active,
+                  (select count(*) from listing_threads) as threads
+                """
+            )
+        )
+        return {k: int(v or 0) for k, v in r.mappings().one().items()}
+
     async def find_recent_duplicate_listing(
         self,
         *,
@@ -642,17 +675,27 @@ class CrmRepository:
             select(ListingSubmission)
             .where(
                 ListingSubmission.status == ListingSubmissionStatus.APPROVED,
-                ListingSubmission.sale_status == "open",
                 ListingSubmission.channel_message_id.is_not(None),
                 ListingSubmission.listing_approved_at.is_not(None),
                 or_(
                     and_(
-                        ListingSubmission.sale_last_prompt_at.is_(None),
-                        ListingSubmission.listing_approved_at <= due_first,
+                        ListingSubmission.sale_status == "open",
+                        or_(
+                            and_(
+                                ListingSubmission.sale_last_prompt_at.is_(None),
+                                ListingSubmission.listing_approved_at <= due_first,
+                            ),
+                            and_(
+                                ListingSubmission.sale_last_prompt_at.is_not(None),
+                                ListingSubmission.sale_last_prompt_at <= due_repeat,
+                            ),
+                        ),
                     ),
+                    # «Sotildi» bosilgan, lekin sharh kelmagan (masalan /start bosib chiqib ketgan) —
+                    # aks holda e'lon abadiy feedback_pending da qolib, boshqa so'ralmaydi.
                     and_(
-                        ListingSubmission.sale_last_prompt_at.is_not(None),
-                        ListingSubmission.sale_last_prompt_at <= due_repeat,
+                        ListingSubmission.sale_status == "feedback_pending",
+                        ListingSubmission.updated_at <= due_repeat,
                     ),
                 ),
             )
@@ -666,6 +709,9 @@ class CrmRepository:
         if sub is None:
             return
         sub.sale_last_prompt_at = datetime.now(timezone.utc)
+        if sub.sale_status == "feedback_pending":
+            # Yangi so'rov tugmalari ishlashi uchun (try_set_sale_* «open» kutadi).
+            sub.sale_status = "open"
         await self.session.flush()
 
     async def try_set_sale_feedback_pending(self, listing_id: int, *, user_telegram_id: int) -> ListingSubmission | None:
