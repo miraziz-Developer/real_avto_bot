@@ -19,6 +19,7 @@ from aiogram.types import (
 
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
+from bot.ai import get_ai, get_budget
 from bot.config import is_admin
 from bot.db.cars_repo import CarRepository
 from bot.db.models import ListingSubmissionStatus
@@ -53,6 +54,14 @@ async def admin_stats(message: Message, crm: CrmRepository) -> None:
     if message.from_user is None or not is_admin(message.from_user.id):
         return
     st = await crm.admin_stats()
+    ai = get_ai()
+    if ai.enabled:
+        budget = get_budget()
+        spent = await budget.spent_today()
+        limit = f" / ${budget.daily_usd:.2f}" if budget.daily_usd > 0 else ""
+        ai_line = f"🤖 AI ({html.escape(ai.provider)}, {html.escape(ai.model)}): bugun <b>${spent:.3f}</b>{limit}\n\n"
+    else:
+        ai_line = "🤖 AI o'chiq (kalit yo'q) — oddiy rejim\n\n"
     await message.answer(
         "📈 <b>Real Avto — umumiy statistika</b>\n\n"
         f"👤 Bot foydalanuvchilari: <b>{st['users']}</b>\n"
@@ -63,7 +72,8 @@ async def admin_stats(message: Message, crm: CrmRepository) -> None:
         f"✅ Sotildi: <b>{st['sold']}</b>\n\n"
         f"🔎 Faol qidiruvlar: <b>{st['wishlists_active']}</b>\n"
         f"💬 Savol-javob suhbatlari: <b>{st['threads']}</b>\n\n"
-        "Kutilayotgan e'lonlarni qayta ko'rish: /navbat",
+        + ai_line
+        + "Kutilayotgan e'lonlarni qayta ko'rish: /navbat",
         parse_mode=ParseMode.HTML,
     )
 

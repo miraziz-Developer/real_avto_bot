@@ -704,3 +704,17 @@ async def test_customer_video_too_big_goes_to_manager_only(env, monkeypatch):
     await dp.feed_update(bot, Update(update_id=next(_ids), message=video_msg))
     assert fake.media == []  # 20 MB dan katta — Telegram bermaydi, urinmaymiz
     assert "Menejerimiz ko'rib chiqadi" in session.sent(SendMessage, CUSTOMER_ID)[-1].text
+
+
+async def test_admin_overview_and_queue_commands(env):
+    dp, bot, session, factory, _ = env
+    # Oddiy foydalanuvchi — javob yo'q
+    await dp.feed_update(bot, _text_update(CUSTOMER_ID, "/umumiy"))
+    assert not any("umumiy statistika" in (m.text or "") for m in session.sent(SendMessage, CUSTOMER_ID))
+
+    await dp.feed_update(bot, _text_update(ADMIN_ID, "/umumiy"))
+    text_ = session.sent(SendMessage, ADMIN_ID)[-1].text
+    assert "umumiy statistika" in text_ and "AI o'chiq" in text_
+
+    await dp.feed_update(bot, _text_update(ADMIN_ID, "/navbat"))
+    assert "navbati bo'sh" in session.sent(SendMessage, ADMIN_ID)[-1].text
