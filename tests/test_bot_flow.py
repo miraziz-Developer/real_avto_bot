@@ -905,3 +905,12 @@ async def test_comment_ai_error_falls_back_to_template(env, comment_ai):
     await dp.feed_update(bot, _group_msg(9109, "narxi qancha?", thread=thread))
     reply = session.sent(SendMessage, GROUP_ID)[-1].text
     assert "hali sotuvda" in reply and "$9 800" in reply
+
+
+async def test_crafted_deep_links_do_not_crash(env):
+    """Ochiq havola: start=car_<katta son> yoki lq_<katta son> — «topilmadi», texnik xato emas."""
+    dp, bot, session, _, _ = env
+    for payload in ("car_99999999999", "lq_99999999999", "car_²", "car_-1"):
+        await dp.feed_update(bot, _text_update(CUSTOMER_ID, f"/start {payload}"))
+    texts = [m.text or "" for m in session.sent(SendMessage, CUSTOMER_ID)]
+    assert texts and not any("Texnik xato" in t for t in texts)

@@ -33,7 +33,7 @@ from bot.services.car_cards import (
 )
 from bot.services.car_parser import REQUIRED_FIELDS, parse_admin_edit, parse_price_usd
 from bot.services.wishlist_notify import notify_wishlist_matches_car
-from bot.utils.numbers import parse_db_id
+from bot.utils.numbers import parse_db_id, parse_int_in_range
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +309,7 @@ async def cmd_stats(message: Message, command: CommandObject, cars: CarRepositor
     if message.from_user is None or not is_admin(message.from_user.id):
         return
     arg = (command.args or "").strip()
-    days = int(arg) if arg.isdigit() and 1 <= int(arg) <= 365 else 30
+    days = parse_int_in_range(arg, 1, 365, allow_separators=False) or 30
     await message.answer(stats_html(await cars.stats(days=days)), parse_mode=ParseMode.HTML)
 
 
