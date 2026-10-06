@@ -42,3 +42,21 @@ def test_parse_decision_defaults_and_guards():
 def test_public_post_text_drops_transcripts():
     raw = "Cobalt 2020\n[Ovoz]: narxi 9000\n[Videoda ko'rinadi]: oq\nprobeg 98 000"
     assert public_post_text(raw) == "Cobalt 2020\nprobeg 98 000"
+
+
+def test_reply_language_and_seller_phone_hidden():
+    import json
+
+    from bot.services.comment_ai import build_user_payload, reply_language
+
+    assert reply_language("narxi qancha?") == "o'zbek (lotin)"
+    assert reply_language("Цена окончательная?") == "rus"
+    assert reply_language("нархи канча?") == "o'zbek (kirill)"
+    assert reply_language("қанча турибди") == "o'zbek (kirill)"
+    payload = json.loads(
+        build_user_payload(
+            text="nomeri?", author=None, car=None, other_cars=[],
+            post_text="Nexia 3 2019, 7800$, tel +998 90 111 22 33", replied_text=None,
+        )
+    )
+    assert "111" not in payload["post_matni"] and payload["javob_tili"] == "o'zbek (lotin)"

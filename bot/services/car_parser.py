@@ -117,6 +117,8 @@ _MODEL_ALIASES: dict[str, tuple[str, str]] = {
     "кобалт": ("Chevrolet", "Cobalt"),
     "gentra": ("Chevrolet", "Gentra"),
     "jentra": ("Chevrolet", "Gentra"),
+    "djentra": ("Chevrolet", "Gentra"),
+    "гентра": ("Chevrolet", "Gentra"),
     "жентра": ("Chevrolet", "Gentra"),
     "джентра": ("Chevrolet", "Gentra"),
     "nexia 3": ("Chevrolet", "Nexia 3"),
@@ -125,6 +127,8 @@ _MODEL_ALIASES: dict[str, tuple[str, str]] = {
     "nexia 1": ("Daewoo", "Nexia 1"),
     "nexia": ("Chevrolet", "Nexia"),
     "neksiya": ("Chevrolet", "Nexia"),
+    "nexiya": ("Chevrolet", "Nexia"),
+    "neksia": ("Chevrolet", "Nexia"),
     "нексия": ("Chevrolet", "Nexia"),
     "matiz": ("Chevrolet", "Matiz"),
     "матиз": ("Chevrolet", "Matiz"),
@@ -202,9 +206,19 @@ def _build_catalog_aliases() -> dict[str, tuple[str, str]]:
     return out
 
 
+# O'zbek/rus qo'shimchalari: «Gentrangiz», «Kobaltingiz», «Damasni», «Malibuni», «кобальтингиз», «кобальта».
+# Faqat to'liq qo'shimcha ro'yxati — «so'ngi» kabi tasodifiy so'zlar model bo'lib qolmasin
+_NAME_SUFFIX = (
+    r"(?:ngiz|ingiz|nginiz|imiz|ning|ni|ga|ka|da|dan|dagi|dek|day|lar\w*|im|si|mi|chi|ku|yam|ham|"
+    r"нгиз|ингиз|нинг|ни|га|да|дан|даги|лар\w*|ми|чи|а|у|е|ом|ой|ы|и)?"
+)
+
+
 def _alias_pattern(alias: str) -> re.Pattern[str]:
     body = r"\s*".join(re.escape(part) for part in alias.split())
-    return re.compile(r"(?<![\w])" + body + r"(?![\w])", re.IGNORECASE)
+    # Qisqa yoki raqamli nomlarga qo'shimcha qo'shmaymiz («R3», «nexia 3»)
+    suffix = _NAME_SUFFIX if len(alias) >= 4 and not alias[-1].isdigit() else ""
+    return re.compile(r"(?<![\w])" + body + suffix + r"(?![\w])", re.IGNORECASE)
 
 
 # Uzunroq nomlar avval («nexia 3» → «nexia» dan oldin)

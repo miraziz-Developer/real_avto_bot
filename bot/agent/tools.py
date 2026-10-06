@@ -20,6 +20,7 @@ from bot.db.models import Car, CarStatus, Lead
 from bot.db.repositories import CrmRepository
 from bot.services.car_cards import channel_post_url
 from bot.services.lead_cards import send_lead_card
+from bot.services.car_parser import _PHONE_RE
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,13 @@ TOOL_SCHEMAS: list[dict] = [
 ]
 
 
+def strip_phones(text: str | None) -> str | None:
+    """Sotuvchi telefoni mijozga hech qachon berilmaydi — izohdan raqamlarni olib tashlaymiz."""
+    if not text:
+        return text
+    return _PHONE_RE.sub("[raqam yashirilgan]", text)
+
+
 def car_for_agent(car: Car) -> dict[str, Any]:
     """Agentga beriladigan mashina ma'lumoti — faqat bazadagi faktlar."""
     days = None
@@ -186,7 +194,7 @@ def car_for_agent(car: Car) -> dict[str, Any]:
         "paint": car.paint_status,
         "accident": None if car.has_accident is None else ("bor" if car.has_accident else "yo'q"),
         "location": car.location,
-        "notes": car.notes,
+        "notes": strip_phones(car.notes),
         "photos": len(car.photo_file_ids or []),
         "days_on_sale": days,
         "post_url": channel_post_url(car),

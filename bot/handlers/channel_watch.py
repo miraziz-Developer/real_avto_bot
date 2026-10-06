@@ -402,7 +402,7 @@ async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
         await _process_channel_post(bot, messages)
 
 
-async def _process_channel_post(bot: Bot, messages: list[Message]) -> None:
+async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bool = False) -> None:
     messages = sorted(messages, key=lambda m: m.message_id)
     first = messages[0]
     chat_id = first.chat.id
@@ -526,6 +526,8 @@ async def _process_channel_post(bot: Bot, messages: list[Message]) -> None:
             status = CarStatus.SOLD
         elif audio_unverified or low_confidence:
             status = CarStatus.REVIEW
+        elif is_reserved_text(text):
+            status = CarStatus.RESERVED  # «BRON» yozilgan post (ko'pincha eski post tahrirlanganda)
         else:
             status = None
 
@@ -543,6 +545,9 @@ async def _process_channel_post(bot: Bot, messages: list[Message]) -> None:
             existing = await cars.find_repost_candidate(parsed)
             if existing is not None:
                 await _merge_repost(bot, cars, existing, parsed, messages, full_text, allow_activate=status is None)
+                if status == CarStatus.RESERVED and existing.status == CarStatus.ACTIVE:
+                    await cars.set_status(existing, CarStatus.RESERVED)
+                    await session.commit()
                 return
 
         car = await cars.create_from_parsed(
@@ -572,6 +577,8 @@ async def _process_channel_post(bot: Bot, messages: list[Message]) -> None:
             )
         elif car.status == CarStatus.REVIEW:
             header = "🆕 <b>Kanalda yangi post</b> — ma'lumot to'liq emas, tekshirib bering"
+        elif edited:
+            header = "✏️ <b>Eski post tahrirlandi</b> — mashina bazaga qo'shildi"
         else:
             header = "🆕 <b>Kanalda yangi mashina</b>"
         await send_car_card_to_admins(bot, car, header=header)
@@ -661,7 +668,7 @@ async def _on_channel_post_edited(message: Message, bot: Bot, cars: CarRepositor
         # Avval matnsiz bo'lgan post tahrirlanib e'longa aylangan bo'lishi mumkin (lock allaqachon olingan)
         if text:
             logger.info("Bazada yo'q post %s tahrirlandi — qayta o'qiladi", message.message_id)
-            await _process_channel_post(bot, [message])
+            await _process_channel_post(bot, [message], edited=True)
         return
 
     old_text = car.raw_text or ""

@@ -9,6 +9,7 @@ from typing import Protocol
 from bot.agent.prompt import build_system_prompt
 from bot.agent.tools import TOOL_SCHEMAS, AgentContext
 from bot.ai.errors import AIBudgetExceeded, AIError
+from bot.services.comment_ai import reply_language
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,10 @@ async def build_messages(ctx: AgentContext) -> list[dict]:
             messages.append({"role": "assistant", "content": m.content})
         elif m.role == "admin":
             messages.append({"role": "assistant", "content": f"(Menejer yozgan): {m.content}"})
+    last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), None)
+    if last_user:
+        # Model ba'zan ruscha xabarga o'zbekcha javob beradi — oxirgi xabar tilini aniq aytamiz
+        messages[0]["content"] += f"\n\nMIJOZNING OXIRGI XABARI TILI: {reply_language(last_user)} — javobni shu tilda yoz."
     return messages
 
 

@@ -244,7 +244,7 @@ async def _set_catalog_menu_button(bot: Bot) -> None:
 
     Telegram menyu tugmasini har bir chat uchun alohida qo'yishga ruxsat beradi. Faqat HTTPS manzillar.
     """
-    from aiogram.types import MenuButtonWebApp, WebAppInfo
+    from aiogram.types import MenuButtonDefault, MenuButtonWebApp, WebAppInfo
 
     for name, url in (("CATALOG_URL", settings.catalog_url), ("CRM_URL", settings.crm_url)):
         if url and not url.startswith("https://"):
@@ -256,6 +256,19 @@ async def _set_catalog_menu_button(bot: Bot) -> None:
             )
         except TelegramBadRequest as e:
             logger.warning("Katalog menyu tugmasi o'rnatilmadi: %s", e)
+    else:
+        # Telegram tugmani doimiy saqlaydi — eski (masalan o'chgan ngrok) manzil qolib ketmasin
+        try:
+            await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+        except TelegramBadRequest as e:
+            logger.warning("Menyu tugmasini tozalab bo'lmadi: %s", e)
+    if not settings.crm_url.startswith("https://"):
+        for aid in settings.admin_telegram_ids:
+            try:
+                await bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonDefault())
+            except TelegramBadRequest:
+                pass  # admin hali botga /start bosmagan
+        logger.info("CRM_URL berilmagan — «Admin panel» tugmasi olib tashlandi (CRM: brauzerda oching)")
     if settings.crm_url.startswith("https://"):
         for aid in settings.admin_telegram_ids:
             try:

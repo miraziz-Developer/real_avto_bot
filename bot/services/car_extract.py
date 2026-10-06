@@ -38,7 +38,7 @@ Faqat quyidagi JSON obyektni qaytar:
   "paint_status": string|null,         // kraska holati qisqa: "toza", "1 eshik kraska" ...
   "has_accident": true/false/null,
   "location": string|null,
-  "notes": string|null,                // holat, kamchilik va afzalliklar haqida 1-2 gapli qisqa xulosa, o'zbekcha
+  "notes": string|null,                // holat, kamchilik va afzalliklar haqida 1-2 gapli qisqa xulosa, o'zbekcha (telefon raqami YOZILMAYDI)
   "confidence": number                 // 0..1 — ma'lumotni qanchalik aniq ajratganing
 }"""
 

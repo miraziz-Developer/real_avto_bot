@@ -688,3 +688,14 @@ async def test_edit_of_old_unknown_post(session_factory, watch):
     async with session_factory() as s:
         lacetti = (await s.execute(select(Car).where(Car.model == "Lacetti"))).scalar_one()
         assert lacetti.status == CarStatus.SOLD
+
+
+async def test_edit_of_old_unknown_post_with_bron_is_reserved(session_factory, watch):
+    bot = FakeBot()
+    async with session_factory() as s:
+        await watch._on_channel_post_edited(
+            _channel_msg(950, text_="Spark 2016, probeg 90 000 km, narxi 6800$ BRON"), bot, CarRepository(s)
+        )
+    async with session_factory() as s:
+        assert (await s.execute(select(Car))).scalar_one().status == CarStatus.RESERVED
+    assert "Eski post tahrirlandi" in bot.sent[-1][2]
