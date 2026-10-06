@@ -129,6 +129,26 @@ class CarRepository:
         stmt = select(Car).where(*conds).order_by(Car.id.desc()).limit(1)
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def find_sold_candidates(self, parsed: ParsedCar, *, limit: int = 5) -> list[Car]:
+        """«Sotildi»/tabrik posti (ko'pincha faqat model aytilgan) qaysi sotuvdagi mashinaga tegishli bo'lishi mumkin.
+
+        Moslik yumshoqroq: model (+ yil, rang — aytilgan bo'lsa). Chaqiruvchi 1 ta topilsagina avtomatik belgilaydi.
+        """
+        if not parsed.model:
+            return []
+        conds = [
+            Car.status.in_((CarStatus.ACTIVE, CarStatus.RESERVED, CarStatus.REVIEW)),
+            Car.model.ilike(f"%{parsed.model.split()[0]}%"),
+        ]
+        if parsed.year:
+            conds.append(Car.year == parsed.year)
+        if parsed.brand:
+            conds.append(or_(Car.brand.is_(None), func.lower(Car.brand) == parsed.brand.lower()))
+        if parsed.color:
+            conds.append(or_(Car.color.is_(None), Car.color.ilike(f"%{parsed.color.split()[0]}%")))
+        stmt = select(Car).where(*conds).order_by(Car.status.asc(), Car.id.desc()).limit(limit)
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def cars_with_live_posts(self, *, limit: int = 1000) -> list[Car]:
         """Kanal posti bor va hali sotuvdagi/bron/tekshiruvdagi mashinalar — post o'chirilganini tekshirish uchun."""
         stmt = (

@@ -782,7 +782,9 @@ async def _comment_setup(factory, dp, bot, *, status=None):
     return car_id, auto_id
 
 
-def _group_msg(uid: int, text_: str, *, thread: int | None, chat_id: int = GROUP_ID) -> Update:
+def _group_msg(
+    uid: int, text_: str, *, thread: int | None, chat_id: int = GROUP_ID, reply_to: Message | None = None
+) -> Update:
     return Update(
         update_id=next(_ids),
         message=Message(
@@ -792,6 +794,7 @@ def _group_msg(uid: int, text_: str, *, thread: int | None, chat_id: int = GROUP
             from_user=User(id=uid, is_bot=False, first_name="Sardor"),
             text=text_,
             message_thread_id=thread,
+            reply_to_message=reply_to,
         ),
     )
 
@@ -870,10 +873,64 @@ async def test_comment_ai_skips_admins_emoji_and_foreign_groups(env, comment_ai)
     dp, bot, session, factory, _ = env
     fake = comment_ai(_FakeCommentAI([]))
     _, thread = await _comment_setup(factory, dp, bot)
-    await dp.feed_update(bot, _group_msg(ADMIN_ID, "narxi 9800, keling", thread=thread))  # menejer o'zi yozdi
+    customer = _group_msg(9104, "narxi qancha?", thread=thread).message
+    # menejer mijozga reply qilib javob yozdi — bot aralashmaydi
+    await dp.feed_update(bot, _group_msg(ADMIN_ID, "narxi 9800, keling", thread=thread, reply_to=customer))
     await dp.feed_update(bot, _group_msg(9105, "👍👍", thread=thread))  # bo'sh — AI ga yuborilmaydi
     await dp.feed_update(bot, _group_msg(9106, "narxi qancha?", thread=None, chat_id=-100999))  # boshqa guruh
     assert fake.calls == [] and session.sent(SendMessage, GROUP_ID) == []
+
+
+async def test_comment_ai_answers_admin_own_question_without_admin_alerts(env, comment_ai):
+    from bot import config
+
+    dp, bot, session, factory, _ = env
+    fake = comment_ai(_FakeCommentAI([
+        {"action": "reply", "category": "buy_intent", "reply": "Narxi 9 800$.", "buy_intent": True, "notify_admin": True},
+    ]))
+    _, thread = await _comment_setup(factory, dp, bot)
+    await dp.feed_update(bot, _group_msg(ADMIN_ID, "narxi qancha, kreditga bormi?", thread=thread))  # admin sinab ko'rdi
+    assert len(fake.calls) == 1
+    assert session.sent(SendMessage, GROUP_ID)[-1].text == "Narxi 9 800$."
+    assert session.sent(SendMessage, ADMIN_ID) == []  # o'z xabari haqida signal yo'q
+
+    object.__setattr__(config.settings, "comments_answer_admins", False)
+    try:
+        await dp.feed_update(bot, _group_msg(ADMIN_ID, "probegi qancha?", thread=thread))
+    finally:
+        object.__setattr__(config.settings, "comments_answer_admins", True)
+    assert len(fake.calls) == 1
+
+
+async def test_comment_ai_post_text_used_when_car_unknown(env, comment_ai):
+    import json as _json
+
+    dp, bot, session, factory, _ = env
+    fake = comment_ai(_FakeCommentAI([{"action": "reply", "category": "question", "reply": "Narxi 7 200$."}]))
+    await _comment_setup(factory, dp, bot)
+    old_post = Message(
+        message_id=next(_ids),
+        date=datetime.now(timezone.utc),
+        chat=Chat(id=GROUP_ID, type="supergroup"),
+        sender_chat=CHANNEL_CHAT,
+        is_automatic_forward=True,
+        forward_origin=MessageOriginChannel(date=datetime.now(timezone.utc), chat=CHANNEL_CHAT, message_id=5),
+        text="Nexia 3 2017, narxi 7200$",
+    )
+    await dp.feed_update(bot, _group_msg(9110, "narxi qancha?", thread=None, reply_to=old_post))
+    payload = _json.loads(fake.calls[0][1])
+    assert "7200$" in payload["post_matni"] and "shu_post_mashinasi" not in payload
+
+
+async def test_comment_ai_general_inventory_question(env, comment_ai):
+    import json as _json
+
+    dp, bot, session, factory, _ = env
+    fake = comment_ai(_FakeCommentAI([{"action": "reply", "category": "question", "reply": "Gentra 2019 — 9 800$."}]))
+    await _comment_setup(factory, dp, bot)
+    await dp.feed_update(bot, _group_msg(9111, "qanaqa mashinalar bor sotuvda?", thread=None))
+    payload = _json.loads(fake.calls[0][1])
+    assert payload["hozir_sotuvdagi_mashinalardan"][0]["mashina"] == "Chevrolet Gentra 2019"
 
 
 async def test_comment_ai_general_group_question_uses_inventory(env, comment_ai):

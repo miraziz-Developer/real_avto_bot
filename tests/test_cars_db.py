@@ -585,3 +585,106 @@ async def test_posts_with_buttons_are_not_probed(session_factory, watch, monkeyp
     probe = _ProbeBot(deleted={850})
     await post_watch.check_deleted_posts_once(probe, session_factory)
     assert probe.probed == []  # tugmasi o'chib ketmasligi uchun tekshirilmaydi
+
+
+# --- Eski (bazada yo'q) postlar va sotuvdan keyingi videolar -----------------------------------
+
+
+async def test_sold_reply_to_old_unknown_post_restores_car_as_sold(session_factory, watch):
+    bot = FakeBot()
+    old_post = _channel_msg(900, text_="Malibu 2 2018, probeg 110 000 km, narxi 17500$")  # bot ulanmasdan oldin
+    await watch.process_channel_post(bot, [_channel_msg(901, text_="Sotildi ✅", reply_to=old_post)])
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert (car.model, car.year, car.status) == ("Malibu", 2018, CarStatus.SOLD)
+        assert car.channel_message_ids == [900]
+    assert "Eski post" in bot.sent[-1][2]
+
+
+async def test_info_reply_to_old_unknown_post_creates_car(session_factory, watch):
+    bot = FakeBot()
+    old_post = _channel_msg(905, text_="Spark 2016, probeg 90 000 km")
+    await watch.process_channel_post(bot, [_channel_msg(906, text_="narxi 6800$", reply_to=old_post)])
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert (car.model, car.price_usd, car.status) == ("Spark", 6800, CarStatus.ACTIVE)
+
+
+async def test_sold_reply_to_unrecognizable_post_only_alerts(session_factory, watch):
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(908, text_="sotildi", reply_to=_channel_msg(907, text_="🔥🔥"))])
+    async with session_factory() as s:
+        assert (await s.execute(select(Car))).scalars().all() == []
+    assert "aniqlab bo'lmadi" in bot.sent[-1][2]
+
+
+async def test_round_video_reply_saying_sold_marks_car_sold(session_factory, watch, monkeypatch):
+    async def fake_transcribe(bot, messages):
+        return ["mashina sotildi, xaridorga barakasini bersin"] if any(m.video_note for m in messages) else []
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    bot = FakeBot()
+    post = _channel_msg(910, text_="Cobalt 2020, probeg 98 000 km, narxi 9500$")
+    await watch.process_channel_post(bot, [post])
+    video = _vnote(911, "thanks")
+    video = video.model_copy(update={"reply_to_message": post})
+    await watch.process_channel_post(bot, [video])
+    async with session_factory() as s:
+        rows = (await s.execute(select(Car))).scalars().all()
+        assert len(rows) == 1 and rows[0].status == CarStatus.SOLD
+    assert "Eshitilgani" in bot.sent[-1][2]
+
+
+async def test_standalone_thanks_video_marks_matching_car_without_new_record(session_factory, watch, monkeypatch):
+    speech = {921: "Real Avtodan Kobalt sotib oldim, rahmat", 922: "Yangi Spark muborak bo'lsin"}
+
+    async def fake_transcribe(bot, messages):
+        return [speech[m.message_id] for m in messages if m.message_id in speech]
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(920, text_="Cobalt 2020, probeg 98 000 km, narxi 9500$")])
+    await watch.process_channel_post(bot, [_vnote(921, "t1")])
+    async with session_factory() as s:
+        rows = (await s.execute(select(Car))).scalars().all()
+        assert len(rows) == 1 and rows[0].status == CarStatus.SOLD
+    assert "Faqat model bo'yicha" in bot.sent[-1][2]
+
+    # Bazada mos mashina yo'q — keraksiz «tekshiruv» yozuvi yaratilmaydi, admin ogohlantiriladi
+    await watch.process_channel_post(bot, [_vnote(922, "t2")])
+    async with session_factory() as s:
+        assert len((await s.execute(select(Car))).scalars().all()) == 1
+    assert "topa olmadim" in bot.sent[-1][2]
+
+
+async def test_thanks_text_post_with_several_matches_asks_admins(session_factory, watch):
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(930, text_="Gentra 2019, probeg 80 000 km, narxi 11000$")])
+    await watch.process_channel_post(bot, [_channel_msg(931, text_="Gentra 2021, probeg 30 000 km, narxi 13500$")])
+    sent_before = len(bot.sent)
+    await watch.process_channel_post(bot, [_channel_msg(932, text_="Mijozimizga Gentra muborak bo'lsin! 🎉")])
+    async with session_factory() as s:
+        rows = (await s.execute(select(Car))).scalars().all()
+        assert len(rows) == 2 and all(r.status == CarStatus.ACTIVE for r in rows)
+    texts = [t for _, _, t in bot.sent[sent_before:]]
+    assert "2 ta mos mashina" in texts[0] and sum("Shu mashina sotildimi" in t for t in texts) == 2
+
+
+async def test_edit_of_old_unknown_post(session_factory, watch):
+    bot = FakeBot()
+    async with session_factory() as s:
+        await watch._on_channel_post_edited(
+            _channel_msg(940, text_="Nexia 3 2019, probeg 60 000 km, narxi 8200$"), bot, CarRepository(s)
+        )
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert car.status == CarStatus.ACTIVE and car.channel_message_ids == [940]
+
+    # Boshqa eski post tahrirda «SOTILDI» bo'ldi — tarix uchun sotilgan yozuv
+    async with session_factory() as s:
+        await watch._on_channel_post_edited(
+            _channel_msg(941, text_="Lacetti 2015, probeg 150 000 km, narxi 8000$ — SOTILDI"), bot, CarRepository(s)
+        )
+    async with session_factory() as s:
+        lacetti = (await s.execute(select(Car).where(Car.model == "Lacetti"))).scalar_one()
+        assert lacetti.status == CarStatus.SOLD

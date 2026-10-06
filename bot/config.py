@@ -176,6 +176,7 @@ class Settings:
     business_owner_pause_hours: int
     comments_enabled: bool
     comments_ai_enabled: bool
+    comments_answer_admins: bool
     discussion_group_id: int | None
     listing_freeze_hours: int
     work_hour_start: int
@@ -274,6 +275,9 @@ settings = Settings(
     # Kommentlar va muhokama guruhidagi xabarlarni AI o'qib, vaziyatga qarab javob beradi (salbiy fikrga ham).
     # AI kaliti yo'q / chegara tugasa — eski shablon javob (faqat savollarga)
     comments_ai_enabled=_bool("COMMENTS_AI_ENABLED", True),
+    # Admin guruhda o'zi savol yozsa (sinash uchun) ham javob beriladi. Admin boshqa odamga reply qilib
+    # yozgan xabarlarga (mijozga javob) bot hech qachon aralashmaydi
+    comments_answer_admins=_bool("COMMENTS_ANSWER_ADMINS", True),
     # Muhokama guruhi ID (-100...). Bo'sh — kanal postlari avto-forward bo'ladigan guruh o'zi aniqlanadi
     discussion_group_id=_optional_int("DISCUSSION_GROUP_ID"),
     # Bot orqali kelgan e'lon shuncha ISH soati muzlatiladi (jamoa sotib olishi mumkin), keyin avtomatik kanalga.

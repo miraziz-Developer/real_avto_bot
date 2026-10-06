@@ -26,7 +26,7 @@ from bot.db.cars_repo import CarRepository
 from bot.db.models import Car, CarStatus
 from bot.handlers.channel_watch import is_main_channel
 from bot.services.car_cards import notify_admins_text
-from bot.services.car_parser import normalize_text
+from bot.services.car_parser import detect_brand_model, normalize_text
 from bot.services.comment_ai import CommentDecision, decide_comment_reply, public_post_text
 from bot.utils.currency import fmt_price
 
@@ -162,11 +162,29 @@ async def _is_our_group(message: Message, cars: CarRepository) -> bool:
 
 
 def _is_customer_message(message: Message) -> bool:
-    if message.from_user is None or message.from_user.is_bot:
+    """Bot javob beradigan xabar: oddiy foydalanuvchi yoki (sinash uchun) admin o'z savoli bilan."""
+    user = message.from_user
+    if user is None or user.is_bot:
+        logger.debug("Guruh xabari %s: bot/anonim — o'tkazildi", message.message_id)
         return False
     if message.sender_chat is not None:
-        return False  # kanal/guruh nomidan yozilgan (admin) xabar
-    return not is_admin(message.from_user.id)  # menejerlar guruhda o'zi javob beradi
+        logger.info("Guruh xabari %s: kanal/guruh nomidan yozilgan — o'tkazildi", message.message_id)
+        return False
+    if not is_admin(user.id):
+        return True
+    if not settings.comments_answer_admins:
+        logger.info("Guruh xabari %s: admin yozdi (COMMENTS_ANSWER_ADMINS=false) — o'tkazildi", message.message_id)
+        return False
+    reply = message.reply_to_message
+    if reply is not None and not reply.is_automatic_forward and not (reply.from_user and reply.from_user.is_bot):
+        # Admin mijozga javob yozyapti — aralashmaymiz
+        logger.info("Guruh xabari %s: admin boshqa xabarga javob yozdi — o'tkazildi", message.message_id)
+        return False
+    return True
+
+
+def _from_admin(message: Message) -> bool:
+    return message.from_user is not None and is_admin(message.from_user.id)
 
 
 async def _notify_admins_about(
@@ -201,21 +219,30 @@ async def _ai_handle(
     uid = message.from_user.id
     scope = post[1] if post else message.chat.id
     if not _ai_window_ok(uid, scope):
+        logger.info("Komment %s: foydalanuvchi %s ga 10 daqiqada yetarli javob berildi — jim", message.message_id, uid)
         return True  # bu foydalanuvchiga yaqinda yetarlicha javob berdik — jim
     if not await get_budget().allow_user(f"tg:{uid}"):
+        logger.info("Komment %s: foydalanuvchi %s kunlik AI limitiga yetdi", message.message_id, uid)
         return True
     car = await cars.find_by_channel_message(*post) if post else None
-    other = []
+    other: list[Car] = []
+    general = False
     if car is None or car.status not in (CarStatus.ACTIVE, CarStatus.RESERVED):
-        other = await cars.search_offerable(query=text[:100], limit=5)
-        # Matndan model topilmasa — umumiy ro'yxat emas, bo'sh qoldiramiz (AI o'ylab topmasin)
-        if other and car is None and not any(
-            (c.model or "").split()[0].lower() in normalize_text(text) for c in other if c.model
-        ):
-            other = []
+        brand, model = detect_brand_model(normalize_text(text))
+        if brand or model:
+            other = await cars.search_offerable(brand=brand, model=model, limit=5)
+        elif car is None:
+            # «Nima mashinalar bor?» kabi umumiy savol — sotuvdagilardan qisqa namuna (AI faqat kerak bo'lsa ishlatadi)
+            other = await cars.search_offerable(limit=6)
+            general = bool(other)
     replied = message.reply_to_message
     replied_text = None
-    if replied is not None and not replied.is_automatic_forward:
+    post_text = public_post_text(car.raw_text) if car else None
+    if replied is not None and replied.is_automatic_forward:
+        if not post_text:
+            # Post bazada yo'q (eski post) — kanalda hamma ko'rgan post matnining o'zi
+            post_text = public_post_text(replied.text or replied.caption) or None
+    elif replied is not None:
         replied_text = replied.text or replied.caption
     try:
         decision: CommentDecision = await decide_comment_reply(
@@ -224,20 +251,27 @@ async def _ai_handle(
             author=message.from_user.first_name,
             car=car,
             other_cars=other,
-            post_text=public_post_text(car.raw_text) if car else None,
+            post_text=post_text,
             replied_text=replied_text,
+            general_inventory=general,
         )
     except AIError as e:
         logger.warning("Komment AI ishlamadi, shablon rejimi: %s", e)
         return False
-    logger.info("Komment AI: %s/%s (chat %s, msg %s)", decision.category, decision.action, message.chat.id, message.message_id)
+    logger.info(
+        "Komment AI: %s/%s (chat %s, msg %s, mashina=%s, mos=%d): %r",
+        decision.category, decision.action, message.chat.id, message.message_id,
+        car.id if car else None, len(other), text[:80],
+    )
 
     if decision.should_reply:
-        target = car or (other[0] if other else None)
+        target = car or (other[0] if other and not general else None)
         deep = f"https://t.me/{bot_username}?start=car_{target.id}" if target else f"https://t.me/{bot_username}"
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🤖 Botda batafsil", url=deep)]])
         await message.reply(decision.reply, parse_mode=None, reply_markup=kb, disable_web_page_preview=True)
 
+    if _from_admin(message):
+        return True  # admin o'zi sinab ko'ryapti — adminlarga signal shart emas
     if decision.category == "toxic":
         await _notify_admins_about(bot, message, car, "⚠️ <b>Guruhda haqorat / provokatsiya</b>", text, decision.admin_note)
     elif decision.category == "negative" or (decision.notify_admin and not decision.buy_intent):
@@ -263,13 +297,14 @@ async def _template_handle(message: Message, bot: Bot, cars: CarRepository, bot_
         reply_markup=kb,
         disable_web_page_preview=True,
     )
-    if has_buy_intent(text):
+    if has_buy_intent(text) and not _from_admin(message):
         await _notify_admins_about(bot, message, car, "💬 <b>Kommentda xarid niyati</b>", text)
 
 
 async def _handle_group_text(message: Message, bot: Bot, cars: CarRepository, bot_username: str, text: str) -> None:
     post = await _resolve_channel_post(message, cars)
     if post is None and not await _is_our_group(message, cars):
+        logger.info("Guruh %s bizning muhokama guruhimiz emas — xabar o'tkazildi", message.chat.id)
         return  # bot boshqa guruhga qo'shilgan bo'lsa — aralashmaymiz
     if worth_reading(text) and await _ai_handle(message, bot, cars, bot_username, text, post=post):
         return

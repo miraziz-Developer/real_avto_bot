@@ -8,6 +8,7 @@ from typing import Protocol
 
 from bot.agent.prompt import build_system_prompt
 from bot.agent.tools import TOOL_SCHEMAS, AgentContext
+from bot.ai.errors import AIBudgetExceeded, AIError
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,17 @@ async def build_messages(ctx: AgentContext) -> list[dict]:
 async def run_agent(ctx: AgentContext, llm: ChatModel, *, model: str | None = None) -> str:
     """Mijozning oxirgi xabari (tarixda saqlangan) ga javob tayyorlash."""
     messages = await build_messages(ctx)
-    for _ in range(MAX_STEPS):
-        resp = await llm.chat(messages, tools=TOOL_SCHEMAS, model=model)
+    for step in range(MAX_STEPS):
+        try:
+            resp = await llm.chat(messages, tools=TOOL_SCHEMAS, model=model)
+        except AIBudgetExceeded:
+            raise
+        except AIError as e:
+            # Model ba'zan asbob chaqiruvini buzadi (Groq: tool_use_failed) — bir marta asbobsiz javob so'raymiz,
+            # shu paytgacha topilgan natijalar (tool javoblari) kontekstda qoladi
+            logger.warning("Agent lead #%s, qadam %s: %s — asbobsiz qayta urinish", ctx.lead.id, step, e)
+            resp = await llm.chat(messages, tools=None, model=model)
+            return clean_reply(resp.get("content") or "") or FALLBACK_REPLY
         calls = resp.get("tool_calls") or []
         if not calls:
             text = clean_reply(resp.get("content") or "")

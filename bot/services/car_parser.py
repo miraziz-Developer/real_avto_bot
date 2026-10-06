@@ -55,6 +55,27 @@ def is_sold_text(text: str | None, *, extended: bool = False) -> bool:
     return _affirmed(_SOLD_RE, t) or (extended and _affirmed(_SOLD_EXTRA_RE, t))
 
 
+# Sotuvdan keyingi minnatdorchilik / tabrik (ko'pincha mijoz bilan dumaloq video): «mashinangiz muborak»,
+# «olib ketishdi», «sotib oldim». Yangi e'londa bunday so'zlar deyarli bo'lmaydi («baraka» bundan mustasno —
+# u e'lon matnida ham uchraydi, shuning uchun bu ro'yxatga kirmaydi)
+_SOLD_THANKS_RE = re.compile(
+    r"(?<![\w'])(muborak\w*|tabrik\w*|olib\s+ket(?:ishdi|ildi|di|dilar|yapti\w*|ayapti\w*)|sotib\s+old\w*|"
+    r"sotib\s+olindi|xarid\s+qild\w*|yangi\s+egasi\w*|topshirildi|муборак\w*|мубарак\w*|табрик\w*|"
+    r"поздравля\w*|купил\w*|забрал\w*)(?![\w'])",
+    re.IGNORECASE,
+)
+
+
+def is_sold_thanks(text: str | None) -> bool:
+    """Sotib olingani uchun tabrik/minnatdorchilik (matn yoki video ovozi)."""
+    return bool(text) and _affirmed(_SOLD_THANKS_RE, normalize_text(text))
+
+
+def is_sold_confirmation(text: str | None) -> bool:
+    """Postga reply / tahrir uchun: «sotildi», «baraka bo'ldi», «muborak», «olib ketishdi» — hammasi sotildi."""
+    return is_sold_text(text, extended=True) or is_sold_thanks(text)
+
+
 # «Bron qilish mumkin», «bron uchun yozing» — taklif, bron qilingan degani emas
 _RESERVE_OFFER_RE = re.compile(r"^\s*(qilish\w*|qiling\b|qilinglar\b|qilsa\w*|qilmoq\w*|uchun|mumkin|qabul|olamiz|бронировать|для)\b", re.IGNORECASE)
 
