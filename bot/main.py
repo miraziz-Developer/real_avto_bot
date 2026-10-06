@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import os
 import sys
@@ -244,7 +245,7 @@ async def _set_catalog_menu_button(bot: Bot) -> None:
 
     Telegram menyu tugmasini har bir chat uchun alohida qo'yishga ruxsat beradi. Faqat HTTPS manzillar.
     """
-    from aiogram.types import MenuButtonDefault, MenuButtonWebApp, WebAppInfo
+    from aiogram.types import MenuButtonCommands, MenuButtonDefault, MenuButtonWebApp, WebAppInfo
 
     for name, url in (("CATALOG_URL", settings.catalog_url), ("CRM_URL", settings.crm_url)):
         if url and not url.startswith("https://"):
@@ -260,12 +261,24 @@ async def _set_catalog_menu_button(bot: Bot) -> None:
         # Telegram tugmani doimiy saqlaydi — eski (masalan o'chgan ngrok) manzil qolib ketmasin
         try:
             await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+            current = await bot.get_chat_menu_button()
+            if isinstance(current, MenuButtonWebApp):
+                # BotFather'da qo'lda qo'yilgan tugmani API o'zgartira olmaydi
+                logger.warning("Menyu tugmasi BotFather'da qo'yilgan: %s", current.web_app.url)
+                await notify_admins_text(
+                    bot,
+                    "⚠️ Bot menyusidagi «" + html.escape(current.text) + "» tugmasi eski manzilga olib boradi:\n"
+                    f"<code>{html.escape(current.web_app.url)}</code>\n"
+                    "O'chirish: @BotFather → /mybots → botingiz → Bot Settings → Menu Button → «Remove».\n"
+                    "Yoki .env da CATALOG_URL ni ishlaydigan https manzilga qo'ying.",
+                )
         except TelegramBadRequest as e:
             logger.warning("Menyu tugmasini tozalab bo'lmadi: %s", e)
     if not settings.crm_url.startswith("https://"):
         for aid in settings.admin_telegram_ids:
             try:
-                await bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonDefault())
+                # «Default» — global (BotFather) tugmaga qaytaradi; aniq «buyruqlar» tugmasi qo'yamiz
+                await bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonCommands())
             except TelegramBadRequest:
                 pass  # admin hali botga /start bosmagan
         logger.info("CRM_URL berilmagan — «Admin panel» tugmasi olib tashlandi (CRM: brauzerda oching)")
