@@ -748,7 +748,7 @@ async def test_follow_up_post_adds_to_notes_instead_of_replacing(session_factory
     async def fake_extract(text, *, ai=None, usd_rate_uzs):
         if "Nexia" in text and "metan" in text:
             return _P(brand="Chevrolet", model="Nexia 3", year=2019, mileage_km=284000, notes="Metan, shumka, laboyda yoriq.")
-        return _P(price_usd=5450, notes="Nexia 3 sotiladi, 2019-yil.")
+        return _P(price_usd=5450, notes="Nexia 3 sotiladi, 2019-yil. Konditsioner ishlamaydi, oyna yorilgan.")
 
     monkeypatch.setattr(watch, "extract_car", fake_extract)
     bot = FakeBot()
@@ -757,5 +757,22 @@ async def test_follow_up_post_adds_to_notes_instead_of_replacing(session_factory
     await watch.process_channel_post(bot, [_channel_msg(981, text_="narxi 5450$", reply_to=post)])
     async with session_factory() as s:
         car = (await s.execute(select(Car))).scalar_one()
-        assert car.notes == "Metan, shumka, laboyda yoriq. Nexia 3 sotiladi, 2019-yil."
+        # Takror xulosa («Nexia 3 sotiladi») tushib qoladi, yangi fakt qo'shiladi
+        assert car.notes == "Metan, shumka, laboyda yoriq. Konditsioner ishlamaydi, oyna yorilgan."
         assert car.price_usd == 5450
+
+
+def test_merged_notes_skips_restated_facts():
+    from bot.db.cars_repo import merged_notes
+
+    base = "2012-yilgi Spark, propan gaz o'rnatilgan, texnik holati yaxshi, salon chexollari chiroyli."
+    assert merged_notes(base, "2012-yilgi Spark, propan o'rnatilgan, yurgani 566 ming km.") == base
+    assert merged_notes(base, "2012-yilgi Spark, mexanika karobka, probegi 564 ming km.") == base
+    assert merged_notes(base, "Old bamperda chizilgan joy bor.").endswith("Old bamperda chizilgan joy bor.")
+
+
+def test_location_needs_a_whole_word():
+    from bot.services.car_parser import parse_car_text
+
+    assert parse_car_text("Instagram manzili ko'rinadi", usd_rate_uzs=12700).location is None
+    assert parse_car_text("Manzil: Yangiyo'l bozori", usd_rate_uzs=12700).location == "Yangiyo'l bozori"

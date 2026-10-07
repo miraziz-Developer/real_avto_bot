@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from datetime import datetime, timedelta, UTC
 from typing import Any
 
@@ -49,15 +51,43 @@ SAME_CAR_MODELS: dict[str, tuple[str, ...]] = {
 NOTES_MAX_CHARS = 600
 
 
+_NOTE_WORD_RE = re.compile(r"[\w']+")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+# Maydonlarda allaqachon bor faktlar — izohda yangilik hisoblanmaydi
+_NOTE_FACT_WORDS = frozenset(
+    ["yil", "yilgi", "yilda", "probeg", "probegi", "yurgan", "yurgani", "ming", "km", "narx", "narxi", "dollar", "sotiladi", "sotuvda", "mashina", "avtomobil", "mexanika", "avtomat", "karobka", "karobkali", "rangi", "rangli"]
+)
+
+
+def _note_words(text: str) -> set[str]:
+    words = {w.lower() for w in _NOTE_WORD_RE.findall(text) if len(w) > 2 and not w.isdigit()}
+    return {w for w in words if w not in _NOTE_FACT_WORDS and not w[:4].isdigit()}
+
+
 def merged_notes(old: str | None, new: str) -> str:
-    """Avvalgi izohni saqlab, yangisini qo'shadi (takrorlanmasdan, uzunlik chegarasi bilan)."""
+    """Avvalgi izohni saqlab, faqat yangi ma'lumotli gaplarni qo'shadi (takrorsiz, uzunlik chegarasi bilan).
+
+    AI har bir video/post uchun alohida xulosa yozadi va ular ko'pincha bir xil faktni takrorlaydi
+    («2012-yilgi Spark, propan...») — yangi so'zlari kam gap qo'shilmaydi.
+    """
     old = (old or "").strip()
     new = new.strip()
     if not old or old in new:
         return new[:NOTES_MAX_CHARS]
     if new in old:
         return old
-    return f"{old.rstrip('. ')}. {new}"[:NOTES_MAX_CHARS]
+    known = _note_words(old)
+    fresh = []
+    for sentence in _SENTENCE_SPLIT_RE.split(new):
+        words = _note_words(sentence)
+        new_words = words - known
+        # Kamida 2 ta yangi so'z va gapning yarmi yangi bo'lsa — yangi ma'lumot («Nexia 3 sotiladi» emas)
+        if len(new_words) >= 2 and len(new_words) / len(words) >= 0.5:
+            fresh.append(sentence.strip())
+            known |= words
+    if not fresh:
+        return old
+    return f"{old.rstrip('. ')}. {' '.join(fresh)}"[:NOTES_MAX_CHARS]
 
 
 def same_car_model(a: str, b: str) -> bool:

@@ -434,7 +434,10 @@ _PAINT_VALUE_OK_RE = re.compile(
     r"bez|без|minimal|ozgina|kam|kamroq)(?![\w'])|element\w*|joy\w*|детал\w*|qism\w*)",
     re.IGNORECASE,
 )
-_LOCATION_RE = re.compile(r"(?:📍|manzil|lokatsiya|адрес)\s*[:\-–]?\s*([^\n]{2,80})", re.IGNORECASE)
+# So'z chegarasi bilan: «Instagram manzili ko'rinadi» → «i ko'rinadi» joylashuv bo'lib qolmasin
+_LOCATION_RE = re.compile(
+    r"(?:📍|(?<![\w])(?:manzil|lokatsiya|адрес)(?![\w']))\s*[:\-–]?\s*([^\n]{2,80})", re.IGNORECASE
+)
 # 📍 ba'zi postlarda boshqa maydonlar oldidan ham qo'yiladi («📍 probeg: 76.000km») — bunday qatorlar lokatsiya emas
 _NOT_LOCATION_RE = re.compile(r"probeg|пробег|yili|narx|цена|\d\s*(?:km|км)|\$", re.IGNORECASE)
 _ACCIDENT_NO_RE = re.compile(r"(?:dtp|дтп|avariya)\w*\s*[:\-–]?\s*(?:yo'q|йўқ|нет|net|bo'lmagan)", re.IGNORECASE)
