@@ -713,3 +713,30 @@ async def test_sold_video_naming_lacetti_marks_gentra(session_factory, watch, mo
         rows = (await s.execute(select(Car))).scalars().all()
         assert len(rows) == 1 and rows[0].status == CarStatus.SOLD
     assert "Eshitilgani" in bot.sent[-1][2]
+
+
+async def test_second_video_calling_gentra_lacetti_joins_same_car(session_factory, watch, monkeypatch):
+    speech = {
+        970: "Gentra 2019, avtomat, yurgani 297 ming, qora",
+        971: "Mana oldi salonlari, metan, videoregistrator. [Videoda ko'rinadi]: qora Chevrolet Lacetti",
+    }
+
+    async def fake_transcribe(bot, messages):
+        return [speech[m.message_id] for m in messages if m.message_id in speech]
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_vnote(970, "g1")])
+    await watch.process_channel_post(bot, [_vnote(971, "g2")])
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert car.model == "Gentra" and car.channel_message_ids == [970, 971]
+
+
+def test_spoken_paint_and_absurd_mileage_are_ignored():
+    from bot.services.car_parser import parse_car_text
+
+    assert parse_car_text("kraska ikkilaydigan bo'lsak", usd_rate_uzs=12700).paint_status is None
+    assert parse_car_text("kraska ikki joyda", usd_rate_uzs=12700).paint_status == "ikki joyda"
+    assert parse_car_text("probeg 905 ming", usd_rate_uzs=12700).mileage_km is None
+    assert parse_car_text("probeg 297 ming", usd_rate_uzs=12700).mileage_km == 297000

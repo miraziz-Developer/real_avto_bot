@@ -46,6 +46,12 @@ SAME_CAR_MODELS: dict[str, tuple[str, ...]] = {
 }
 
 
+def same_car_model(a: str, b: str) -> bool:
+    """«Gentra» va «Lacetti», «Matiz» va «Matiz Best» — bitta mashina."""
+    x, y = a.split()[0].lower(), b.split()[0].lower()
+    return x == y or y.capitalize() in SAME_CAR_MODELS.get(x, ())
+
+
 class CarRepository:
     def __init__(self, session: AsyncSession):
         self.session = session

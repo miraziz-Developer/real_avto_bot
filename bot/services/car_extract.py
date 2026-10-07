@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 
 from bot.ai import AIClient, AIError
-from bot.services.car_parser import ParsedCar, parse_car_text
+from bot.services.car_parser import MILEAGE_MAX_KM, ParsedCar, parse_car_text
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def ai_dict_to_parsed(data: dict, *, usd_rate_uzs: int) -> ParsedCar:
     if year is not None and not (1980 <= year <= datetime.now().year + 1):
         year = None
     km = _as_int(data.get("mileage_km"))
-    if km is not None and not (0 <= km <= 2_000_000):
+    if km is not None and not (0 <= km <= MILEAGE_MAX_KM):
         km = None
 
     price_usd: int | None = None

@@ -18,7 +18,7 @@ from aiogram.types import Chat, Message
 from bot.ai import AIError, get_ai
 from bot.config import settings
 from bot.db.base import get_session_factory
-from bot.db.cars_repo import CarRepository
+from bot.db.cars_repo import CarRepository, same_car_model
 from bot.db.models import CarSource, CarStatus
 from bot.services.car_cards import notify_admins_text, send_car_card_to_admins
 from bot.services.car_extract import extract_car
@@ -210,6 +210,9 @@ async def _apply_reply_to_car(
     changes: dict = {}
     if full:
         parsed = await extract_car(full, ai=get_ai(), usd_rate_uzs=settings.usd_rate_uzs)
+        if car.model and parsed.model and same_car_model(parsed.model, car.model):
+            # «Lacetti» deb eshitildi, kanalda «Gentra» — mavjud nomni saqlaymiz
+            parsed.brand, parsed.model = car.brand, car.model
         # Faqat ovoz (matnsiz video) — tekshiruvdagi mashinani o'zicha sotuvga chiqarmaydi
         changes = await cars.apply_parsed(
             car, parsed, raw_text=f"{car.raw_text}\n{full}".strip(), allow_activate=bool(text)
@@ -463,9 +466,7 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             recent_car = await cars.get(recent_car_id) if recent_car_id else None
             if recent_car is not None:
                 heard = parse_car_text(" ".join(await _transcribe_media(bot, messages)), usd_rate_uzs=settings.usd_rate_uzs)
-                other_model = heard.model and recent_car.model and (
-                    heard.model.split()[0].lower() != recent_car.model.split()[0].lower()
-                )
+                other_model = bool(heard.model and recent_car.model) and not same_car_model(heard.model, recent_car.model)
                 if not other_model:
                     await _apply_reply_to_car(
                         bot, cars, recent_car, messages, "", header="🎥 <b>Shu mashinaga yana video qo'shildi</b>"

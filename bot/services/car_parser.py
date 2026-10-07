@@ -326,6 +326,10 @@ def parse_year(text: str) -> int | None:
     return None
 
 
+# Undan katta probeg — deyarli har doim noto'g'ri eshitilgan/yozilgan raqam («905 ming»)
+MILEAGE_MAX_KM = 700_000
+
+
 def parse_mileage(text: str) -> int | None:
     for rx in (_MILEAGE_LABELED_RE, _MILEAGE_KM_RE):
         m = rx.search(text)
@@ -335,7 +339,7 @@ def parse_mileage(text: str) -> int | None:
         if val is None:
             continue
         km = int(_apply_multiplier(val, m.group(2)))
-        if 0 <= km <= 2_000_000:
+        if 0 <= km <= MILEAGE_MAX_KM:
             return km
     return None
 
@@ -422,6 +426,12 @@ _COLOR_RE = re.compile(
 _PAINT_RE = re.compile(
     r"(?<![\w])(?:kraskasi|kraska|краскаси|краска|покраска)(?![\w'])\s*[:\-–]?\s*([^\n,;]{2,80})", re.IGNORECASE
 )
+# Ajratgichsiz (ko'pincha ovozdan) qiymat faqat shu so'zlar bilan boshlansa olinadi — «kraska ikkilaydigan bo'lsak» emas
+_PAINT_VALUE_OK_RE = re.compile(
+    r"^\s*(?:\d|(?:toza|chistiy|чистый|чист|тоза|yo'q|йўқ|нет|bor|бор|ideal|zavod|завод|bir|ikki|uch|to'rt|besh|"
+    r"bez|без|minimal|ozgina|kam|kamroq)(?![\w'])|element\w*|joy\w*|детал\w*|qism\w*)",
+    re.IGNORECASE,
+)
 _LOCATION_RE = re.compile(r"(?:📍|manzil|lokatsiya|адрес)\s*[:\-–]?\s*([^\n]{2,80})", re.IGNORECASE)
 # 📍 ba'zi postlarda boshqa maydonlar oldidan ham qo'yiladi («📍 probeg: 76.000km») — bunday qatorlar lokatsiya emas
 _NOT_LOCATION_RE = re.compile(r"probeg|пробег|yili|narx|цена|\d\s*(?:km|км)|\$", re.IGNORECASE)
@@ -485,6 +495,9 @@ def parse_car_text(text: str, *, usd_rate_uzs: int) -> ParsedCar:
     pos = _POSITION_RE.search(t) or _POSITION_RE2.search(t)
     color_m = _COLOR_RE.search(t)
     paint_m = _PAINT_RE.search(t)
+    if paint_m and not re.search(r"(?:kraskasi|kraska|краскаси|краска|покраска)\s*[:\-–]", paint_m.group(0), re.IGNORECASE):
+        if not _PAINT_VALUE_OK_RE.match(paint_m.group(1)):
+            paint_m = None
     loc_m = next((m for m in _LOCATION_RE.finditer(t) if not _NOT_LOCATION_RE.search(m.group(1))), None)
     has_accident = True if _ACCIDENT_YES_RE.search(t) else (False if _ACCIDENT_NO_RE.search(t) else None)
     return ParsedCar(
