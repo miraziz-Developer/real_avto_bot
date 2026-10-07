@@ -76,6 +76,12 @@ def _take_recent_media_car(chat_id: int) -> int | None:
     return car_id if time.monotonic() - ts <= ORPHAN_MEDIA_SECONDS else None
 
 
+def forget_recent_media(chat_id: int) -> None:
+    """Matnsiz media buferlarini tozalash (kanal importida bir-biridan uzoq postlar birlashmasin)."""
+    _orphan_media.pop(chat_id, None)
+    _recent_media_car.pop(chat_id, None)
+
+
 def _take_orphan_media(chat_id: int) -> list[Message]:
     item = _orphan_media.pop(chat_id, None)
     if item is None:
@@ -286,7 +292,8 @@ async def _apply_reply_to_car(
         if transcripts and not text:
             heard = html.escape(" ".join(transcripts)[:300])
             header += f"\n🎙 Eshitilgani ({_stt_name()}): <i>«{heard}»</i>"
-        await send_car_card_to_admins(bot, car, header=header)
+        # Shu mashinaning yaqindagi kartasi yangilanadi — har video/tavsif uchun alohida karta emas
+        await send_car_card_to_admins(bot, car, header=header, update_recent=True)
     if not was_active and car.status == CarStatus.ACTIVE:
         await notify_wishlist_matches_car(bot, CrmRepository(cars.session), cars, car)
         await cars.session.commit()
@@ -465,10 +472,43 @@ async def _sold_by_announcement(
     )
 
 
+# Telegram postlarni tartib bilan yuboradi, lekin aiogram har birini alohida vazifada ishlaydi — ketma-ket
+# tashlangan videolar (masalan 30 va 31) aralash tartibda qayta ishlanib qolardi. Kelgan postlar ro'yxatga
+# yoziladi va har biri o'zidan oldingi (kichik ID li) postlar tugashini kutadi.
+ORDER_GRACE_SECONDS = 0.5
+ORDER_MAX_WAIT_SECONDS = 30.0
+_pending_posts: dict[int, set[int]] = {}
+
+
+def _register_pending(m: Message) -> None:
+    _pending_posts.setdefault(m.chat.id, set()).add(m.message_id)
+
+
+def _release_pending(messages: list[Message]) -> None:
+    pending = _pending_posts.get(messages[0].chat.id)
+    if pending is not None:
+        pending.difference_update(m.message_id for m in messages)
+
+
+async def _wait_for_earlier_posts(chat_id: int, first_id: int) -> None:
+    deadline = time.monotonic() + ORDER_MAX_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        pending = _pending_posts.get(chat_id) or set()
+        if not any(mid < first_id for mid in pending):
+            return
+        await asyncio.sleep(0.1)
+    logger.warning("Kanal %s: post %s oldingi postlarni kutib bo'lmadi — davom etiladi", chat_id, first_id)
+
+
 async def process_channel_post(bot: Bot, messages: list[Message]) -> None:
     """Bitta e'lon (oddiy post yoki albom) ni qayta ishlash. O'z DB sessiyasi bilan ishlaydi."""
-    async with _channel_lock(messages[0].chat.id):
-        await _process_channel_post(bot, messages)
+    chat_id = messages[0].chat.id
+    try:
+        await _wait_for_earlier_posts(chat_id, min(m.message_id for m in messages))
+        async with _channel_lock(chat_id):
+            await _process_channel_post(bot, messages)
+    finally:
+        _release_pending(messages)
 
 
 async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bool = False) -> None:
@@ -695,6 +735,7 @@ async def _merge_repost(
 
 
 async def _flush_album(bot: Bot, group_id: str) -> None:
+    messages: list[Message] = []
     try:
         await asyncio.sleep(ALBUM_WAIT_SECONDS)
         messages = _albums.pop(group_id, [])
@@ -704,6 +745,8 @@ async def _flush_album(bot: Bot, group_id: str) -> None:
         raise
     except Exception:
         logger.exception("Albomni qayta ishlash xatosi (%s)", group_id)
+        if messages:
+            _release_pending(messages)
     finally:
         _album_tasks.pop(group_id, None)
 
@@ -713,6 +756,7 @@ async def on_channel_post(message: Message, bot: Bot) -> None:
     if not is_main_channel(message.chat):
         return
     remember_post_content(message)
+    _register_pending(message)
     if message.media_group_id:
         gid = f"{message.chat.id}:{message.media_group_id}"
         _albums.setdefault(gid, []).append(message)
@@ -720,8 +764,11 @@ async def on_channel_post(message: Message, bot: Bot) -> None:
             _album_tasks[gid] = asyncio.create_task(_flush_album(bot, gid))
         return
     try:
+        # Bir paytda kelgan oldingi postlar ham ro'yxatga yozilib ulgursin
+        await asyncio.sleep(ORDER_GRACE_SECONDS)
         await process_channel_post(bot, [message])
     except Exception:
+        _release_pending([message])
         logger.exception("Kanal postini qayta ishlash xatosi (msg %s)", message.message_id)
 
 

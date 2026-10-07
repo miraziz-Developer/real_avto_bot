@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 
@@ -33,6 +34,7 @@ from bot.services.car_cards import (
     car_card_html,
     car_channel_caption,
 )
+from bot.services import channel_import
 from bot.services.car_extract import extract_car
 from bot.services.car_parser import REQUIRED_FIELDS, parse_admin_edit, parse_price_usd
 from bot.services.wishlist_notify import notify_wishlist_matches_car
@@ -256,6 +258,51 @@ async def cmd_sold(message: Message, command: CommandObject, cars: CarRepository
         disable_web_page_preview=True,
     )
 
+
+@router.message(Command("import_kanal"))
+async def cmd_import_channel(message: Message, command: CommandObject) -> None:
+    """Kanalning oxirgi N ta postini bazaga import qilish (bot ulanmasdan oldingi mashinalar)."""
+    if message.from_user is None or not is_admin(message.from_user.id):
+        return
+    parts = (command.args or "").split()
+    last_id = channel_import.parse_post_ref(parts[0]) if parts else None
+    if last_id is None:
+        await message.answer(
+            "📥 <b>Kanal tarixini import qilish</b>\n\n"
+            "Kanaldagi <b>eng oxirgi</b> postning havolasini oling (post ustida ⋮ → «Copy link») va yuboring:\n"
+            "<code>/import_kanal https://t.me/kanal/12345</code>\n\n"
+            "Ixtiyoriy: nechta post (standart 300) va necha kundan eskisi arxivga (standart 30):\n"
+            "<code>/import_kanal https://t.me/kanal/12345 500 45</code>\n\n"
+            "Bot har bir postni o'qiydi (videolar ovozi ham tinglanadi) va bazaga qo'shadi. Import paytida "
+            "kartalar yuborilmaydi — oxirida hisobot keladi. Shu chatda bir zumda paydo bo'lib o'chadigan "
+            "xabarlar ko'rinishi mumkin — bu normal.",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+        return
+    count = parse_int_in_range(parts[1], 1, channel_import.MAX_COUNT) if len(parts) > 1 else channel_import.DEFAULT_COUNT
+    days = parse_int_in_range(parts[2], 1, 3650) if len(parts) > 2 else channel_import.DEFAULT_ACTIVE_DAYS
+    if count is None or days is None:
+        await message.answer(f"Post soni 1–{channel_import.MAX_COUNT}, kunlar 1–3650 oralig'ida bo'lsin.")
+        return
+    if channel_import.is_running():
+        await message.answer("⏳ Import allaqachon ishlayapti — tugashini kuting.")
+        return
+    first = max(1, last_id - count + 1)
+    await message.answer(
+        f"⏳ Import boshlandi: postlar #{first}–#{last_id}. Taxminan {max(1, count // 100)} daqiqa "
+        "(+ videolar tahlili). Tugagach hisobot keladi."
+    )
+    task = asyncio.create_task(
+        channel_import.run_import_for_admin(
+            message.bot, message.chat.id, last_id=last_id, count=count, active_days=days
+        )
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+_background_tasks: set[asyncio.Task] = set()
 
 REANALYZE_MAX_VIDEOS = 4
 _SPEECH_PREFIXES = ("[Ovoz]", "[Videoda", "[Video]")

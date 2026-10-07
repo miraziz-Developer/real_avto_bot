@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html
 import logging
+import time
+from contextvars import ContextVar
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
@@ -163,6 +165,43 @@ def stale_prompt_kb(car: Car) -> InlineKeyboardMarkup:
     )
 
 
+# Kanal tarixini import qilishda (yuzlab eski post) adminlarga karta/xabar va mijozlarga «chiqsa xabar ber»
+# yuborilmaydi — oxirida bitta hisobot. Faqat shu vazifa (context) ichida amal qiladi.
+notifications_muted: ContextVar[bool] = ContextVar("notifications_muted", default=False)
+
+# Bitta mashina bo'yicha ketma-ket kelgan qo'shimchalar (yana video, tavsif posti, reply) yangi karta
+# yubormaydi — shu oyna ichida adminlardagi avvalgi kartani yangilaydi (chat to'lib ketmasin)
+CARD_UPDATE_WINDOW_SECONDS = 15 * 60
+_CAPTION_LIMIT = 1024
+_recent_cards: dict[int, tuple[float, list[tuple[int, int, bool]]]] = {}
+
+
+async def _update_recent_card(bot: Bot, car: Car, text: str, kb: InlineKeyboardMarkup) -> bool:
+    """Avvalgi kartalarni tahrirlaydi. False — tahrirlab bo'lmadi (yangi karta yuborish kerak)."""
+    entry = _recent_cards.get(car.id)
+    if entry is None or time.monotonic() - entry[0] > CARD_UPDATE_WINDOW_SECONDS:
+        return False
+    for chat_id, message_id, is_photo in entry[1]:
+        if is_photo and len(text) > _CAPTION_LIMIT:
+            return False
+        try:
+            if is_photo:
+                await bot.edit_message_caption(
+                    chat_id=chat_id, message_id=message_id, caption=text, parse_mode=ParseMode.HTML, reply_markup=kb
+                )
+            else:
+                await bot.edit_message_text(
+                    text, chat_id=chat_id, message_id=message_id, parse_mode=ParseMode.HTML,
+                    reply_markup=kb, disable_web_page_preview=True,
+                )
+        except TelegramBadRequest as e:
+            if "not modified" not in str(e).lower():
+                logger.info("Mashina #%s kartasini yangilab bo'lmadi (%s) — yangisi yuboriladi", car.id, e)
+                return False
+    _recent_cards[car.id] = (time.monotonic(), entry[1])
+    return True
+
+
 async def send_car_card_to_admins(
     bot: Bot,
     car: Car,
@@ -170,26 +209,42 @@ async def send_car_card_to_admins(
     header: str | None = None,
     with_photo: bool = True,
     reply_markup: InlineKeyboardMarkup | None = None,
+    update_recent: bool = False,
 ) -> None:
+    """Adminlarga mashina kartasi. update_recent=True — yaqinda yuborilgan karta bo'lsa, o'sha yangilanadi."""
+    if notifications_muted.get():
+        return
     if not settings.admin_telegram_ids:
         logger.warning("ADMIN_TELEGRAM_IDS bo'sh — mashina #%s kartasi yuborilmadi", car.id)
         return
     text = car_card_html(car, header=header)
     kb = reply_markup or car_admin_kb(car)
+    if update_recent and await _update_recent_card(bot, car, text, kb):
+        return
     photo = car.photo_file_ids[0] if (with_photo and car.photo_file_ids) else None
+    sent: list[tuple[int, int, bool]] = []
     for aid in settings.admin_telegram_ids:
         try:
-            if photo and len(text) <= 1024:
-                await bot.send_photo(aid, photo, caption=text, parse_mode=ParseMode.HTML, reply_markup=kb)
+            if photo and len(text) <= _CAPTION_LIMIT:
+                msg = await bot.send_photo(aid, photo, caption=text, parse_mode=ParseMode.HTML, reply_markup=kb)
             else:
-                await bot.send_message(
+                msg = await bot.send_message(
                     aid, text, parse_mode=ParseMode.HTML, reply_markup=kb, disable_web_page_preview=True
                 )
         except (TelegramBadRequest, TelegramForbiddenError) as e:
             logger.warning("Admin %s ga mashina #%s kartasi yuborilmadi: %s", aid, car.id, e)
+            continue
+        if msg is not None:
+            sent.append((aid, msg.message_id, bool(msg.photo)))
+    if sent:
+        if len(_recent_cards) > 2000:
+            _recent_cards.clear()
+        _recent_cards[car.id] = (time.monotonic(), sent)
 
 
 async def notify_admins_text(bot: Bot, text: str) -> None:
+    if notifications_muted.get():
+        return
     for aid in settings.admin_telegram_ids:
         try:
             await bot.send_message(aid, text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)

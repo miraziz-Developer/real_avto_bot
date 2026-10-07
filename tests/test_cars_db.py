@@ -867,3 +867,122 @@ async def test_edit_of_legacy_car_without_post_texts(session_factory, watch):
         await s.commit()
     car = await _edit(watch, session_factory, bot, 1060, "Lacetti 2014, probeg 150 000 km, narxi 6500$")
     assert car.price_usd == 6500 and car.raw_text.endswith("[Ovoz]: lacetti 2014")
+
+
+class _CardBot(FakeBot):
+    """Xabar obyektini qaytaradi va tahrirni qo'llab-quvvatlaydi."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.edits: list[str] = []
+        self._next = 5000
+
+    async def send_message(self, chat_id, text, **kw):
+        self.sent.append(("text", chat_id, text))
+        self._next += 1
+        return Message(message_id=self._next, date=datetime.now(UTC), chat=Chat(id=chat_id, type="private"), text=text)
+
+    async def edit_message_text(self, text, *, chat_id, message_id, **kw):
+        self.edits.append(text)
+
+
+async def test_follow_up_videos_update_one_admin_card(session_factory, watch, monkeypatch):
+    from bot.services import car_cards
+
+    car_cards._recent_cards.clear()
+    speech = {1100: "Kobalt 2020 yil, mexanika", 1101: "yurgani 98 ming, kraskasi toza"}
+
+    async def fake_transcribe(bot, messages):
+        return [speech[m.message_id] for m in messages if m.message_id in speech]
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    bot = _CardBot()
+    await watch.process_channel_post(bot, [_vnote(1100, "a")])
+    await watch.process_channel_post(bot, [_vnote(1101, "b")])
+    await watch.process_channel_post(bot, [_channel_msg(1102, text_="Cobalt 2020, probeg 98 000 km, narxi 9500$")])
+    assert len(bot.sent) == 1  # one card…
+    assert len(bot.edits) == 2 and "tavsif posti" in bot.edits[-1]  # …updated twice
+
+
+async def test_channel_posts_are_processed_in_message_order(session_factory, watch, monkeypatch):
+    import asyncio as _asyncio
+
+    speech = {1200: "Gentra 2019, avtomat, yurgani 297 ming", 1201: "salonlari, metan, videoregistrator"}
+    order: list[int] = []
+
+    async def fake_transcribe(bot, messages):
+        mids = [m.message_id for m in messages if m.message_id in speech]
+        order.extend(mids)
+        return [speech[m] for m in mids]
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    monkeypatch.setattr(watch, "ORDER_GRACE_SECONDS", 0.05)
+    bot = FakeBot()
+    # 1201 reaches the handler first (concurrent tasks), 1200 a moment later
+    await _asyncio.gather(watch.on_channel_post(_vnote(1201, "b"), bot), watch.on_channel_post(_vnote(1200, "a"), bot))
+    assert order[0] == 1200
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert car.channel_message_ids == [1200, 1201] and car.model == "Gentra"
+
+
+async def test_channel_history_import_by_forwarding(session_factory, watch, monkeypatch):
+    from aiogram.exceptions import TelegramBadRequest
+    from aiogram.methods import ForwardMessage
+    from aiogram.types import MessageOriginChannel
+
+    from bot.services import channel_import
+
+    monkeypatch.setattr(channel_import, "FORWARD_PAUSE_SECONDS", 0)
+    channel = Chat(id=CHANNEL_ID, type="channel", username="real_avto_test")
+    now = datetime.now(UTC)
+    history = {
+        2000: ("Cobalt 2020, probeg 98 000 km, narxi 9500$", now - timedelta(days=2)),
+        2002: ("Nexia 3 2015, probeg 200 000 km, narxi 5000$", now - timedelta(days=100)),
+        2003: ("✅ SOTILDI Gentra 2019, probeg 80 000 km, narxi 11000$", now - timedelta(days=5)),
+    }
+
+    class ImportBot(FakeBot):
+        deleted: list[int] = []
+
+        async def forward_message(self, chat_id, from_chat_id, message_id, disable_notification=None, **kw):
+            if message_id not in history:
+                raise TelegramBadRequest(ForwardMessage(chat_id=chat_id, from_chat_id=from_chat_id, message_id=message_id),
+                                         "message to forward not found")
+            text, date = history[message_id]
+            return Message(
+                message_id=90000 + message_id,
+                date=now,
+                chat=Chat(id=chat_id, type="private"),
+                text=text,
+                forward_origin=MessageOriginChannel(date=date, chat=channel, message_id=message_id),
+            )
+
+        async def delete_message(self, chat_id, message_id, **kw):
+            self.deleted.append(message_id)
+
+    bot = ImportBot()
+    report = await channel_import.import_channel_history(
+        bot, channel=channel, last_id=2003, count=4, buffer_chat_id=ADMIN_ID, active_days=30
+    )
+    assert (report.scanned, report.found, report.created) == (4, 3, 3)
+    assert (report.active, report.sold, report.archived) == (1, 1, 1)
+    assert sorted(bot.deleted) == [92000, 92002, 92003]  # every forward is removed again
+    assert bot.sent == []  # no admin cards or wishlist messages during import
+    async with session_factory() as s:
+        cobalt = (await s.execute(select(Car).where(Car.model == "Cobalt"))).scalar_one()
+        assert cobalt.channel_message_ids == [2000] and cobalt.published_at.date() == (now - timedelta(days=2)).date()
+
+    again = await channel_import.import_channel_history(
+        bot, channel=channel, last_id=2003, count=4, buffer_chat_id=ADMIN_ID, active_days=30
+    )
+    assert again.already_known == 3 and again.created == 0
+
+
+def test_parse_post_ref():
+    from bot.services.channel_import import parse_post_ref
+
+    assert parse_post_ref("https://t.me/realavto/12345") == 12345
+    assert parse_post_ref("https://t.me/c/123456/789?single") == 789
+    assert parse_post_ref("4567") == 4567
+    assert parse_post_ref("salom") is None

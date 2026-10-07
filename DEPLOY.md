@@ -159,6 +159,31 @@ Database migrations run automatically when the bot starts and are idempotent, so
 - **API:** `curl -s http://127.0.0.1:3001/health` (run on the server).
 - **Bot:** `docker compose logs -f bot` shows `Run polling` without errors. `docker compose ps` reports the bot as `healthy`, because a heartbeat is checked every 30 seconds.
 
+## 9.1 Backups and monitoring
+
+Install both scripts in the server's crontab (`crontab -e`):
+
+```cron
+# Database backup every 6 hours, keeps the last 14 (3.5 days) in /opt/backups/real_avto
+0 */6 * * * /opt/real_avto_bot/scripts/server_backup.sh >> /var/log/real_avto_backup.log 2>&1
+# Watchdog every 5 minutes
+*/5 * * * * /opt/real_avto_bot/scripts/watchdog.sh >> /var/log/real_avto_watchdog.log 2>&1
+```
+
+What the watchdog does:
+- checks `db`, `redis`, `backend` and `bot`, plus disk usage (alert at 90%);
+- restarts the bot when its healthcheck reports `unhealthy`. Docker does not do this by itself;
+- messages the admins in Telegram when something breaks and again when it recovers, so there is no repeated spam.
+
+Run the stack on boot:
+
+```bash
+sudo cp scripts/real-avto-stack.service /etc/systemd/system/
+sudo systemctl enable --now real-avto-stack
+```
+
+Restore a backup: see [12.9](#129-rollback). Copying backups off the server is strongly recommended. `scripts/local_backup.sh` pulls the latest one to another machine.
+
 ## 10. Automated tests
 
 ```bash
@@ -258,9 +283,11 @@ The CRM is an internal panel. You may keep it off the public internet (VPN or IP
 
 ### 12.7 Import channel history
 
+**Recommended:** in the bot, send `/import_kanal <link to the latest channel post> 300` (see README, *Importing channel history*). It reads posts with their photos, videos and round-video speech.
+
 On its **first start**, the upgraded bot copies previously approved bot listings that are still on sale into the inventory. The log shows the number of cars added.
 
-Import the channel history **after** that, so bot listings are not added twice:
+Import the channel history **after** that, so bot listings are not added twice. The text-only export alternative:
 
 1. Export from Telegram Desktop: channel → *Export chat history* → JSON, without media.
 2. Copy the export to the server as `/opt/real_avto_bot/import/result.json`.

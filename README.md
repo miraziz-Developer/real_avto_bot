@@ -84,21 +84,34 @@ Every listing posted to the main channel is written to the `cars` table. The sal
 - **Stale cars:** a car on sale for more than `CAR_STALE_DAYS` (7) days triggers an "is it still for sale?" prompt to admins, sent during working hours.
 - **Approved bot listings** are added to the database as well.
 
-**Admin commands:** `/statistika [days]` · `/sotuvda` · `/tekshiruv` · `/mashina ID` · `/sotildi ID [price]` · `/qayta ID` · `/umumiy` · `/navbat`
+**Admin commands:** `/statistika [days]` · `/sotuvda` · `/tekshiruv` · `/mashina ID` · `/sotildi ID [price]` · `/qayta ID` · `/import_kanal LINK` · `/umumiy` · `/navbat`
 
 `/qayta ID` re-transcribes a car's videos with the current AI and replaces the facts taken from speech (fields an admin fixed by hand are kept). Use it when a car was created while AI misheard the audio, e.g. before Gemini was configured.
 
 On a car card, **✏️ Edit** accepts: `narx 9800`, `yil 2021`, `probeg 76000`, and for cars the dealership bought itself `xarid 8000`, `xarajat 300`.
 
-**Importing channel history** (posts from before the bot was added):
+**Importing channel history.** After the bot is connected to a channel it only sees new posts. Older cars are imported with an admin command in the bot:
+
+```
+/import_kanal https://t.me/your_channel/12345 [count=300] [archive_after_days=30]
+```
+
+Pass the link of the **latest** post (⋮ → Copy link).
+- **How it reads posts:** the bot reads each of the last `count` posts by forwarding it silently to the admin's chat and deleting it right away. It gets everything: text, photos, videos, and the speech in round videos (via Gemini).
+- **Processing:** each post goes through the normal channel tracker. Videos and descriptions merge into one car, reposts are not duplicated, and "SOTILDI" posts become sold.
+- **During import:** no admin cards or customer notifications are sent; a single report arrives at the end.
+- **Archiving:** cars older than `archive_after_days` with an unknown status are archived, so the agent never offers stale cars.
+- **Re-running** is safe: known posts are skipped.
+- **Limitation:** a forwarded copy loses its reply link, so old "sotildi" replies are matched by model only.
+- **Cost:** each round video costs about $0.003 of Gemini time, so 300 posts with many videos may exceed the default $1 daily cap. Raise `AI_DAILY_BUDGET_USD` for the import day.
+
+**Text-only alternative** (Telegram Desktop export, no media):
 
 ```bash
 # Telegram Desktop → channel → ⋮ → Export chat history → JSON
 python -m scripts.import_channel_export path/to/result.json --dry-run   # preview
 python -m scripts.import_channel_export path/to/result.json --ai        # write to the database
 ```
-
-Posts older than `--active-days` (30) with an unknown sale status are archived, so the agent never offers stale cars.
 
 ### 2. AI
 

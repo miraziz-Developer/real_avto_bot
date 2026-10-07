@@ -13,6 +13,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from bot.db.cars_repo import CarRepository
 from bot.db.models import Car, CarStatus, ListingSubmission, Wishlist
 from bot.db.repositories import CrmRepository
+from bot.services.car_cards import notifications_muted
 from bot.utils.contact_html import sales_phones_links_html
 from bot.utils.currency import fmt_usd
 
@@ -140,6 +141,8 @@ def _format_car_match_message(car: Car, wish: Wishlist) -> str:
 
 async def notify_wishlist_matches_car(bot: Bot, crm: CrmRepository, cars: CarRepository, car: Car) -> int:
     """Kanalga chiqqan (sotuvdagi) mashinaga mos qidiruv egalariga xabar. Bitta mashina uchun bir marta."""
+    if notifications_muted.get():
+        return 0  # kanal tarixi importi — eski mashinalar haqida mijozlarga xabar yubormaymiz
     if car.status != CarStatus.ACTIVE or not (car.brand and car.year and car.price_usd):
         return 0
     if await cars.has_event(car, "wishlist_notified"):
