@@ -1,16 +1,29 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import CarsPage from "./CarsPage.jsx";
+import LeadsPage from "./LeadsPage.jsx";
 
 const baseURL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "") || "/api";
 const publicApi = axios.create({ baseURL });
 
 const TABS = [
   { id: "dashboard", label: "Boshqaruv", ic: "◆" },
+  { id: "leads", label: "Mijozlar (AI)", ic: "✦" },
+  { id: "cars", label: "Mashinalar", ic: "▤" },
   { id: "clients", label: "Mijozlar", ic: "◎" },
   { id: "listings", label: "E'lonlar (TG)", ic: "▣" },
   { id: "wishlists", label: "Qidiruvlar (TG)", ic: "◇" },
   { id: "contest", label: "Konkurs", ic: "★" },
 ];
+
+const BUYOUT_LABELS = {
+  offered: "taklif yuborildi",
+  accepted: "sotuvchi rozi",
+  negotiating: "muhokamada",
+  declined: "sotuvchi rad etdi",
+  expired: "javob bo'lmadi",
+  bought: "sotib olindi",
+};
 
 function formatUsd(n) {
   if (n === null || n === undefined || Number.isNaN(Number(n))) return "—";
@@ -163,6 +176,31 @@ export default function App() {
     setPages((prev) => ({ ...prev, [key]: { ...prev[key], page } }));
   }, []);
 
+  // Telegram Mini App ichida ochilgan bo'lsa — admin parolsiz kiradi (initData imzosi backendda tekshiriladi)
+  useEffect(() => {
+    const tg = window.Telegram?.WebApp;
+    if (!tg?.initData) return;
+    tg.ready();
+    tg.expand();
+    if (token) return;
+    publicApi
+      .post("/auth/telegram", { init_data: tg.initData })
+      .then((r) => {
+        setToken(r.data.token);
+        setUser(r.data.user);
+        localStorage.setItem("crm_token", r.data.token);
+        localStorage.setItem("crm_user", JSON.stringify(r.data.user));
+        setError("");
+      })
+      .catch((e) => {
+        setError(
+          e?.response?.status === 403
+            ? "Bu panel faqat Real Avto jamoasi uchun. Sizning Telegram akkauntingiz adminlar ro'yxatida yo'q."
+            : "Telegram orqali kirib bo'lmadi — login va parol bilan kiring.",
+        );
+      });
+  }, [token]);
+
   async function login(e) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
@@ -176,7 +214,13 @@ export default function App() {
       localStorage.setItem("crm_token", r.data.token);
       localStorage.setItem("crm_user", JSON.stringify(r.data.user));
       setError("");
-    } catch {
+    } catch (err) {
+      if (err?.response?.status === 429) {
+        const wait = Number(err.response.data?.retry_after || err.response.headers?.["retry-after"] || 0);
+        const mins = wait > 0 ? Math.ceil(wait / 60) : 15;
+        setError(`Juda ko‘p noto‘g‘ri urinish. ${mins} daqiqadan keyin qayta urinib ko‘ring.`);
+        return;
+      }
       setError("Login xato. Username / parol.");
     }
   }
@@ -307,6 +351,8 @@ export default function App() {
         {tab === "dashboard" && (
           <Dashboard stats={state.stats} wishlists={pages.wishlists.items} listings={pages.listings.items} />
         )}
+        {tab === "leads" && <LeadsPage api={api} canEdit={canEdit} query={query} />}
+        {tab === "cars" && <CarsPage api={api} canEdit={canEdit} query={query} />}
         {tab === "clients" && (
           <PaginatedTable
             title="Mijozlar"
@@ -574,7 +620,17 @@ function ListingsPage({ rows, total, page, limit, filter, onFilter, onPageChange
                 </td>
                 <td>{r.year}</td>
                 <td className="mono">{formatUsd(r.price_ask_usd)}</td>
-                <td>{statusBadge(r.status)}</td>
+                <td>
+                  {statusBadge(r.status)}
+                  {r.buyout_status && (
+                    <div style={{ fontSize: 11, marginTop: 4 }}>
+                      💰 {BUYOUT_LABELS[r.buyout_status] || r.buyout_status} {r.buyout_price_usd ? formatUsd(r.buyout_price_usd) : ""}
+                    </div>
+                  )}
+                  {String(r.status).toLowerCase() === "pending" && r.frozen_until && (
+                    <div style={{ fontSize: 11, marginTop: 4, color: "var(--muted)" }}>⏳ {formatDate(r.frozen_until)} gacha</div>
+                  )}
+                </td>
                 <td className="mono" style={{ fontSize: 12 }}>{formatDate(r.created_at)}</td>
                 <td>
                   {r.client_db_id != null && (

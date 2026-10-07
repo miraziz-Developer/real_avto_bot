@@ -1,7 +1,9 @@
-import crypto from "crypto";
-
-export function sha256(v) {
-  return crypto.createHash("sha256").update(v).digest("hex");
+/** Musbat butun ID (yoki null). "12abc", "-1", "1e3" kabi qiymatlar rad etiladi. */
+export function parseId(raw) {
+  const s = String(raw ?? "");
+  if (!/^[1-9][0-9]{0,9}$/.test(s)) return null;
+  const n = Number(s);
+  return n <= 2_147_483_647 ? n : null;
 }
 
 export function asyncHandler(fn) {

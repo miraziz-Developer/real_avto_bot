@@ -10,7 +10,8 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.db.models import ListingSubmission, Wishlist
+from bot.db.cars_repo import CarRepository
+from bot.db.models import Car, CarStatus, ListingSubmission, Wishlist
 from bot.db.repositories import CrmRepository
 from bot.utils.contact_html import sales_phones_links_html
 from bot.utils.currency import fmt_usd
@@ -117,3 +118,66 @@ async def notify_wishlist_matches(bot: Bot, crm: CrmRepository, sub: ListingSubm
                 logger.exception("Wishlist xabar wish=%s", wish.id)
     except Exception:
         logger.exception("wishlist notify jarayoni listing #%s", lid)
+
+
+def _format_car_match_message(car: Car, wish: Wishlist) -> str:
+    price_txt = fmt_usd(car.price_usd or 0)
+    km = f"\n🛣 Yurish: <b>{car.mileage_km:,}</b> km" if car.mileage_km is not None else ""
+    extra = ""
+    if car.price_usd and car.price_usd <= wish.budget_max:
+        diff = wish.budget_max - car.price_usd
+        if diff > 0:
+            extra = f"\n\nBu sizning maksimal byudjetingizdan taxminan <b>{fmt_usd(diff)}</b> arzon."
+    return (
+        "🎉 <b>Siz qidirgan mashina kanalga chiqdi!</b>\n\n"
+        f"🚗 {html.escape(car.title)}"
+        f"{km}\n"
+        f"💰 Narx: <code>{html.escape(price_txt)}</code>"
+        f"{extra}\n\n"
+        "Pastdagi tugma orqali rasmlarini ko'ring va savol bering — darhol javob beramiz."
+    )
+
+
+async def notify_wishlist_matches_car(bot: Bot, crm: CrmRepository, cars: CarRepository, car: Car) -> int:
+    """Kanalga chiqqan (sotuvdagi) mashinaga mos qidiruv egalariga xabar. Bitta mashina uchun bir marta."""
+    if car.status != CarStatus.ACTIVE or not (car.brand and car.year and car.price_usd):
+        return 0
+    if await cars.has_event(car, "wishlist_notified"):
+        return 0
+    try:
+        pairs = await crm.find_wishlists_matching(
+            brand=car.brand, model=car.model, year=car.year, price_usd=car.price_usd
+        )
+    except Exception:
+        logger.exception("wishlist moslash (car #%s)", car.id)
+        return 0
+    await cars.add_event(car, "wishlist_notified", {"matches": len(pairs)})
+    if not pairs:
+        return 0
+    me = await bot.get_me()
+    bun = (me.username or "").strip().lstrip("@")
+    sent = 0
+    for wish, client in pairs:
+        if client.telegram_id is None:
+            continue
+        rows = [[InlineKeyboardButton(text="⏭ Keyinroq", callback_data=f"wl_l:{wish.id}")]]
+        if bun:
+            rows.insert(
+                0, [InlineKeyboardButton(text="🚗 Ko'rish va savol berish", url=f"https://t.me/{bun}?start=car_{car.id}")]
+            )
+        try:
+            await bot.send_message(
+                int(client.telegram_id),
+                _format_car_match_message(car, wish),
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+                disable_web_page_preview=True,
+            )
+            await crm.mark_wishlist_notified(wish)
+            sent += 1
+        except TelegramBadRequest as e:
+            logger.warning("Wishlist (car #%s) xabar yuborilmadi wish=%s: %s", car.id, wish.id, e)
+        except Exception:
+            logger.exception("Wishlist (car #%s) xabar wish=%s", car.id, wish.id)
+    logger.info("Kanal mashinasi #%s: %d ta qidiruv egasiga xabar", car.id, sent)
+    return sent

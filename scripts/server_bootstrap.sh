@@ -18,10 +18,17 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
+if ! grep -Eq '^POSTGRES_PASSWORD=.+' .env; then
+  echo "!.env da POSTGRES_PASSWORD yo'q. Mavjud serverda — eski parolni yozing (DEPLOY.md, 12-bo'lim):"
+  echo "  echo 'POSTGRES_PASSWORD=...' >> .env"
+  exit 1
+fi
+
 if [[ ! -f backend/.env ]]; then
   cp backend/.env.example backend/.env
-  echo "[!] backend/.env yaratildi (namunadan). JWT_SECRET va CRM_ADMIN_PASSWORD ni o'zgartiring:"
+  echo "[!] backend/.env yaratildi (namunadan). JWT_SECRET, CRM_ADMIN_PASSWORD va DATABASE_URL ni to'ldiring:"
   echo "    nano backend/.env"
+  exit 1
 fi
 
 docker compose pull 2>/dev/null || true

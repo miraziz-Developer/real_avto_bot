@@ -255,6 +255,7 @@ class CrmRepository:
         phone: str,
         photo_file_ids: list[str],
         payment_screenshot_file_id: str | None = None,
+        payment_screenshot_unique_id: str | None = None,
     ) -> ListingSubmission:
 
         row = ListingSubmission(
@@ -277,6 +278,7 @@ class CrmRepository:
 
             photo_file_ids=photo_file_ids,
             payment_screenshot_file_id=payment_screenshot_file_id,
+            payment_screenshot_unique_id=(payment_screenshot_unique_id or None),
             status=ListingSubmissionStatus.PENDING,
         )
         self.session.add(row)
@@ -284,9 +286,100 @@ class CrmRepository:
         return row
 
 
-    async def get_listing_submission(self, listing_id: int) -> ListingSubmission | None:
-        r = await self.session.execute(select(ListingSubmission).where(ListingSubmission.id == listing_id))
+    async def get_listing_submission(
+        self, listing_id: int, *, for_update: bool = False
+    ) -> ListingSubmission | None:
+        stmt = select(ListingSubmission).where(ListingSubmission.id == listing_id)
+        if for_update:
+            # Qatorni tranzaksiya oxirigacha qulflash: ikki admin / ikki bosish bir vaqtda
+            # bir xil holatni o'zgartira olmasin. populate_existing — sessiyadagi eski nusxani yangilash.
+            # Avval flush: chaqiruvchi saqlamagan o'zgarishlar (masalan buyout_status) o'chib ketmasin.
+            await self.session.flush()
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        r = await self.session.execute(stmt)
         return r.scalar_one_or_none()
+
+    async def lock_pending_listing(self, listing_id: int) -> ListingSubmission | None:
+        """PENDING e'lonni qulflab qaytaradi (boshqa admin commit qilguncha kutadi)."""
+        sub = await self.get_listing_submission(listing_id, for_update=True)
+        if sub is None or sub.status != ListingSubmissionStatus.PENDING:
+            return None
+        return sub
+
+    async def acquire_user_submit_lock(self, user_telegram_id: int) -> None:
+        """Bitta foydalanuvchining parallel «Tasdiqlash» bosishlarini ketma-ket qiladi (tranzaksiya oxirigacha)."""
+        key = (0x5241 << 48) | (int(user_telegram_id) & 0xFFFF_FFFF_FFFF)
+        await self.session.execute(text("select pg_advisory_xact_lock(:k)"), {"k": key})
+
+    async def listings_with_payment_screenshot(
+        self, unique_id: str, *, exclude_id: int | None = None, limit: int = 5
+    ) -> list[ListingSubmission]:
+        """Shu to'lov skrinshoti ishlatilgan boshqa e'lonlar (firibgarlikni aniqlash)."""
+        if not unique_id:
+            return []
+        stmt = select(ListingSubmission).where(ListingSubmission.payment_screenshot_unique_id == unique_id)
+        if exclude_id is not None:
+            stmt = stmt.where(ListingSubmission.id != exclude_id)
+        r = await self.session.execute(stmt.order_by(ListingSubmission.id.desc()).limit(limit))
+        return list(r.scalars().all())
+
+    async def list_pending_listings(self, *, limit: int = 10) -> list[ListingSubmission]:
+        r = await self.session.execute(
+            select(ListingSubmission)
+            .where(ListingSubmission.status == ListingSubmissionStatus.PENDING)
+            .order_by(ListingSubmission.created_at.asc())
+            .limit(limit)
+        )
+        return list(r.scalars().all())
+
+    async def admin_stats(self) -> dict[str, int]:
+        """Admin /stats uchun asosiy ko'rsatkichlar (bitta so'rov)."""
+        r = await self.session.execute(
+            text(
+                """
+                select
+                  (select count(*) from users) as users,
+                  (select count(*) from clients) as clients,
+                  (select count(*) from listing_submissions where lower(status::text) = 'pending') as pending,
+                  (select count(*) from listing_submissions where lower(status::text) = 'approved') as approved,
+                  (select count(*) from listing_submissions where lower(status::text) = 'rejected') as rejected,
+                  (select count(*) from listing_submissions
+                     where lower(status::text) = 'approved' and listing_approved_at >= now() - interval '24 hours')
+                     as approved_24h,
+                  (select count(*) from listing_submissions where created_at >= now() - interval '24 hours')
+                     as submitted_24h,
+                  (select count(*) from listing_submissions where sale_status = 'sold') as sold,
+                  (select count(*) from wishlist where is_active) as wishlists_active,
+                  (select count(*) from listing_threads) as threads
+                """
+            )
+        )
+        return {k: int(v or 0) for k, v in r.mappings().one().items()}
+
+    async def find_recent_duplicate_listing(
+        self,
+        *,
+        user_telegram_id: int,
+        photo_file_ids: list[str],
+        within: timedelta = timedelta(minutes=30),
+    ) -> ListingSubmission | None:
+        """Xuddi shu rasmlar bilan yaqinda yuborilgan PENDING e'lon (ikki marta bosish / qayta yuborish)."""
+        since = datetime.now(timezone.utc) - within
+        r = await self.session.execute(
+            select(ListingSubmission)
+            .where(
+                ListingSubmission.user_telegram_id == user_telegram_id,
+                ListingSubmission.status == ListingSubmissionStatus.PENDING,
+                ListingSubmission.created_at >= since,
+            )
+            .order_by(ListingSubmission.id.desc())
+            .limit(10)
+        )
+        wanted = list(photo_file_ids)
+        for row in r.scalars().all():
+            if list(row.photo_file_ids or []) == wanted:
+                return row
+        return None
 
     async def try_mark_listing_approved(
         self,
@@ -294,7 +387,7 @@ class CrmRepository:
         *,
         channel_message_id: int | None,
     ) -> ListingSubmission | None:
-        sub = await self.get_listing_submission(listing_id)
+        sub = await self.get_listing_submission(listing_id, for_update=True)
         if sub is None or sub.status != ListingSubmissionStatus.PENDING:
             return None
         sub.status = ListingSubmissionStatus.APPROVED
@@ -305,13 +398,47 @@ class CrmRepository:
         await self.session.flush()
         return sub
 
+    async def listings_due_for_auto_publish(self, *, now: datetime, limit: int = 10) -> list[ListingSubmission]:
+        """Muzlatish muddati tugagan, hech kim hal qilmagan e'lonlar (sotib olish taklifiga javob kelmaganlar ham)."""
+        stmt = (
+            select(ListingSubmission)
+            .where(
+                ListingSubmission.status == ListingSubmissionStatus.PENDING,
+                ListingSubmission.frozen_until.is_not(None),
+                ListingSubmission.frozen_until <= now,
+                # «expired» ham — kanal xatosidan keyin qayta urinish uchun
+                or_(
+                    ListingSubmission.buyout_status.is_(None),
+                    ListingSubmission.buyout_status.in_(("offered", "expired")),
+                ),
+            )
+            .order_by(ListingSubmission.frozen_until.asc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def listings_with_stale_deals(self, *, now: datetime, limit: int = 10) -> list[ListingSubmission]:
+        """Sotuvchi rozi bo'lgan / muhokamadagi, lekin jamoa hal qilmagan kelishuvlar (eslatma uchun)."""
+        stmt = (
+            select(ListingSubmission)
+            .where(
+                ListingSubmission.status == ListingSubmissionStatus.PENDING,
+                ListingSubmission.buyout_status.in_(("accepted", "negotiating")),
+                ListingSubmission.frozen_until.is_not(None),
+                ListingSubmission.frozen_until <= now,
+            )
+            .order_by(ListingSubmission.frozen_until.asc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def try_mark_listing_rejected(
         self,
         listing_id: int,
         *,
         reason: str,
     ) -> ListingSubmission | None:
-        sub = await self.get_listing_submission(listing_id)
+        sub = await self.get_listing_submission(listing_id, for_update=True)
         if sub is None or sub.status != ListingSubmissionStatus.PENDING:
             return None
         sub.status = ListingSubmissionStatus.REJECTED
@@ -398,9 +525,29 @@ class CrmRepository:
         sub: ListingSubmission,
     ) -> list[tuple[Wishlist, Client]]:
         """E'lon (tasdiqlangan) qatoriga mos, faol wishlist + mijoz telegrami bor qatorlar."""
+        return await self.find_wishlists_matching(
+            brand=sub.brand,
+            model=sub.model,
+            year=sub.year,
+            price_usd=sub.price_ask_usd,
+            condition_key=sub.condition_key,
+            exclude_client_id=sub.client_id,
+        )
+
+    async def find_wishlists_matching(
+        self,
+        *,
+        brand: str | None,
+        model: str | None,
+        year: int,
+        price_usd: int,
+        condition_key: str | None = None,
+        exclude_client_id: int | None = None,
+    ) -> list[tuple[Wishlist, Client]]:
+        """Mashina parametrlariga mos faol wishlistlar (bot e'loni ham, kanal mashinasi ham)."""
         lm = func.lower
-        sb = (sub.brand or "").strip()
-        sm = (sub.model or "").strip()
+        sb = (brand or "").strip()
+        sm = (model or "").strip()
         brand_keys = _brand_synonyms_lower(sb) or frozenset({sb.lower()})
         brand_match = or_(*[lm(Wishlist.brand) == lm(literal(bk)) for bk in sorted(brand_keys)])
         wl_model = Wishlist.model
@@ -413,20 +560,22 @@ class CrmRepository:
         )
         budget_hi = (Wishlist.budget_max * 11) // 10
         price_ok = and_(
-            sub.price_ask_usd <= budget_hi,
-            or_(Wishlist.budget_min.is_(None), sub.price_ask_usd >= Wishlist.budget_min),
+            price_usd <= budget_hi,
+            or_(Wishlist.budget_min.is_(None), price_usd >= Wishlist.budget_min),
         )
+        # Kanal mashinasida holat kaliti yo'q — holat filtri faqat ma'lum bo'lsa qo'llanadi
         cond_ok = or_(
             Wishlist.condition_key.is_(None),
-            Wishlist.condition_key == sub.condition_key,
+            Wishlist.condition_key == condition_key,
+            literal(condition_key is None),
         )
-        year_ok = and_(Wishlist.year_min <= sub.year, Wishlist.year_max >= sub.year)
+        year_ok = and_(Wishlist.year_min <= year, Wishlist.year_max >= year)
         stmt = (
             select(Wishlist, Client)
             .join(Client, Client.id == Wishlist.client_id)
             .where(
                 Wishlist.is_active.is_(True),
-                Wishlist.client_id != sub.client_id,
+                Wishlist.client_id != (exclude_client_id or -1),
                 Client.telegram_id.is_not(None),
                 brand_match,
                 model_match,
@@ -584,17 +733,27 @@ class CrmRepository:
             select(ListingSubmission)
             .where(
                 ListingSubmission.status == ListingSubmissionStatus.APPROVED,
-                ListingSubmission.sale_status == "open",
                 ListingSubmission.channel_message_id.is_not(None),
                 ListingSubmission.listing_approved_at.is_not(None),
                 or_(
                     and_(
-                        ListingSubmission.sale_last_prompt_at.is_(None),
-                        ListingSubmission.listing_approved_at <= due_first,
+                        ListingSubmission.sale_status == "open",
+                        or_(
+                            and_(
+                                ListingSubmission.sale_last_prompt_at.is_(None),
+                                ListingSubmission.listing_approved_at <= due_first,
+                            ),
+                            and_(
+                                ListingSubmission.sale_last_prompt_at.is_not(None),
+                                ListingSubmission.sale_last_prompt_at <= due_repeat,
+                            ),
+                        ),
                     ),
+                    # «Sotildi» bosilgan, lekin sharh kelmagan (masalan /start bosib chiqib ketgan) —
+                    # aks holda e'lon abadiy feedback_pending da qolib, boshqa so'ralmaydi.
                     and_(
-                        ListingSubmission.sale_last_prompt_at.is_not(None),
-                        ListingSubmission.sale_last_prompt_at <= due_repeat,
+                        ListingSubmission.sale_status == "feedback_pending",
+                        ListingSubmission.updated_at <= due_repeat,
                     ),
                 ),
             )
@@ -604,14 +763,17 @@ class CrmRepository:
         return list(r.scalars().all())
 
     async def mark_sale_prompt_sent(self, listing_id: int) -> None:
-        sub = await self.get_listing_submission(listing_id)
+        sub = await self.get_listing_submission(listing_id, for_update=True)
         if sub is None:
             return
         sub.sale_last_prompt_at = datetime.now(timezone.utc)
+        if sub.sale_status == "feedback_pending":
+            # Yangi so'rov tugmalari ishlashi uchun (try_set_sale_* «open» kutadi).
+            sub.sale_status = "open"
         await self.session.flush()
 
     async def try_set_sale_feedback_pending(self, listing_id: int, *, user_telegram_id: int) -> ListingSubmission | None:
-        sub = await self.get_listing_submission(listing_id)
+        sub = await self.get_listing_submission(listing_id, for_update=True)
         if sub is None or sub.user_telegram_id != user_telegram_id:
             return None
         if sub.status != ListingSubmissionStatus.APPROVED or sub.sale_status != "open":
@@ -621,7 +783,7 @@ class CrmRepository:
         return sub
 
     async def try_revert_sale_feedback_pending(self, listing_id: int, *, user_telegram_id: int) -> ListingSubmission | None:
-        sub = await self.get_listing_submission(listing_id)
+        sub = await self.get_listing_submission(listing_id, for_update=True)
         if sub is None or sub.user_telegram_id != user_telegram_id:
             return None
         if sub.sale_status != "feedback_pending":
@@ -631,7 +793,7 @@ class CrmRepository:
         return sub
 
     async def try_set_sale_not_sold(self, listing_id: int, *, user_telegram_id: int) -> ListingSubmission | None:
-        sub = await self.get_listing_submission(listing_id)
+        sub = await self.get_listing_submission(listing_id, for_update=True)
         if sub is None or sub.user_telegram_id != user_telegram_id:
             return None
         if sub.status != ListingSubmissionStatus.APPROVED or sub.sale_status != "open":
@@ -641,7 +803,7 @@ class CrmRepository:
         return sub
 
     async def try_finalize_sale_sold(self, listing_id: int, *, user_telegram_id: int) -> ListingSubmission | None:
-        sub = await self.get_listing_submission(listing_id)
+        sub = await self.get_listing_submission(listing_id, for_update=True)
         if sub is None or sub.user_telegram_id != user_telegram_id:
             return None
         if sub.status != ListingSubmissionStatus.APPROVED or sub.sale_status != "feedback_pending":

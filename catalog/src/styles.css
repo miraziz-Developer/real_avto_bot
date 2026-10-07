@@ -1,0 +1,405 @@
+:root {
+  /* Telegram Mini App ichida — Telegram mavzusi ranglari, oddiy brauzerda — o'zimizniki */
+  --bg: var(--tg-theme-bg-color, #f6f7fb);
+  --surface: var(--tg-theme-secondary-bg-color, #ffffff);
+  --text: var(--tg-theme-text-color, #0f172a);
+  --muted: var(--tg-theme-hint-color, #64748b);
+  --accent: var(--tg-theme-button-color, #0ea5e9);
+  --accent-text: var(--tg-theme-button-text-color, #ffffff);
+  --link: var(--tg-theme-link-color, #0284c7);
+  --border: rgba(100, 116, 139, 0.18);
+  --good: #16a34a;
+  --good-bg: rgba(22, 163, 74, 0.12);
+  --warn: #b45309;
+  --warn-bg: rgba(245, 158, 11, 0.16);
+  --radius: 14px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: var(--tg-theme-bg-color, #0b1220);
+    --surface: var(--tg-theme-secondary-bg-color, #131c2e);
+    --text: var(--tg-theme-text-color, #e5e7eb);
+    --muted: var(--tg-theme-hint-color, #94a3b8);
+    --link: var(--tg-theme-link-color, #38bdf8);
+    --border: rgba(148, 163, 184, 0.16);
+    --good: #4ade80;
+    --good-bg: rgba(74, 222, 128, 0.14);
+    --warn: #fbbf24;
+    --warn-bg: rgba(251, 191, 36, 0.16);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.app {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 13px;
+}
+
+.center {
+  text-align: center;
+  margin: 20px 0;
+}
+
+/* --- Hero --- */
+.hero {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.brandRow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.logo {
+  width: 46px;
+  height: 46px;
+  flex: none;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: var(--accent-text);
+  background: var(--accent);
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.hero p {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+
+.heroActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+/* --- Buttons --- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-text);
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+/* --- Filters --- */
+.filters {
+  scroll-margin-top: 12px;
+}
+
+.search,
+.filterRow select,
+.alertBox input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* iOS: kattalashtirib yubormaslik uchun */
+}
+
+.filterRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.count {
+  margin: 10px 2px;
+  font-size: 13px;
+}
+
+/* --- Grid & cards --- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.card {
+  display: block;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.photoWrap {
+  position: relative;
+}
+
+.photo {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: var(--border);
+}
+
+.photo.placeholder {
+  display: grid;
+  place-items: center;
+  font-size: 34px;
+}
+
+.cardBody {
+  padding: 10px;
+  display: grid;
+  gap: 3px;
+}
+
+.price {
+  font-weight: 800;
+  font-size: 17px;
+}
+
+.cardTitle {
+  font-weight: 600;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.badge {
+  display: inline-block;
+  width: fit-content;
+  margin-top: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge.good {
+  color: var(--good);
+  background: var(--good-bg);
+}
+
+.badge.fair {
+  color: var(--muted);
+  background: var(--border);
+}
+
+.badge.reserved {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.badge.floating {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  margin: 0;
+  backdrop-filter: blur(6px);
+}
+
+/* --- Empty / alert --- */
+.empty {
+  text-align: center;
+  padding: 24px 8px;
+}
+
+.alertBox {
+  display: grid;
+  gap: 8px;
+  max-width: 420px;
+  margin: 12px auto 0;
+  padding: 14px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.alertBox p {
+  margin: 0 0 4px;
+}
+
+/* --- Car page --- */
+.back {
+  display: inline-block;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.gallery {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  border-radius: var(--radius);
+  -webkit-overflow-scrolling: touch;
+}
+
+.galleryPhoto {
+  flex: 0 0 100%;
+  scroll-snap-align: start;
+  border-radius: var(--radius);
+}
+
+.carHead h2 {
+  margin: 14px 0 4px;
+  font-size: 21px;
+}
+
+.bigPrice {
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.actions {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.specs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.specs > div {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.specs dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.specs dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.notes {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  line-height: 1.5;
+}
+
+.carPage h3 {
+  margin: 22px 0 10px;
+}
+
+/* --- Footer --- */
+.footer {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  display: grid;
+  gap: 4px;
+}
+
+.footer .phones {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+@media (min-width: 720px) {
+  .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .filterRow {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .heroActions {
+    max-width: 420px;
+  }
+  .galleryPhoto {
+    flex-basis: 70%;
+  }
+  .specs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .actions {
+    grid-template-columns: repeat(3, auto);
+    justify-content: start;
+  }
+}
+
+@media (min-width: 1000px) {
+  .grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

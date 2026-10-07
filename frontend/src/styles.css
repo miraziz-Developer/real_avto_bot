@@ -287,7 +287,9 @@ button.ghost:hover {
 
 .statCard .val {
   margin-top: 8px;
-  font-size: 1.75rem;
+  /* Telefonda katta summalar («$23,700») kartadan chiqib ketmasligi uchun */
+  font-size: clamp(1.1rem, 4.5vw, 1.75rem);
+  overflow-wrap: anywhere;
   font-weight: 800;
   font-family: var(--mono);
   letter-spacing: -0.02em;
@@ -646,4 +648,13 @@ table.data tr.clickable {
   .gridStats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* Havolalar qorong'i fonda o'qiladigan bo'lsin (lead kartasi: Telegram, telefon) */
+.sheetBody a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.sheetBody a:hover {
+  text-decoration: underline;
 }
