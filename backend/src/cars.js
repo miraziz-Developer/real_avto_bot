@@ -1,13 +1,13 @@
 import express from "express";
 import { pool } from "./db.js";
 import { requireRole } from "./middleware.js";
-import { asyncHandler, getPagination } from "./utils.js";
+import { asyncHandler, getPagination, parseId } from "./utils.js";
 
 /** Mashinalar bazasi (bot yaratadigan `cars` / `car_events` jadvallari). */
 export const carsRouter = express.Router();
 
 const STATUSES = ["review", "active", "reserved", "sold", "archived"];
-const STALE_DAYS = Math.max(1, Number.parseInt(process.env.CAR_STALE_DAYS || "14", 10) || 14);
+const STALE_DAYS = Math.max(1, Number.parseInt(process.env.CAR_STALE_DAYS || "7", 10) || 7);
 
 const LIST_COLUMNS = `id, status, source, brand, model, year, mileage_km, price_usd, color, transmission, fuel,
   position, paint_status, has_accident, location, is_own, purchase_price_usd, expenses_usd, sold_price_usd,
@@ -104,8 +104,8 @@ carsRouter.get("/stats", asyncHandler(async (req, res) => {
 }));
 
 carsRouter.get("/:id", asyncHandler(async (req, res) => {
-  const id = Number.parseInt(String(req.params.id), 10);
-  if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: "invalid_id" });
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
   try {
     const c = await pool.query(`select ${LIST_COLUMNS}, notes, raw_text, listing_submission_id from cars where id=$1`, [id]);
     if (!c.rows[0]) return res.status(404).json({ error: "not_found" });
@@ -128,8 +128,8 @@ function toMoney(v) {
 }
 
 carsRouter.patch("/:id", requireRole("admin", "manager"), asyncHandler(async (req, res) => {
-  const id = Number.parseInt(String(req.params.id), 10);
-  if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: "invalid_id" });
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
   const body = req.body || {};
   const client = await pool.connect();
   try {

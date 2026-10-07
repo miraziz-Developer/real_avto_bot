@@ -214,7 +214,13 @@ export default function App() {
       localStorage.setItem("crm_token", r.data.token);
       localStorage.setItem("crm_user", JSON.stringify(r.data.user));
       setError("");
-    } catch {
+    } catch (err) {
+      if (err?.response?.status === 429) {
+        const wait = Number(err.response.data?.retry_after || err.response.headers?.["retry-after"] || 0);
+        const mins = wait > 0 ? Math.ceil(wait / 60) : 15;
+        setError(`Juda ko‘p noto‘g‘ri urinish. ${mins} daqiqadan keyin qayta urinib ko‘ring.`);
+        return;
+      }
       setError("Login xato. Username / parol.");
     }
   }

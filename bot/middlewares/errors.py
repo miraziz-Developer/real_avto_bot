@@ -1,4 +1,8 @@
-"""Kutilmagan xatolarni jurnalga yozadi; polling uzilmasligi uchun foydalanuvchiga yumshoq javob."""
+"""Kutilmagan xatolarni jurnalga yozadi; polling uzilmasligi uchun foydalanuvchiga yumshoq javob.
+
+MUHIM: bu middleware DbSessionMiddleware dan TASHQARIDA (oldin) ro'yxatdan o'tishi kerak —
+shunda xato avval DB sessiyasini rollback qiladi, keyin shu yerda ushlanadi.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +12,8 @@ from typing import Any, Awaitable, Callable
 from aiogram import BaseMiddleware
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import CallbackQuery, Message, TelegramObject
+
+from bot.middlewares._event import unwrap_event
 
 logger = logging.getLogger(__name__)
 
@@ -26,23 +32,26 @@ class UnhandledErrorMiddleware(BaseMiddleware):
     ) -> Any:
         try:
             return await handler(event, data)
-        except TelegramBadRequest:
-            raise
         except TelegramForbiddenError:
             logger.warning("Foydalanuvchi botni bloklagan yoki chat mumkin emas: %s", type(event).__name__)
             return None
+        except TelegramBadRequest as e:
+            # Masalan «message is not modified», eskirgan callback — foydalanuvchiga xato ko'rsatmaymiz.
+            logger.warning("TelegramBadRequest (%s): %s", type(unwrap_event(event)).__name__, e)
+            return None
         except Exception:
-            logger.exception("Handler xatosi (%s)", type(event).__name__)
+            inner = unwrap_event(event)
+            logger.exception("Handler xatosi (%s)", type(inner).__name__)
             try:
                 if (
-                    isinstance(event, Message)
-                    and event.from_user
-                    and event.chat
-                    and getattr(event.chat, "type", None) == "private"
+                    isinstance(inner, Message)
+                    and inner.from_user
+                    and inner.chat
+                    and getattr(inner.chat, "type", None) == "private"
                 ):
-                    await event.answer(_USER_FRIENDLY)
-                elif isinstance(event, CallbackQuery) and event.from_user:
-                    await event.answer("Texnik xato.", show_alert=True)
-            except TelegramBadRequest:
+                    await inner.answer(_USER_FRIENDLY)
+                elif isinstance(inner, CallbackQuery) and inner.from_user:
+                    await inner.answer("Texnik xato. Qayta urinib ko‘ring.", show_alert=True)
+            except Exception:
                 pass
             return None

@@ -14,9 +14,10 @@ import html
 import logging
 
 from aiogram import Bot, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BusinessConnection, Message
 
-from bot.ai import AIError, get_ai
+from bot.ai import AIError, get_ai, get_budget
 from bot.config import settings
 from bot.db.cars_repo import CarRepository
 from bot.db.leads_repo import LeadRepository
@@ -78,15 +79,25 @@ async def on_business_message(
     if not conn.can_reply:
         return
     text = message.text
-    if text is None and (message.voice or message.video_note):
+    if text is None and message.caption:
+        text = message.caption
+    # Oddiy videoni faqat videoni «ko'radigan» provayder (Gemini) tahlil qiladi; 20 MB — Telegram chegarasi
+    video = message.video if getattr(get_ai(), "supports_video", False) else None
+    if text is None and (message.voice or message.video_note or video):
         ai = get_ai()
-        media = message.voice or message.video_note
-        if ai.enabled and media is not None:
+        media = message.voice or message.video_note or video
+        uid = message.from_user.id if message.from_user else 0
+        too_big = (getattr(media, "file_size", 0) or 0) > 19 * 1024 * 1024
+        if ai.enabled and media is not None and not too_big and await get_budget().allow_user(f"tg:{uid}"):
             try:
                 f = await bot.get_file(media.file_id)
                 buf = await bot.download_file(f.file_path)
-                text = await ai.transcribe(buf.read() if buf else b"", filename="audio.ogg" if message.voice else "video.mp4")
-            except AIError as e:
+                text = await ai.transcribe(
+                    buf.read() if buf else b"",
+                    filename="audio.ogg" if message.voice else "video.mp4",
+                    mime_type=getattr(media, "mime_type", None),
+                )
+            except (AIError, TelegramBadRequest) as e:
                 logger.warning("Business ovozini o'qib bo'lmadi: %s", e)
     if not text or text.startswith("/"):
         return  # rasm/stiker va h.k. — egasi o'zi ko'radi

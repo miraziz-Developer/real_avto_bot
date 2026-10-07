@@ -217,6 +217,8 @@ class ListingSubmission(Base):
 
     photo_file_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
     payment_screenshot_file_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Telegram file_unique_id — bir xil skrinshot qayta ishlatilganini aniqlash uchun.
+    payment_screenshot_unique_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     channel_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

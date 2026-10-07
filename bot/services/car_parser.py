@@ -31,16 +31,66 @@ _RESERVED_RE = re.compile(r"(?<![\w])(bron|bronlandi|бронь|брон|zakalat
 _PHONE_RE = re.compile(r"(?:\+?998[\s\-]?)?\(?\d{2}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}(?!\d)")
 
 
+# «sotildi?» (savol), «sotilgan emas», «hali sotilmadi», «не продан» — sotildi EMAS
+_AFTER_NEGATION_RE = re.compile(r"^\s*(\?|emas\b|yo'q\b|эмас|эмас\b|йўқ|нет\b|ли\b|mi\b|ми\b)", re.IGNORECASE)
+_BEFORE_NEGATION_RE = re.compile(r"(\bне|\bhali|\bхали)\s*$", re.IGNORECASE)
+
+
+def _affirmed(rx: re.Pattern, t: str) -> bool:
+    """Kalit so'z savol yoki inkor bilan emas, tasdiq ma'nosida kelganmi."""
+    for m in rx.finditer(t):
+        after = t[m.end() : m.end() + 12]
+        before = t[max(0, m.start() - 8) : m.start()]
+        if _AFTER_NEGATION_RE.match(after) or _BEFORE_NEGATION_RE.search(before):
+            continue
+        return True
+    return False
+
+
 def is_sold_text(text: str | None, *, extended: bool = False) -> bool:
     """extended=True — tahrir/reply uchun: «baraka bo'ldi», «olib ketildi» ham sotildi hisoblanadi."""
     if not text:
         return False
     t = normalize_text(text)
-    return bool(_SOLD_RE.search(t) or (extended and _SOLD_EXTRA_RE.search(t)))
+    return _affirmed(_SOLD_RE, t) or (extended and _affirmed(_SOLD_EXTRA_RE, t))
+
+
+# Sotuvdan keyingi minnatdorchilik / tabrik (ko'pincha mijoz bilan dumaloq video): «mashinangiz muborak»,
+# «olib ketishdi», «sotib oldim». Yangi e'londa bunday so'zlar deyarli bo'lmaydi («baraka» bundan mustasno —
+# u e'lon matnida ham uchraydi, shuning uchun bu ro'yxatga kirmaydi)
+_SOLD_THANKS_RE = re.compile(
+    r"(?<![\w'])(muborak\w*|tabrik\w*|olib\s+ket(?:ishdi|ildi|di|dilar|yapti\w*|ayapti\w*)|sotib\s+old\w*|"
+    r"sotib\s+olindi|xarid\s+qild\w*|yangi\s+egasi\w*|topshirildi|муборак\w*|мубарак\w*|табрик\w*|"
+    r"поздравля\w*|купил\w*|забрал\w*)(?![\w'])",
+    re.IGNORECASE,
+)
+
+
+def is_sold_thanks(text: str | None) -> bool:
+    """Sotib olingani uchun tabrik/minnatdorchilik (matn yoki video ovozi)."""
+    return bool(text) and _affirmed(_SOLD_THANKS_RE, normalize_text(text))
+
+
+def is_sold_confirmation(text: str | None) -> bool:
+    """Postga reply / tahrir uchun: «sotildi», «baraka bo'ldi», «muborak», «olib ketishdi» — hammasi sotildi."""
+    return is_sold_text(text, extended=True) or is_sold_thanks(text)
+
+
+# «Bron qilish mumkin», «bron uchun yozing» — taklif, bron qilingan degani emas
+_RESERVE_OFFER_RE = re.compile(r"^\s*(qilish\w*|qiling\b|qilinglar\b|qilsa\w*|qilmoq\w*|uchun|mumkin|qabul|olamiz|бронировать|для)\b", re.IGNORECASE)
 
 
 def is_reserved_text(text: str | None) -> bool:
-    return bool(text and _RESERVED_RE.search(normalize_text(text)))
+    if not text:
+        return False
+    t = normalize_text(text)
+    for m in _RESERVED_RE.finditer(t):
+        after = t[m.end() : m.end() + 15]
+        if m.group(1).lower() in ("bron", "брон", "бронь") and _RESERVE_OFFER_RE.match(after):
+            continue
+        if _affirmed(_RESERVED_RE, t[m.start() : m.end() + 15]):
+            return True
+    return False
 
 
 def has_phone(text: str | None) -> bool:
@@ -67,6 +117,8 @@ _MODEL_ALIASES: dict[str, tuple[str, str]] = {
     "кобалт": ("Chevrolet", "Cobalt"),
     "gentra": ("Chevrolet", "Gentra"),
     "jentra": ("Chevrolet", "Gentra"),
+    "djentra": ("Chevrolet", "Gentra"),
+    "гентра": ("Chevrolet", "Gentra"),
     "жентра": ("Chevrolet", "Gentra"),
     "джентра": ("Chevrolet", "Gentra"),
     "nexia 3": ("Chevrolet", "Nexia 3"),
@@ -75,6 +127,8 @@ _MODEL_ALIASES: dict[str, tuple[str, str]] = {
     "nexia 1": ("Daewoo", "Nexia 1"),
     "nexia": ("Chevrolet", "Nexia"),
     "neksiya": ("Chevrolet", "Nexia"),
+    "nexiya": ("Chevrolet", "Nexia"),
+    "neksia": ("Chevrolet", "Nexia"),
     "нексия": ("Chevrolet", "Nexia"),
     "matiz": ("Chevrolet", "Matiz"),
     "матиз": ("Chevrolet", "Matiz"),
@@ -152,9 +206,19 @@ def _build_catalog_aliases() -> dict[str, tuple[str, str]]:
     return out
 
 
+# O'zbek/rus qo'shimchalari: «Gentrangiz», «Kobaltingiz», «Damasni», «Malibuni», «кобальтингиз», «кобальта».
+# Faqat to'liq qo'shimcha ro'yxati — «so'ngi» kabi tasodifiy so'zlar model bo'lib qolmasin
+_NAME_SUFFIX = (
+    r"(?:ngiz|ingiz|nginiz|imiz|ning|ni|ga|ka|da|dan|dagi|dek|day|lar\w*|im|si|mi|chi|ku|yam|ham|"
+    r"нгиз|ингиз|нинг|ни|га|да|дан|даги|лар\w*|ми|чи|а|у|е|ом|ой|ы|и)?"
+)
+
+
 def _alias_pattern(alias: str) -> re.Pattern[str]:
     body = r"\s*".join(re.escape(part) for part in alias.split())
-    return re.compile(r"(?<![\w])" + body + r"(?![\w])", re.IGNORECASE)
+    # Qisqa yoki raqamli nomlarga qo'shimcha qo'shmaymiz («R3», «nexia 3»)
+    suffix = _NAME_SUFFIX if len(alias) >= 4 and not alias[-1].isdigit() else ""
+    return re.compile(r"(?<![\w])" + body + suffix + r"(?![\w])", re.IGNORECASE)
 
 
 # Uzunroq nomlar avval («nexia 3» → «nexia» dan oldin)
@@ -213,7 +277,7 @@ _NUM = r"(\d{1,3}(?:[ ., ]\d{3})+|\d+(?:[.,]\d+)?)"
 _THOUSAND = r"(ming|минг|тыс\.?|k|к)"
 
 _MILEAGE_LABELED_RE = re.compile(
-    r"(?:probeg|пробег|прабег|yurgan|yurishi|yurish|mileage)\s*[:\-–]?\s*" + _NUM + r"\s*" + _THOUSAND + r"?",
+    r"(?:probeg|пробег|прабег|yurgani|yurgan|yurishi|yurish|mileage)\s*[:\-–]?\s*" + _NUM + r"\s*" + _THOUSAND + r"?",
     re.IGNORECASE,
 )
 _MILEAGE_KM_RE = re.compile(_NUM + r"\s*" + _THOUSAND + r"?\s*(?:km|км)(?![\w])", re.IGNORECASE)
@@ -262,6 +326,10 @@ def parse_year(text: str) -> int | None:
     return None
 
 
+# Undan katta probeg — deyarli har doim noto'g'ri eshitilgan/yozilgan raqam («905 ming»)
+MILEAGE_MAX_KM = 700_000
+
+
 def parse_mileage(text: str) -> int | None:
     for rx in (_MILEAGE_LABELED_RE, _MILEAGE_KM_RE):
         m = rx.search(text)
@@ -271,7 +339,7 @@ def parse_mileage(text: str) -> int | None:
         if val is None:
             continue
         km = int(_apply_multiplier(val, m.group(2)))
-        if 0 <= km <= 2_000_000:
+        if 0 <= km <= MILEAGE_MAX_KM:
             return km
     return None
 
@@ -354,7 +422,16 @@ _COLOR_RE = re.compile(
     r"(?<![\w'])(" + "|".join(re.escape(c) for c in sorted(_COLORS, key=len, reverse=True)) + r")(?![\w'])",
     re.IGNORECASE,
 )
-_PAINT_RE = re.compile(r"(?:kraskasi|kraska|краскаси|краска|покраска)\s*[:\-–]?\s*([^\n,;]{2,80})", re.IGNORECASE)
+# So'z chegarasi bilan: «kraskalari bor ekan» → «lari bor ekan» bo'lib qolmasin
+_PAINT_RE = re.compile(
+    r"(?<![\w])(?:kraskasi|kraska|краскаси|краска|покраска)(?![\w'])\s*[:\-–]?\s*([^\n,;]{2,80})", re.IGNORECASE
+)
+# Ajratgichsiz (ko'pincha ovozdan) qiymat faqat shu so'zlar bilan boshlansa olinadi — «kraska ikkilaydigan bo'lsak» emas
+_PAINT_VALUE_OK_RE = re.compile(
+    r"^\s*(?:\d|(?:toza|chistiy|чистый|чист|тоза|yo'q|йўқ|нет|bor|бор|ideal|zavod|завод|bir|ikki|uch|to'rt|besh|"
+    r"bez|без|minimal|ozgina|kam|kamroq)(?![\w'])|element\w*|joy\w*|детал\w*|qism\w*)",
+    re.IGNORECASE,
+)
 _LOCATION_RE = re.compile(r"(?:📍|manzil|lokatsiya|адрес)\s*[:\-–]?\s*([^\n]{2,80})", re.IGNORECASE)
 # 📍 ba'zi postlarda boshqa maydonlar oldidan ham qo'yiladi («📍 probeg: 76.000km») — bunday qatorlar lokatsiya emas
 _NOT_LOCATION_RE = re.compile(r"probeg|пробег|yili|narx|цена|\d\s*(?:km|км)|\$", re.IGNORECASE)
@@ -418,6 +495,9 @@ def parse_car_text(text: str, *, usd_rate_uzs: int) -> ParsedCar:
     pos = _POSITION_RE.search(t) or _POSITION_RE2.search(t)
     color_m = _COLOR_RE.search(t)
     paint_m = _PAINT_RE.search(t)
+    if paint_m and not re.search(r"(?:kraskasi|kraska|краскаси|краска|покраска)\s*[:\-–]", paint_m.group(0), re.IGNORECASE):
+        if not _PAINT_VALUE_OK_RE.match(paint_m.group(1)):
+            paint_m = None
     loc_m = next((m for m in _LOCATION_RE.finditer(t) if not _NOT_LOCATION_RE.search(m.group(1))), None)
     has_accident = True if _ACCIDENT_YES_RE.search(t) else (False if _ACCIDENT_NO_RE.search(t) else None)
     return ParsedCar(

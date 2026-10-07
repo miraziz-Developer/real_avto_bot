@@ -97,6 +97,18 @@ def _log_level() -> str:
     return (os.getenv("LOG_LEVEL", "INFO") or "INFO").strip().upper()
 
 
+def _optional_int(name: str) -> int | None:
+    raw = (os.getenv(name) or "").strip()
+    return int(raw) if raw else None
+
+
+def _float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return float(raw.replace(",", "."))
+
+
 def _bool(name: str, default: bool) -> bool:
     raw = (os.getenv(name) or "").strip().lower()
     if not raw:
@@ -141,6 +153,17 @@ class Settings:
     groq_stt_model: str
     groq_stt_language: str
     groq_stt_prompt: str
+    ai_provider: str
+    gemini_api_key: str
+    gemini_model: str
+    gemini_agent_model: str
+    gemini_thinking_level: str
+    gemini_media_resolution: str
+    ai_daily_budget_usd: float
+    ai_user_daily_limit: int
+    ai_price_input_per_m: float | None
+    ai_price_output_per_m: float | None
+    ai_price_audio_per_m: float | None
     car_stale_days: int
     agent_enabled: bool
     agent_model: str
@@ -152,6 +175,9 @@ class Settings:
     business_enabled: bool
     business_owner_pause_hours: int
     comments_enabled: bool
+    comments_ai_enabled: bool
+    comments_answer_admins: bool
+    discussion_group_id: int | None
     listing_freeze_hours: int
     work_hour_start: int
     work_hour_end: int
@@ -177,7 +203,8 @@ settings = Settings(
     channel_id=_req("CHANNEL_ID"),
     channel_username=_req("CHANNEL_USERNAME"),
     instagram_username=_req("INSTAGRAM_USERNAME"),
-    leaderboard_channel_id=_req("LEADERBOARD_CHANNEL_ID"),
+    # TOP/reyting hozircha muzlatilgan — bo'sh bo'lsa asosiy kanal ishlatiladi.
+    leaderboard_channel_id=_normalize_chat_id(os.getenv("LEADERBOARD_CHANNEL_ID") or "") or _req("CHANNEL_ID"),
     sales_phone=_sales_phone(),
     prize_usd=_int("PRIZE_USD", 50),
     leaderboard_interval_days=_int("LEADERBOARD_INTERVAL_DAYS", 3),
@@ -210,8 +237,25 @@ settings = Settings(
             "nasiya, boshlang'ich to'lov, narxi, dollar, million so'm, kelishamiz."
         )
     ).strip(),
+    # AI provayder: auto — GEMINI_API_KEY bo'lsa Gemini (video/ovoz/matnni bitta model tushunadi), aks holda Groq
+    ai_provider=(os.getenv("AI_PROVIDER", "") or "auto").strip().lower(),
+    gemini_api_key=(os.getenv("GEMINI_API_KEY", "") or "").strip(),
+    gemini_model=(os.getenv("GEMINI_MODEL", "") or "gemini-3.1-flash-lite").strip(),
+    gemini_agent_model=(os.getenv("GEMINI_AGENT_MODEL", "") or os.getenv("GEMINI_MODEL", "") or "gemini-3.1-flash-lite").strip(),
+    # «Thinking» tokenlari ham pullik: low — oddiy vazifalar uchun yetarli. Bo'sh — model standarti
+    gemini_thinking_level=(os.getenv("GEMINI_THINKING_LEVEL", "low") or "").strip().lower(),
+    # Video kadrlari sifati: low — ~3 barobar arzon, mashina/probeg/rangni aniqlashga yetarli
+    gemini_media_resolution=(os.getenv("GEMINI_MEDIA_RESOLUTION", "low") or "").strip().lower(),
+    # Kunlik AI xarajati chegarasi (USD, taxminiy). Oshsa AI o'chadi (regex/oddiy javob ishlaydi), adminga xabar. 0 — cheksiz
+    ai_daily_budget_usd=_float("AI_DAILY_BUDGET_USD", 1.0),
+    # Bitta mijozga kuniga shuncha AI javob/ovoz tahlili (spam'dan himoya). 0 — cheksiz
+    ai_user_daily_limit=_int("AI_USER_DAILY_LIMIT", 40),
+    # Narxlar (1M token, USD). Bo'sh — tanlangan provayder uchun standart qiymat
+    ai_price_input_per_m=_float("AI_PRICE_INPUT_PER_M", 0.0) or None,
+    ai_price_output_per_m=_float("AI_PRICE_OUTPUT_PER_M", 0.0) or None,
+    ai_price_audio_per_m=_float("AI_PRICE_AUDIO_PER_M", 0.0) or None,
     # Shuncha kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi
-    car_stale_days=_int("CAR_STALE_DAYS", 14),
+    car_stale_days=_int("CAR_STALE_DAYS", 7),
     # AI savdo agenti: botga yozilgan savollarga mashinalar bazasidan javob beradi
     agent_enabled=_bool("AGENT_ENABLED", True),
     agent_model=(os.getenv("GROQ_AGENT_MODEL", "") or os.getenv("GROQ_MODEL", "") or "openai/gpt-oss-120b").strip(),
@@ -228,6 +272,14 @@ settings = Settings(
     business_owner_pause_hours=_int("BUSINESS_OWNER_PAUSE_HOURS", 6),
     # Kanal kommentlaridagi savollarga bazadan qisqa javob + botga havola
     comments_enabled=_bool("COMMENTS_ENABLED", True),
+    # Kommentlar va muhokama guruhidagi xabarlarni AI o'qib, vaziyatga qarab javob beradi (salbiy fikrga ham).
+    # AI kaliti yo'q / chegara tugasa — eski shablon javob (faqat savollarga)
+    comments_ai_enabled=_bool("COMMENTS_AI_ENABLED", True),
+    # Admin guruhda o'zi savol yozsa (sinash uchun) ham javob beriladi. Admin boshqa odamga reply qilib
+    # yozgan xabarlarga (mijozga javob) bot hech qachon aralashmaydi
+    comments_answer_admins=_bool("COMMENTS_ANSWER_ADMINS", True),
+    # Muhokama guruhi ID (-100...). Bo'sh — kanal postlari avto-forward bo'ladigan guruh o'zi aniqlanadi
+    discussion_group_id=_optional_int("DISCUSSION_GROUP_ID"),
     # Bot orqali kelgan e'lon shuncha ISH soati muzlatiladi (jamoa sotib olishi mumkin), keyin avtomatik kanalga.
     # 0 — avtomatik joylash yo'q (faqat qo'lda tasdiqlash)
     listing_freeze_hours=_int("LISTING_FREEZE_HOURS", 6),

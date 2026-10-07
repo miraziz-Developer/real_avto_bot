@@ -17,12 +17,14 @@ from aiogram.types import (
     Message,
 )
 
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
+from bot.ai import get_ai, get_budget
 from bot.config import is_admin
 from bot.db.cars_repo import CarRepository
 from bot.db.models import ListingSubmissionStatus
 from bot.db.repositories import CrmRepository
+from bot.handlers.ad_listing import send_admin_listing_album_with_actions
 from bot.services.listing_publish import PublishError, publish_listing
 
 router = Router(name="ad_admin")
@@ -31,6 +33,102 @@ router = Router(name="ad_admin")
 class AdAdminRejectStates(StatesGroup):
     waiting_reason = State()
 
+
+
+PENDING_RESEND_LIMIT = 10
+
+
+def moderation_keyboard(lid: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"lad_a:{lid}"),
+                InlineKeyboardButton(text="❌ Rad etish", callback_data=f"lad_r:{lid}"),
+            ]
+        ]
+    )
+
+
+@router.message(Command("umumiy"), F.chat.type == "private")
+async def admin_stats(message: Message, crm: CrmRepository) -> None:
+    if message.from_user is None or not is_admin(message.from_user.id):
+        return
+    st = await crm.admin_stats()
+    ai = get_ai()
+    if ai.enabled:
+        budget = get_budget()
+        spent = await budget.spent_today()
+        limit = f" / ${budget.daily_usd:.2f}" if budget.daily_usd > 0 else ""
+        ai_line = f"🤖 AI ({html.escape(ai.provider)}, {html.escape(ai.model)}): bugun <b>${spent:.3f}</b>{limit}\n\n"
+    else:
+        ai_line = "🤖 AI o'chiq (kalit yo'q) — oddiy rejim\n\n"
+    await message.answer(
+        "📈 <b>Real Avto — umumiy statistika</b>\n\n"
+        f"👤 Bot foydalanuvchilari: <b>{st['users']}</b>\n"
+        f"🗂 Mijozlar (CRM): <b>{st['clients']}</b>\n\n"
+        f"📝 E'lonlar: kutilmoqda <b>{st['pending']}</b> · tasdiqlangan <b>{st['approved']}</b> · "
+        f"rad etilgan <b>{st['rejected']}</b>\n"
+        f"🕐 So'nggi 24 soat: yuborilgan <b>{st['submitted_24h']}</b> · tasdiqlangan <b>{st['approved_24h']}</b>\n"
+        f"✅ Sotildi: <b>{st['sold']}</b>\n\n"
+        f"🔎 Faol qidiruvlar: <b>{st['wishlists_active']}</b>\n"
+        f"💬 Savol-javob suhbatlari: <b>{st['threads']}</b>\n\n"
+        + ai_line
+        + "Kutilayotgan e'lonlarni qayta ko'rish: /navbat",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.message(Command("navbat"), F.chat.type == "private")
+async def admin_pending(message: Message, crm: CrmRepository) -> None:
+    """Moderatsiya xabari yo'qolgan / o'chirilgan bo'lsa — kutilayotgan e'lonlarni qayta yuborish."""
+    if message.from_user is None or not is_admin(message.from_user.id):
+        return
+    rows = await crm.list_pending_listings(limit=PENDING_RESEND_LIMIT)
+    if not rows:
+        await message.answer("✅ Moderatsiya navbati bo'sh.")
+        return
+    await message.answer(
+        f"🛎 Kutilayotgan e'lonlar: <b>{len(rows)}</b>"
+        + (f" (eng eski {PENDING_RESEND_LIMIT} tasi)" if len(rows) >= PENDING_RESEND_LIMIT else "")
+        + ". Har biri pastda tugmalar bilan.",
+        parse_mode=ParseMode.HTML,
+    )
+    for sub in rows:
+        client = await crm.get_client_by_id(sub.client_id)
+        photos = list(sub.photo_file_ids or [])
+        if not photos:
+            await message.answer(f"⚠️ #{sub.id}: rasmlar yo'q.", reply_markup=moderation_keyboard(sub.id))
+            continue
+        try:
+            await send_admin_listing_album_with_actions(
+                message.bot,
+                message.chat.id,
+                lid=sub.id,
+                tg_id=int(sub.user_telegram_id),
+                client_name=(client.full_name if client else None) or "Mijoz",
+                brand=sub.brand,
+                model=sub.model,
+                year=sub.year,
+                mileage=sub.mileage,
+                location=sub.location,
+                condition_key=sub.condition_key,
+                has_accident=sub.has_accident,
+                price_ask_usd=sub.price_ask_usd,
+                paint_status=sub.paint_status,
+                phone=sub.phone,
+                extra_details=sub.extra_details or "",
+                seller_username=sub.seller_username,
+                photo_file_ids=photos,
+                mod_kb=moderation_keyboard(sub.id),
+                payment_screenshot_file_id=sub.payment_screenshot_file_id,
+            )
+        except TelegramBadRequest as e:
+            logging.warning("/navbat: #%s yuborilmadi: %s", sub.id, e)
+            await message.answer(
+                f"⚠️ #{sub.id} albomi yuborilmadi: <code>{html.escape(str(e))}</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=moderation_keyboard(sub.id),
+            )
 
 
 @router.callback_query(F.data.startswith("lad_a:"))
@@ -48,8 +146,10 @@ async def listing_approve(cq: CallbackQuery, crm: CrmRepository, cars: CarReposi
         return
     lid = int(raw[1])
 
-    sub = await crm.get_listing_submission(lid)
-    if sub is None or sub.status != ListingSubmissionStatus.PENDING:
+    # Qatorni qulflaymiz: ikkinchi admin shu yerda kutadi va keyin «allaqachon qayta ishlangan» oladi —
+    # e'lon kanalga ikki marta chiqmaydi.
+    sub = await crm.lock_pending_listing(lid)
+    if sub is None:
         await cq.answer("Bu e'lon allaqachon qayta ishlangan", show_alert=True)
         return
     if not sub.photo_file_ids:
@@ -182,7 +282,7 @@ async def listing_reject_reason(message: Message, state: FSMContext, crm: CrmRep
             parse_mode=ParseMode.HTML,
             reply_markup=user_kb,
         )
-    except TelegramBadRequest as e:
+    except (TelegramBadRequest, TelegramForbiddenError) as e:
         logging.warning("Rad xabari foydalanuvchiga yuborilmadi #%s: %s", lid, e)
         await message.answer(
             f"⚠️ #{lid} bazada rad etildi, lekin foydalanuvchiga xabar yuborilmadi "

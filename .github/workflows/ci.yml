@@ -2,8 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/ai-crm]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   bot:
@@ -38,6 +41,7 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: pip install -r requirements-dev.txt
+      - run: python -m compileall -q bot
       - run: pytest tests -q
 
   web:
@@ -57,3 +61,60 @@ jobs:
       - name: Katalog (sayt + Mini App)
         working-directory: catalog
         run: npm ci && npm run build
+
+  compose:
+    name: docker compose konfiguratsiyasi + image build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Konfiguratsiya
+        run: |
+          touch .env backend/.env
+          POSTGRES_PASSWORD=ci docker compose config -q
+      - name: Barcha image'larni build qilish (bot, backend, CRM, katalog)
+        run: POSTGRES_PASSWORD=ci docker compose build
+      - name: Bot image ichida (Python 3.13, root emas) butun kod import bo'ladimi
+        run: |
+          POSTGRES_PASSWORD=ci docker compose run --rm --no-deps \
+            -e DATABASE_URL=postgresql+asyncpg://x:x@db/x -e BOT_TOKEN=1:x -e CHANNEL_ID=@x \
+            -e CHANNEL_USERNAME=x -e INSTAGRAM_USERNAME=x \
+            bot python -c "import bot.main, scripts.import_channel_export, os; assert os.getuid() != 0; print('bot image OK')"
+
+  backend-smoke:
+    name: Backend — haqiqiy PostgreSQL bilan ishga tushirish
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: crm_smoke
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d crm_smoke"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Ishga tushirish, health va login
+        working-directory: backend
+        env:
+          PORT: "3999"
+          NODE_ENV: production
+          DATABASE_URL: postgresql://postgres:test@localhost:5432/crm_smoke
+          JWT_SECRET: ci-smoke-secret-0123456789abcdef0123456789
+          CRM_ADMIN_USER: admin
+          CRM_ADMIN_PASSWORD: Ci-Smoke-Parol-2026
+        run: |
+          npm ci
+          node src/index.js > backend.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:3999/health && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:3999/auth/login -H 'content-type: application/json' -d '{"username":"admin","password":"wrong"}')" = 401
+          TOKEN=$(curl -sf -X POST localhost:3999/auth/login -H 'content-type: application/json' \
+            -d '{"username":"admin","password":"Ci-Smoke-Parol-2026"}' | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).token))')
+          for p in stats clients listings wishlists cars leads cars/stats public/cars public/meta; do
+            curl -sf -H "Authorization: Bearer $TOKEN" "localhost:3999/$p" > /dev/null || { echo "FAIL $p"; cat backend.log; exit 1; }
+          done
+          echo "backend smoke OK"

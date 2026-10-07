@@ -11,6 +11,7 @@ from aiogram import Bot, F, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
@@ -34,11 +35,21 @@ from bot.data.car_catalog import (
     MODELS_PER_PAGE,
     subvariants_for,
 )
-from bot.handlers.form_limits import CAR_YEAR_MAX, CAR_YEAR_MIN
+from bot.handlers.form_limits import (
+    CAR_YEAR_MAX,
+    CAR_YEAR_MIN,
+    MILEAGE_MAX_KM,
+    MODEL_NAME_MAX,
+    PHONE_DIGITS_MAX,
+    PHONE_DIGITS_MIN,
+    PRICE_USD_MAX,
+    PRICE_USD_MIN,
+)
 from bot.handlers.render import present_root_menu
 from bot.services.work_hours import TASHKENT, add_work_hours
 from bot.utils.contact_html import phone_link_html
 from bot.utils.currency import fmt_usd
+from bot.utils.numbers import parse_int_in_range
 
 router = Router(name="ad_listing")
 
@@ -234,8 +245,8 @@ def parse_phone_from_text(raw: str) -> str | None:
     s = (raw or "").strip()
     if not s:
         return None
-    digits = re.sub(r"\D", "", s)
-    if len(digits) < 9:
+    digits = re.sub(r"[^0-9]", "", s)
+    if len(digits) < PHONE_DIGITS_MIN or len(digits) > PHONE_DIGITS_MAX:
         return None
     if s.startswith("+"):
         return f"+{digits}"
@@ -664,6 +675,9 @@ async def ad_custom_model(message: Message, state: FSMContext) -> None:
     if len(model) < 2:
         await message.answer("Model nomi juda qisqa.")
         return
+    if len(model) > MODEL_NAME_MAX:
+        await message.answer(f"Model nomi {MODEL_NAME_MAX} belgidan oshmasin.")
+        return
     await state.update_data(model=model)
     await state.set_state(AdListingStates.listing_year)
     await message.answer(f"📅 Yilini kiriting ({CAR_YEAR_MIN}-{CAR_YEAR_MAX}):")
@@ -671,13 +685,9 @@ async def ad_custom_model(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(AdListingStates.listing_year), F.text)
 async def ad_year(message: Message, state: FSMContext) -> None:
-    raw = (message.text or "").strip()
-    if not raw.isdigit():
-        await message.answer("Yil raqam bo'lishi kerak.")
-        return
-    year = int(raw)
-    if year < CAR_YEAR_MIN or year > CAR_YEAR_MAX:
-        await message.answer(f"Yil {CAR_YEAR_MIN}–{CAR_YEAR_MAX} oralig'ida bo'lsin.")
+    year = parse_int_in_range(message.text, CAR_YEAR_MIN, CAR_YEAR_MAX, allow_separators=False)
+    if year is None:
+        await message.answer(f"Yil raqam bilan, {CAR_YEAR_MIN}–{CAR_YEAR_MAX} oralig'ida bo'lsin.")
         return
     await state.update_data(year=year)
     await state.set_state(AdListingStates.listing_location)
@@ -701,11 +711,10 @@ async def ad_location(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(AdListingStates.listing_mileage), F.text)
 async def ad_mileage(message: Message, state: FSMContext) -> None:
-    raw = (message.text or "").replace(" ", "").replace(".", "").replace(",", "")
-    if not raw.isdigit():
-        await message.answer("Yurish raqam bo'lishi kerak.")
+    mileage = parse_int_in_range(message.text, 0, MILEAGE_MAX_KM)
+    if mileage is None:
+        await message.answer(f"Yurish raqam bilan (km), 0 dan {MILEAGE_MAX_KM:,} gacha bo'lsin.")
         return
-    mileage = int(raw)
     await state.update_data(mileage=mileage)
     await state.set_state(AdListingStates.listing_condition)
     await message.answer("⚙️ Mashina holatini tanlang:", reply_markup=_condition_kb())
@@ -736,11 +745,13 @@ async def ad_accident(cq: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(StateFilter(AdListingStates.listing_price_usd), F.text)
 async def ad_price(message: Message, state: FSMContext) -> None:
-    raw = (message.text or "").replace(" ", "")
-    if not raw.isdigit():
-        await message.answer("Narx raqam bo'lishi kerak.")
+    price = parse_int_in_range(message.text, PRICE_USD_MIN, PRICE_USD_MAX)
+    if price is None:
+        await message.answer(
+            f"Narx raqam bilan (USD), {PRICE_USD_MIN:,} dan {PRICE_USD_MAX:,} gacha bo'lsin. Masalan: 12500"
+        )
         return
-    await state.update_data(price_ask=int(raw))
+    await state.update_data(price_ask=price)
     await state.set_state(AdListingStates.listing_paint)
     await message.answer("🎨 Kraska holatini tanlang:", reply_markup=_paint_kb())
 
@@ -900,7 +911,7 @@ async def ad_phone_text(message: Message, state: FSMContext) -> None:
     parsed = parse_phone_from_text(message.text or "")
     if not parsed:
         await message.answer(
-            "Raqamni tushunarli qilib yozing (kamida 9 ta raqam), yoki pastdagi tugmadan kontakt yuboring.",
+            f"Raqamni tushunarli qilib yozing ({PHONE_DIGITS_MIN}–{PHONE_DIGITS_MAX} ta raqam), yoki pastdagi tugmadan kontakt yuboring.",
             reply_markup=_phone_kb(),
         )
         return
@@ -917,8 +928,11 @@ async def ad_phone_fallback_msg(message: Message) -> None:
 
 @router.message(StateFilter(AdListingStates.listing_payment), F.photo)
 async def ad_payment_screenshot(message: Message, state: FSMContext) -> None:
-    file_id = message.photo[-1].file_id
-    await state.update_data(payment_screenshot_file_id=file_id)
+    photo = message.photo[-1]
+    await state.update_data(
+        payment_screenshot_file_id=photo.file_id,
+        payment_screenshot_unique_id=photo.file_unique_id,
+    )
     await _go_confirm_after_payment(message, state)
 
 
@@ -958,6 +972,10 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
     phone = str(data.get("phone") or "")
     location = str(data.get("location") or "").strip()
     payment_screenshot_file_id = data.get("payment_screenshot_file_id")
+    payment_screenshot_unique_id = data.get("payment_screenshot_unique_id")
+    if settings.listing_payment_enabled and not payment_screenshot_file_id:
+        await cq.answer("To'lov skrinshoti topilmadi. E'lonni qaytadan boshlang.", show_alert=True)
+        return
     if not location or len(location) < 2:
         await cq.answer("Hudud ma'lumotlari yetarli emas. Iltimos, qayta yuboring.", show_alert=True)
         return
@@ -968,6 +986,24 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
     # Tugma "yuklanmoqda" holatini yopish — adminlarga media yuborish uzoq davom etishi mumkin.
     await cq.answer()
 
+    # Ikki marta bosish / parallel update: foydalanuvchi bo'yicha qulf + takroriy e'lonni tekshirish.
+    await crm.acquire_user_submit_lock(cq.from_user.id)
+    duplicate = await crm.find_recent_duplicate_listing(
+        user_telegram_id=cq.from_user.id,
+        photo_file_ids=photos,
+    )
+    if duplicate is not None:
+        await state.clear()
+        if cq.message:
+            try:
+                await cq.message.edit_reply_markup(reply_markup=None)
+            except TelegramBadRequest:
+                pass
+            await cq.message.answer(
+                f"ℹ️ Bu e'lon allaqachon moderatsiyaga yuborilgan (#{duplicate.id}). "
+                "Admin javobini kuting."
+            )
+        return
 
     try:
         client = await crm.get_or_create_client(
@@ -992,6 +1028,7 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
             phone=phone,
             photo_file_ids=photos,
             payment_screenshot_file_id=payment_screenshot_file_id,
+            payment_screenshot_unique_id=payment_screenshot_unique_id,
         )
 
         lid = row.id
@@ -1002,11 +1039,22 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
                 start_hour=settings.work_hour_start,
                 end_hour=settings.work_hour_end,
             )
+        # Adminlarga yuborishdan OLDIN saqlaymiz: aks holda admin tez bossa e'lon hali bazada
+        # ko'rinmaydi («allaqachon qayta ishlangan» xatosi), qulf ham uzoq ushlanib qoladi.
+        await crm.session.commit()
     except Exception:
         logging.exception("ad_confirm_yes: DB yoki saqlash")
+        await crm.session.rollback()
         if cq.message:
             await cq.message.reply("❌ Saqlanmadi (baza yoki tarmoq). Qayta urinib ko'ring.")
         return
+
+    await state.clear()
+    if cq.message:
+        try:
+            await cq.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
 
     mod_kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1024,6 +1072,25 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
             f"⏳ Hech kim javob bermasa <b>{local:%d.%m %H:%M}</b> da avtomatik kanalga chiqadi. "
             "Sotib olmoqchi bo'lsak — undan oldin «💰 Sotib olamiz»."
         )
+
+    reuse_warning = ""
+    if payment_screenshot_unique_id:
+        try:
+            reused = await crm.listings_with_payment_screenshot(payment_screenshot_unique_id, exclude_id=lid)
+        except Exception:
+            logging.exception("To'lov skrinshotini tekshirish (#%s)", lid)
+            reused = []
+        if reused:
+            refs = ", ".join(
+                f"#{r.id} ({html.escape(str(r.status))}"
+                + (", boshqa foydalanuvchi" if int(r.user_telegram_id) != cq.from_user.id else "")
+                + ")"
+                for r in reused
+            )
+            reuse_warning = (
+                f"⚠️ <b>Diqqat: e'lon #{lid}</b> uchun yuborilgan to'lov skrinshoti avval ishlatilgan: "
+                f"{refs}.\nTo'lovni kartadan tekshirib, keyin tasdiqlang."
+            )
 
     cname = client.full_name or "Mijoz"
     seller_un = cq.from_user.username
@@ -1053,6 +1120,8 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
                     payment_screenshot_file_id=payment_screenshot_file_id,
                     note_html=freeze_note,
                 )
+                if reuse_warning:
+                    await cq.bot.send_message(aid, reuse_warning, parse_mode=ParseMode.HTML)
 
             except Exception:
                 logging.exception("Admin #%s ga e'lon yuborish muvaffaqiyatsiz", aid)
@@ -1060,7 +1129,6 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
     else:
         logging.warning("ADMIN_TELEGRAM_IDS bo'sh — e'lon #%s adminlarga yuborilmadi", lid)
 
-    await state.clear()
     if cq.message:
         if row.frozen_until is not None:
             when_txt = f"{row.frozen_until.astimezone(TASHKENT):%d.%m %H:%M}"

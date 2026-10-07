@@ -1,37 +1,23 @@
 import http from "http";
-import express from "express";
-import { config } from "./config.js";
-import { createCorsMiddleware } from "./cors.js";
-import { router } from "./routes.js";
+import { config, insecureConfigProblems } from "./config.js";
+import { createApp } from "./app.js";
 import { bootstrapDatabase } from "./bootstrap.js";
-import { errorHandler } from "./middleware.js";
 import { pool } from "./db.js";
 
-const app = express();
-app.disable("x-powered-by");
-// Caddy/nginx → catalog nginx → backend: barcha ichki (loopback / docker) hoplarga ishonamiz,
-// shunda req.ip haqiqiy mijoz IP si bo'ladi (ochiq API rate-limit har mijozga alohida)
-app.set("trust proxy", process.env.TRUST_PROXY || "loopback, linklocal, uniquelocal");
-app.use(createCorsMiddleware());
-app.use(express.json({ limit: "512kb" }));
-app.use(router);
-app.use(errorHandler);
+const { fatal, warnings } = insecureConfigProblems();
+for (const w of warnings) console.warn(`[WARN] ${w}`);
+if (fatal.length) {
+  if (config.isProduction) {
+    for (const p of fatal) console.error(`[FATAL] ${p}`);
+    console.error("[FATAL] NODE_ENV=production: xavfsiz bo'lmagan sozlamalar bilan ishga tushirilmaydi (backend/.env).");
+    process.exit(1);
+  }
+  for (const p of fatal) console.warn(`[WARN] ${p} (productionda backend ishga tushmaydi)`);
+}
 
 await bootstrapDatabase();
 
-if (config.isProduction) {
-  const weakJwt =
-    !config.jwtSecret ||
-    config.jwtSecret.length < 24 ||
-    /change_me/i.test(config.jwtSecret);
-  if (weakJwt) {
-    console.warn("[WARN] JWT_SECRET juda qisqa yoki standart — ishlab chiqarishda almashtiring.");
-  }
-  if (!config.adminPassword || config.adminPassword === "admin123") {
-    console.warn("[WARN] CRM_ADMIN_PASSWORD standart — darhol o‘zgartiring.");
-  }
-}
-
+const app = createApp();
 const server = http.createServer(app);
 server.requestTimeout = 120_000;
 server.headersTimeout = 125_000;

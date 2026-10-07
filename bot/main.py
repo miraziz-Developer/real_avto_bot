@@ -1,7 +1,9 @@
 import asyncio
+import html
 import logging
 import os
 import sys
+import time
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -18,6 +20,7 @@ from bot.db.migrate import (
     apply_contest_tables,
     apply_listing_extra_details_column,
     apply_listing_location_column,
+    apply_listing_payment_unique_id_column,
     apply_listing_payment_screenshot_column,
     apply_listing_price_ask_usd_rename,
     apply_listing_sale_followup_columns,
@@ -34,9 +37,11 @@ from bot.middlewares.database import DbSessionMiddleware
 from bot.middlewares.errors import UnhandledErrorMiddleware
 from bot.middlewares.rate_limit import RateLimitMiddleware
 from bot.middlewares.workflow import BotUsernameMiddleware
-from bot.ai import get_ai
+from bot.ai import close_ai, get_ai, get_budget
+from bot.services.car_cards import notify_admins_text
 from bot.instagram.client import get_ig
 from bot.instagram.webhook import start_instagram_server
+from bot.workers.post_watch import post_watch_loop
 from bot.workers.sale_followup import sale_followup_loop
 from bot.workers.lead_reminder import lead_reminder_loop
 from bot.workers.listing_freeze import listing_freeze_loop
@@ -96,11 +101,10 @@ async def _bootstrap_database() -> None:
             await apply_performance_indexes(get_engine())
             await apply_listing_payment_screenshot_column(get_engine())
             await apply_listing_location_column(get_engine())
+            await apply_listing_payment_unique_id_column(get_engine())
             await apply_car_indexes(get_engine())
             await apply_lead_business_columns(get_engine())
             await apply_listing_freeze_columns(get_engine())
-
-
             return
         except BaseException as e:
             last_exc = e
@@ -180,6 +184,39 @@ async def _verify_reviews_channel(bot: Bot) -> None:
     )
 
 
+HEARTBEAT_FILE = os.getenv("BOT_HEARTBEAT_FILE", "/tmp/bot_heartbeat")
+HEARTBEAT_EVERY_SECONDS = 30
+
+
+async def _heartbeat_loop(bot: Bot) -> None:
+    """Docker healthcheck uchun: Telegram API ga ulanish ishlasa, faylga vaqt yoziladi."""
+    while True:
+        try:
+            await asyncio.wait_for(bot.get_me(), timeout=20)
+            with open(HEARTBEAT_FILE, "w", encoding="ascii") as f:
+                f.write(str(int(time.time())))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("Heartbeat: Telegram API javob bermadi: %s", e)
+        await asyncio.sleep(HEARTBEAT_EVERY_SECONDS)
+
+
+async def _backfill_cars(bot: Bot) -> None:
+    """Yangilanishdan oldin tasdiqlangan e'lonlar ham agent/katalog bazasida bo'lsin (bir martalik, xavfsiz)."""
+    from bot.services.backfill import backfill_listing_cars
+
+    channel_chat_id: int | None = None
+    try:
+        channel_chat_id = (await bot.get_chat(settings.channel_id)).id
+    except Exception as e:
+        logger.warning("Kanal ID sini aniqlab bo'lmadi (backfill kanal havolasisiz): %s", e)
+    try:
+        await backfill_listing_cars(get_session_factory(), channel_chat_id=channel_chat_id)
+    except Exception:
+        logger.exception("Eski e'lonlarni mashinalar bazasiga ko'chirib bo'lmadi")
+
+
 async def _set_admin_commands(bot: Bot) -> None:
     """Adminlar uchun «/» menyusi (oddiy foydalanuvchilarga ko'rinmaydi)."""
     from aiogram.types import BotCommand, BotCommandScopeChat
@@ -190,6 +227,8 @@ async def _set_admin_commands(bot: Bot) -> None:
         BotCommand(command="statistika", description="📊 Mashinalar statistikasi (30 kun)"),
         BotCommand(command="sotuvda", description="🟢 Sotuvdagi mashinalar"),
         BotCommand(command="tekshiruv", description="🟡 Tekshiruv kutayotgan postlar"),
+        BotCommand(command="navbat", description="📝 Moderatsiya navbati (foydalanuvchi e'lonlari)"),
+        BotCommand(command="umumiy", description="📈 Umumiy statistika (foydalanuvchi, e'lon, sotuv)"),
         BotCommand(command="mashina", description="🚗 Mashina kartasi: /mashina ID"),
         BotCommand(command="sotildi", description="🔴 Sotildi: /sotildi ID [narx]"),
         BotCommand(command="start", description="Asosiy menyu"),
@@ -206,7 +245,7 @@ async def _set_catalog_menu_button(bot: Bot) -> None:
 
     Telegram menyu tugmasini har bir chat uchun alohida qo'yishga ruxsat beradi. Faqat HTTPS manzillar.
     """
-    from aiogram.types import MenuButtonWebApp, WebAppInfo
+    from aiogram.types import MenuButtonCommands, MenuButtonDefault, MenuButtonWebApp, WebAppInfo
 
     for name, url in (("CATALOG_URL", settings.catalog_url), ("CRM_URL", settings.crm_url)):
         if url and not url.startswith("https://"):
@@ -218,6 +257,31 @@ async def _set_catalog_menu_button(bot: Bot) -> None:
             )
         except TelegramBadRequest as e:
             logger.warning("Katalog menyu tugmasi o'rnatilmadi: %s", e)
+    else:
+        # Telegram tugmani doimiy saqlaydi — eski (masalan o'chgan ngrok) manzil qolib ketmasin
+        try:
+            await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+            current = await bot.get_chat_menu_button()
+            if isinstance(current, MenuButtonWebApp):
+                # BotFather'da qo'lda qo'yilgan tugmani API o'zgartira olmaydi
+                logger.warning("Menyu tugmasi BotFather'da qo'yilgan: %s", current.web_app.url)
+                await notify_admins_text(
+                    bot,
+                    "⚠️ Bot menyusidagi «" + html.escape(current.text) + "» tugmasi eski manzilga olib boradi:\n"
+                    f"<code>{html.escape(current.web_app.url)}</code>\n"
+                    "O'chirish: @BotFather → /mybots → botingiz → Bot Settings → Menu Button → «Remove».\n"
+                    "Yoki .env da CATALOG_URL ni ishlaydigan https manzilga qo'ying.",
+                )
+        except TelegramBadRequest as e:
+            logger.warning("Menyu tugmasini tozalab bo'lmadi: %s", e)
+    if not settings.crm_url.startswith("https://"):
+        for aid in settings.admin_telegram_ids:
+            try:
+                # «Default» — global (BotFather) tugmaga qaytaradi; aniq «buyruqlar» tugmasi qo'yamiz
+                await bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonCommands())
+            except TelegramBadRequest:
+                pass  # admin hali botga /start bosmagan
+        logger.info("CRM_URL berilmagan — «Admin panel» tugmasi olib tashlandi (CRM: brauzerda oching)")
     if settings.crm_url.startswith("https://"):
         for aid in settings.admin_telegram_ids:
             try:
@@ -228,6 +292,21 @@ async def _set_catalog_menu_button(bot: Bot) -> None:
             except TelegramBadRequest as e:
                 # Admin hali botga /start bosmagan bo'lsa — chat yo'q
                 logger.warning("Admin %s uchun panel tugmasi o'rnatilmadi: %s", aid, e)
+
+
+async def _warn_if_weak_speech_ai(bot: Bot) -> None:
+    """Ovoz/dumaloq video Groq Whisper'da — o'zbekchani ko'pincha boshqa til deb taniydi. Adminlar bilsin."""
+    ai = get_ai()
+    if not ai.enabled:
+        await notify_admins_text(bot, "⚠️ AI o'chiq: ovoz va videolar tinglanmaydi. .env ga GEMINI_API_KEY qo'ying.")
+    elif ai.provider != "gemini":
+        logger.warning("Ovoz/video Groq Whisper bilan — o'zbekcha sifati past. GEMINI_API_KEY tavsiya etiladi")
+        await notify_admins_text(
+            bot,
+            "⚠️ Ovoz va dumaloq videolar <b>Groq Whisper</b> bilan eshitilyapti — o'zbekchani yomon taniydi "
+            "(ko'pincha boshqa til deb o'ylaydi). .env ga <code>GEMINI_API_KEY</code> qo'yib, botni qayta "
+            "ishga tushiring (AI_PROVIDER=auto yoki gemini).",
+        )
 
 
 async def _run() -> None:
@@ -246,17 +325,24 @@ async def _run() -> None:
     # await _verify_leaderboard_channel(bot)
     await _verify_reviews_channel(bot)
     await _set_admin_commands(bot)
+    await _backfill_cars(bot)
+    get_ai()  # provayder/model logga yoziladi
+    get_budget().set_alert(lambda text: notify_admins_text(bot, text))
     await _set_catalog_menu_button(bot)
+    await _warn_if_weak_speech_ai(bot)
 
     storage = await _fsm_storage()
     dp = Dispatcher(storage=storage)
     session_factory = get_session_factory()
 
+    # Tartib muhim (birinchi = eng tashqi):
+    #   xato ushlash → flood cheklovi → bot username → DB sessiya → handler.
+    # Xato DB sessiyasidan o'tib (rollback) keyin ushlanadi; cheklangan update DB ga tegmaydi.
+    dp.update.middleware(UnhandledErrorMiddleware())
+    dp.update.middleware(RateLimitMiddleware())
     dp.update.middleware(BotUsernameMiddleware())
     dp.update.middleware(DbSessionMiddleware(session_factory))
-    dp.update.middleware(RateLimitMiddleware())
     register_handlers(dp)
-    dp.update.middleware(UnhandledErrorMiddleware())
 
     # Bot o'chiq paytda kelgan kanal postlari va mijoz xabarlari yo'qolmasin — Telegram ularni 24 soat saqlaydi
     await bot.delete_webhook(drop_pending_updates=False)
@@ -264,29 +350,37 @@ async def _run() -> None:
     # LEADERBOARD LOOP MUZLATILDI - Foydalanuvchi botdan chiqdi
     # worker_lb = asyncio.create_task(leaderboard_loop(bot, session_factory))
     worker_sale = asyncio.create_task(sale_followup_loop(bot, session_factory))
+    heartbeat = asyncio.create_task(_heartbeat_loop(bot))
     worker_stale = asyncio.create_task(stale_cars_loop(bot, session_factory))
     worker_leads = asyncio.create_task(lead_reminder_loop(bot, session_factory))
     worker_freeze = asyncio.create_task(listing_freeze_loop(bot, session_factory))
+    worker_posts = asyncio.create_task(post_watch_loop(bot, session_factory))
     ig_runner = await start_instagram_server(bot, session_factory, get_ig())
     try:
         # channel_post / edited_channel_post ham kelishi uchun ishlatilayotgan update turlarini aniq so'raymiz
         await dp.start_polling(bot, handle_signals=True, allowed_updates=dp.resolve_used_update_types())
     finally:
         # worker_lb.cancel()
+        heartbeat.cancel()
+        try:
+            await heartbeat
+        except asyncio.CancelledError:
+            pass
         worker_sale.cancel()
         worker_stale.cancel()
         worker_leads.cancel()
         worker_freeze.cancel()
+        worker_posts.cancel()
         # try:
         #     await worker_lb
         # except asyncio.CancelledError:
         #     pass
-        for w in (worker_sale, worker_stale, worker_leads, worker_freeze):
+        for w in (worker_sale, worker_stale, worker_leads, worker_freeze, worker_posts):
             try:
                 await w
             except asyncio.CancelledError:
                 pass
-        await get_ai().close()
+        await close_ai()
         if ig_runner is not None:
             await ig_runner.cleanup()
         await get_ig().close()
