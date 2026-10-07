@@ -19,6 +19,7 @@ from bot.db.repositories import CrmRepository
 from bot.keyboards import root_menu_keyboard
 from bot.utils.anonym_guard import validate_anonymous_content
 from bot.utils.contact_html import sales_phones_links_html
+import contextlib
 
 router = Router(name="listing_chat")
 logger = logging.getLogger(__name__)
@@ -96,10 +97,8 @@ async def open_listing_buyer_entry(
 async def lc_buyer_done(cq: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     if cq.message:
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
     await cq.answer("Yopildi.")
     if cq.message:
         await _answer_with_root_menu(
@@ -283,10 +282,8 @@ async def lc_seller_start_reply(cq: CallbackQuery, state: FSMContext, crm: CrmRe
     await state.update_data(lc_reply_thread=thread_id, lc_reply_to=qid, lc_listing_id=sub.id)
     await cq.answer()
     if cq.message:
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
         await cq.message.answer(
             "✍️ <b>Javob</b> — shu savolga matn yoki ovoz yuboring.",
             parse_mode=ParseMode.HTML,

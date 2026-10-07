@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 from bot.ai import AIClient, AIError
 from bot.config import sales_phone_entries, settings
@@ -93,18 +93,17 @@ def car_facts(car: Car) -> dict:
         # Ma'lumot hali admin tomonidan tasdiqlanmagan (ko'pincha faqat ovozdan) — raqamlarni ochiq aytmaymiz
         return {"id": car.id, "mashina": car.title, "holati": "ma'lumot tekshirilmoqda — aniq narx/holatni menejer aytadi"}
     facts: dict = {"id": car.id, "mashina": car.title, "holati": _status_uz(car.status)}
-    for key, value in (
-        ("narx_usd", car.price_usd),
-        ("probeg_km", car.mileage_km),
-        ("rang", car.color),
-        ("uzatma", car.transmission),
-        ("yoqilgi", car.fuel),
-        ("pozitsiya", car.position),
-        ("kraska", car.paint_status),
-        ("joylashuv", car.location),
-    ):
-        if value not in (None, ""):
-            facts[key] = value
+    optional = {
+        "narx_usd": car.price_usd,
+        "probeg_km": car.mileage_km,
+        "rang": car.color,
+        "uzatma": car.transmission,
+        "yoqilgi": car.fuel,
+        "pozitsiya": car.position,
+        "kraska": car.paint_status,
+        "joylashuv": car.location,
+    }
+    facts.update({key: value for key, value in optional.items() if value not in (None, "")})
     if car.has_accident is not None:
         facts["avariya"] = "bo'lgan" if car.has_accident else "bo'lmagan"
     return facts
@@ -126,7 +125,7 @@ def build_system_prompt(now: datetime | None = None) -> str:
         map_url=settings.map_url,
         phones=", ".join(sales_phone_entries()),
         hours=settings.business_hours or "menejerdan aniqlang",
-        now=(now or datetime.now(timezone.utc)).astimezone(_TASHKENT).strftime("%Y-%m-%d %H:%M"),
+        now=(now or datetime.now(UTC)).astimezone(_TASHKENT).strftime("%Y-%m-%d %H:%M"),
     )
 
 

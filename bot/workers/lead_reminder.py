@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -38,7 +38,7 @@ async def remind_once(bot: Bot, session_factory: async_sessionmaker[AsyncSession
         leads = LeadRepository(session)
         cars = CarRepository(session)
         rows = await leads.due_for_reminder(after_minutes=settings.lead_reminder_minutes)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for lead in rows:
             minutes = int((now - lead.handed_off_at).total_seconds() // 60) if lead.handed_off_at else 0
             car = await cars.get(lead.car_id) if lead.car_id else None

@@ -8,12 +8,12 @@ tests
 .pytest_cache
 *.md
 
-# Bot image uchun kerak emas (alohida xizmatlar)
+# Not needed in the bot image (separate services)
 node_modules
 frontend
 backend
 catalog
-# scripts dan faqat kanal importi image'ga kiradi (Dockerfile uni COPY qiladi)
+# Only the channel import script is shipped in the image (COPY in Dockerfile)
 scripts/*
 !scripts/import_channel_export.py
 .github

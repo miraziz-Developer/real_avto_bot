@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
-from bot.config import settings
 from bot.db.repositories import CrmRepository, UserRepository
 from bot.handlers.helpers import edit_or_answer
-from bot.handlers.render import present_user_state
 from bot.keyboards import contest_hub_keyboard
-from bot.services.subscription import SubscriptionService
 from bot.utils import messages as msg
 
 router = Router(name="contest")
@@ -28,7 +25,7 @@ def _parse_end(row: dict) -> datetime | None:
         raw = str(end).replace("Z", "+00:00")
         end_dt = datetime.fromisoformat(raw)
     if end_dt.tzinfo is None:
-        end_dt = end_dt.replace(tzinfo=timezone.utc)
+        end_dt = end_dt.replace(tzinfo=UTC)
     return end_dt
 
 
@@ -36,14 +33,14 @@ def _fmt_end(row: dict) -> str:
     end_dt = _parse_end(row)
     if end_dt is None:
         return "—"
-    return end_dt.astimezone(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+    return end_dt.astimezone(UTC).strftime("%d.%m.%Y %H:%M UTC")
 
 
 def _contest_ended(row: dict) -> bool:
     end_dt = _parse_end(row)
     if end_dt is None:
         return False
-    return end_dt < datetime.now(timezone.utc)
+    return end_dt < datetime.now(UTC)
 
 
 async def _send_contest_hub(

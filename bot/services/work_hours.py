@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 TASHKENT = timezone(timedelta(hours=5))
 
@@ -31,6 +31,6 @@ def add_work_hours(moment: datetime, hours: float, *, start_hour: int, end_hour:
             continue
         available = day_end - local
         if remaining <= available:
-            return (local + remaining).astimezone(timezone.utc)
+            return (local + remaining).astimezone(UTC)
         remaining -= available
         local = day_start + timedelta(days=1)

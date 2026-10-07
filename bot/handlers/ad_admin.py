@@ -26,6 +26,7 @@ from bot.db.models import ListingSubmissionStatus
 from bot.db.repositories import CrmRepository
 from bot.handlers.ad_listing import send_admin_listing_album_with_actions
 from bot.services.listing_publish import PublishError, publish_listing
+import contextlib
 
 router = Router(name="ad_admin")
 
@@ -161,25 +162,17 @@ async def listing_approve(cq: CallbackQuery, crm: CrmRepository, cars: CarReposi
     try:
         msgs = await publish_listing(cq.bot, crm, cars, sub)
     except PublishError as e:
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.reply(e.html_text, parse_mode=ParseMode.HTML)
-        except TelegramBadRequest:
-            pass
         return
     if msgs is None:
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.reply("⚠️ Boshqa admin allaqachon tasdiqlagan.")
-        except TelegramBadRequest:
-            pass
         return
-    try:
+    with contextlib.suppress(TelegramBadRequest):
         await cq.message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest:
-        pass
-    try:
+    with contextlib.suppress(TelegramBadRequest):
         await cq.message.reply(f"✅ E'lon #{lid} kanalga joylandi.")
-    except TelegramBadRequest:
-        pass
 
 
 @router.callback_query(F.data.startswith("lad_r:"))
@@ -259,10 +252,8 @@ async def listing_reject_reason(message: Message, state: FSMContext, crm: CrmRep
         return
 
     if isinstance(chat_id, int) and isinstance(msg_id, int):
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await message.bot.edit_message_reply_markup(chat_id=chat_id, message_id=msg_id, reply_markup=None)
-        except TelegramBadRequest:
-            pass
 
     user_kb = InlineKeyboardMarkup(
         inline_keyboard=[

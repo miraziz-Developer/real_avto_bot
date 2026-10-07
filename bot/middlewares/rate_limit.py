@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Awaitable, Callable
+from typing import Any
+from collections.abc import Awaitable, Callable
 
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from bot.middlewares._event import unwrap_event
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +101,8 @@ class RateLimitMiddleware(BaseMiddleware):
                     except Exception:
                         pass
                 elif isinstance(inner, CallbackQuery):
-                    try:
+                    with contextlib.suppress(Exception):
                         await inner.answer()
-                    except Exception:
-                        pass
                 return None
 
         return await handler(event, data)

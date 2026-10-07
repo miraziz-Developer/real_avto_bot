@@ -9,9 +9,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 from bot.ai.errors import AIBudgetExceeded
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class Prices:
 
 
 def today_key(now: datetime | None = None) -> str:
-    return (now or datetime.now(timezone.utc)).astimezone(_TASHKENT).strftime("%Y-%m-%d")
+    return (now or datetime.now(UTC)).astimezone(_TASHKENT).strftime("%Y-%m-%d")
 
 
 class AIBudget:
@@ -132,8 +133,6 @@ class AIBudget:
 
     async def close(self) -> None:
         if self._redis is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._redis.aclose()
-            except Exception:
-                pass
             self._redis = None

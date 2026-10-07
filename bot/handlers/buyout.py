@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import html
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ParseMode
@@ -31,6 +31,7 @@ from bot.services.car_parser import parse_price_usd
 from bot.services.listing_publish import PublishError, publish_listing
 from bot.utils.currency import fmt_usd
 from bot.utils.numbers import parse_db_id
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ async def buyout_price(message: Message, state: FSMContext, bot: Bot, crm: CrmRe
         await message.answer("Bu e'lon endi hal qilingan.")
         return
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     hours = max(1, settings.buyout_reply_hours)
     text = (
         f"💰 <b>{html.escape(settings.business_name)} mashinangizni sotib olishga tayyor!</b>\n\n"
@@ -190,26 +191,22 @@ async def seller_answer(cq: CallbackQuery, bot: Bot, crm: CrmRepository, cars: C
         return
     await cq.answer()
     if cq.message:
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
     head = f"#{sub.id} {html.escape(_title(sub))} — taklif {fmt_usd(sub.buyout_price_usd or 0)}"
 
     if action in ("y", "t"):
         sub.buyout_status = "accepted" if action == "y" else "negotiating"
         # Avtomatik joylanmaydi (sotuvchi bizga sotmoqchi), lekin shu muddatda hal qilinmasa — adminlarga eslatma
-        sub.frozen_until = datetime.now(timezone.utc) + timedelta(hours=max(1, settings.buyout_reply_hours))
+        sub.frozen_until = datetime.now(UTC) + timedelta(hours=max(1, settings.buyout_reply_hours))
         await crm.session.commit()
         if cq.message:
             await cq.message.answer("Rahmat! Menejerimiz tez orada siz bilan bog'lanadi ✅", parse_mode=None)
         title = "✅ <b>Sotuvchi ROZI!</b>" if action == "y" else "💬 <b>Sotuvchi narxni muhokama qilmoqchi</b>"
         text = f"{title}\n{head}\n{_seller_contact_html(sub)}\n\nBog'laning va kelishing."
         for aid in settings.admin_telegram_ids:
-            try:
+            with contextlib.suppress(TelegramBadRequest, TelegramForbiddenError):
                 await bot.send_message(aid, text, parse_mode=ParseMode.HTML, reply_markup=deal_kb(sub.id))
-            except (TelegramBadRequest, TelegramForbiddenError):
-                pass
         return
 
     # «Yo'q, e'lon qilinsin» — darhol kanalga
@@ -242,10 +239,8 @@ async def deal_publish(cq: CallbackQuery, bot: Bot, crm: CrmRepository, cars: Ca
             await cq.message.answer(e.html_text, parse_mode=ParseMode.HTML)
         return
     if cq.message:
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
         await cq.message.answer("✅ E'lon kanalga joylandi." if msgs else "Bu e'lon allaqachon joylangan.")
 
 
@@ -277,10 +272,8 @@ async def deal_bought(cq: CallbackQuery, crm: CrmRepository, cars: CarRepository
     await crm.session.commit()
     await cq.answer("🏁 Tabriklaymiz!")
     if cq.message:
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
         await cq.message.answer(
             car_card_html(
                 car,

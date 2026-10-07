@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # Real Avto — PostgreSQL backup script (server-side)
-# Har 6 soatda ishga tushadi, oxirgi 14 ta backup ni saqlaydi (3.5 kun)
+# Runs every 6 hours and keeps the last 14 backups (3.5 days)
 # =============================================================================
 
 set -euo pipefail
@@ -17,18 +17,18 @@ mkdir -p "$BACKUP_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_FILE="${BACKUP_DIR}/real_avto_${TIMESTAMP}.sql.gz"
 
-echo "[$(date)] Backup boshlanmoqda: $BACKUP_FILE"
+echo "[$(date)] Starting backup: $BACKUP_FILE"
 
-# PostgreSQL dump (container ichidan)
+# PostgreSQL dump (inside the container)
 docker exec "$DB_CONTAINER" pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$BACKUP_FILE"
 
 FILE_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
-echo "[$(date)] Backup tugadi: $BACKUP_FILE ($FILE_SIZE)"
+echo "[$(date)] Backup finished: $BACKUP_FILE ($FILE_SIZE)"
 
-# Eskiraganlarni o'chirish (oxirgi RETAIN_COUNT ta qoldirish)
+# Remove old backups (keep the last RETAIN_COUNT)
 ls -1t "$BACKUP_DIR"/real_avto_*.sql.gz 2>/dev/null | tail -n +$((RETAIN_COUNT + 1)) | while read -r f; do
-    echo "[$(date)] Eskiragan backup o'chirilmoqda: $f"
+    echo "[$(date)] Removing old backup: $f"
     rm -f "$f"
 done
 
-echo "[$(date)] Backup jarayoni yakunlandi."
+echo "[$(date)] Backup complete."

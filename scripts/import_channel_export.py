@@ -21,7 +21,7 @@ import json
 import logging
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 
 from bot.ai import get_ai
@@ -57,7 +57,7 @@ def _flatten_text(raw: object) -> str:
 
 def _msg_date(m: dict) -> datetime:
     if m.get("date_unixtime"):
-        return datetime.fromtimestamp(int(m["date_unixtime"]), tz=timezone.utc)
+        return datetime.fromtimestamp(int(m["date_unixtime"]), tz=UTC)
     # Eski eksportlarda faqat mahalliy vaqt — Toshkent (UTC+5) deb olamiz
     return datetime.fromisoformat(m["date"]).replace(tzinfo=timezone(timedelta(hours=5)))
 
@@ -120,7 +120,7 @@ async def run(path: Path, *, dry_run: bool, use_ai: bool, active_days: int, limi
     init_engine(settings.database_url, pool_size=2, max_overflow=0)
     await create_tables()
     await apply_car_indexes(get_engine())
-    cutoff = datetime.now(timezone.utc) - timedelta(days=active_days)
+    cutoff = datetime.now(UTC) - timedelta(days=active_days)
     counts: dict[str, int] = {"bazada_bor": 0, "elon_emas": 0}
     try:
         async with get_session_factory()() as session:

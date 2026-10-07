@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ParseMode
@@ -50,6 +50,7 @@ from bot.services.work_hours import TASHKENT, add_work_hours
 from bot.utils.contact_html import phone_link_html
 from bot.utils.currency import fmt_usd
 from bot.utils.numbers import parse_int_in_range
+import contextlib
 
 router = Router(name="ad_listing")
 
@@ -995,10 +996,8 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
     if duplicate is not None:
         await state.clear()
         if cq.message:
-            try:
+            with contextlib.suppress(TelegramBadRequest):
                 await cq.message.edit_reply_markup(reply_markup=None)
-            except TelegramBadRequest:
-                pass
             await cq.message.answer(
                 f"ℹ️ Bu e'lon allaqachon moderatsiyaga yuborilgan (#{duplicate.id}). "
                 "Admin javobini kuting."
@@ -1034,7 +1033,7 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
         lid = row.id
         if settings.listing_freeze_hours > 0:
             row.frozen_until = add_work_hours(
-                datetime.now(timezone.utc),
+                datetime.now(UTC),
                 settings.listing_freeze_hours,
                 start_hour=settings.work_hour_start,
                 end_hour=settings.work_hour_end,
@@ -1051,10 +1050,8 @@ async def ad_confirm_yes(cq: CallbackQuery, state: FSMContext, crm: CrmRepositor
 
     await state.clear()
     if cq.message:
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
 
     mod_kb = InlineKeyboardMarkup(
         inline_keyboard=[

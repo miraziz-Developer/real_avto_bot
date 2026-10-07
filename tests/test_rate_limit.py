@@ -77,9 +77,9 @@ async def test_middleware_blocks_after_max_private_msg():
     for _ in range(_MAX_MSG_PER_MINUTE):
         _check_limit(42, "msg", _MAX_MSG_PER_MINUTE)
 
-    result = await mw.__call__(handler, MagicMock(), {})
-    # Because event is plain MagicMock, isinstance checks fail -> handler called.
-    # Instead verify the internal _bucket state for correctness.
+    result = await mw(handler, MagicMock(), {})
+    # A plain MagicMock is not a Message/CallbackQuery, so the middleware passes it through.
+    assert result == "ok"
     assert _bucket[(42, "msg")][0] == _MAX_MSG_PER_MINUTE
 
 

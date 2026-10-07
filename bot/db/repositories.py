@@ -1,6 +1,6 @@
 import secrets
 import string
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 from sqlalchemy import and_, func, literal, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -202,7 +202,7 @@ class AppMetaRepository:
 
     async def set_next_leaderboard_at(self, dt: datetime) -> None:
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         await self.set("next_leaderboard_at", dt.isoformat())
 
 
@@ -364,7 +364,7 @@ class CrmRepository:
         within: timedelta = timedelta(minutes=30),
     ) -> ListingSubmission | None:
         """Xuddi shu rasmlar bilan yaqinda yuborilgan PENDING e'lon (ikki marta bosish / qayta yuborish)."""
-        since = datetime.now(timezone.utc) - within
+        since = datetime.now(UTC) - within
         r = await self.session.execute(
             select(ListingSubmission)
             .where(
@@ -392,7 +392,7 @@ class CrmRepository:
             return None
         sub.status = ListingSubmissionStatus.APPROVED
         sub.channel_message_id = channel_message_id
-        sub.listing_approved_at = datetime.now(timezone.utc)
+        sub.listing_approved_at = datetime.now(UTC)
         sub.sale_status = "open"
         sub.sale_last_prompt_at = None
         await self.session.flush()
@@ -480,7 +480,7 @@ class CrmRepository:
     async def deactivate_wishlist(self, wish: Wishlist) -> None:
         wish.is_active = False
         if wish.notified_at is None:
-            wish.notified_at = datetime.now(timezone.utc)
+            wish.notified_at = datetime.now(UTC)
         await self.session.flush()
 
     async def count_active_wishlists(self, client_id: int) -> int:
@@ -517,7 +517,7 @@ class CrmRepository:
 
     async def mark_wishlist_notified(self, wish: Wishlist) -> None:
         """Oxirgi marta mos e'lon haqida xabar yuborilgan vaqt (qidiruv faol qoladi)."""
-        wish.notified_at = datetime.now(timezone.utc)
+        wish.notified_at = datetime.now(UTC)
         await self.session.flush()
 
     async def find_wishlists_matching_listing(
@@ -630,13 +630,13 @@ class CrmRepository:
             if isinstance(end, datetime):
                 end_dt = end
                 if end_dt.tzinfo is None:
-                    end_dt = end_dt.replace(tzinfo=timezone.utc)
+                    end_dt = end_dt.replace(tzinfo=UTC)
             else:
                 raw = str(end).replace("Z", "+00:00")
                 end_dt = datetime.fromisoformat(raw)
                 if end_dt.tzinfo is None:
-                    end_dt = end_dt.replace(tzinfo=timezone.utc)
-            if end_dt < datetime.now(timezone.utc):
+                    end_dt = end_dt.replace(tzinfo=UTC)
+            if end_dt < datetime.now(UTC):
                 return "ended"
 
         ins = await self.session.execute(
@@ -766,7 +766,7 @@ class CrmRepository:
         sub = await self.get_listing_submission(listing_id, for_update=True)
         if sub is None:
             return
-        sub.sale_last_prompt_at = datetime.now(timezone.utc)
+        sub.sale_last_prompt_at = datetime.now(UTC)
         if sub.sale_status == "feedback_pending":
             # Yangi so'rov tugmalari ishlashi uchun (try_set_sale_* «open» kutadi).
             sub.sale_status = "open"

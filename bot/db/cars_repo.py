@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select
@@ -36,7 +36,7 @@ EDITABLE_FIELDS = frozenset(PARSED_FIELDS) | {"purchase_price_usd", "expenses_us
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # Bir xil mashina, turli nom: Gentra — Lacetti'ning yangi nomi (video ovozida ham, AI ham ikkalasini aytadi)

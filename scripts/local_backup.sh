@@ -1,26 +1,26 @@
 #!/bin/bash
 # =============================================================================
 # Real Avto — Local backup pull script (Mac/development machine)
-# Serverdan oxirgi backup ni yuklab oladi.
-# Har 6 soatda ishga tushirish uchun launchd bilan ishlatiladi.
+# Downloads the latest backup from the server.
+# Scheduled every 6 hours with launchd.
 # =============================================================================
 
 set -euo pipefail
 
-# --- Konfiguratsiya ---
+# --- Configuration ---
 SERVER_IP="167.172.80.246"
 SERVER_USER="root"
 SERVER_PASS="mirR@2007aziz"
 SERVER_BACKUP_DIR="/opt/backups/real_avto"
 LOCAL_BACKUP_DIR="$HOME/Desktop/RealAvto_Backups"
-RETAIN_COUNT=30  # Kompyuterda 7.5 kun saqlash
+RETAIN_COUNT=30  # keep 7.5 days locally
 
-# --- Direktoriya yaratish ---
+# --- Create the directory ---
 mkdir -p "$LOCAL_BACKUP_DIR"
 
-echo "[$(date)] Serverdan backup yuklanmoqda..."
+echo "[$(date)] Downloading backup from the server..."
 
-# Oxirgi backup fayl nomini aniqlash
+# Find the latest backup file name
 LATEST_FILE=$(sshpass -p "$SERVER_PASS" ssh \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
@@ -28,14 +28,14 @@ LATEST_FILE=$(sshpass -p "$SERVER_PASS" ssh \
     "ls -1t ${SERVER_BACKUP_DIR}/real_avto_*.sql.gz 2>/dev/null | head -1")
 
 if [ -z "$LATEST_FILE" ]; then
-    echo "[$(date)] XATOLIK: Serverda backup topilmadi!"
+    echo "[$(date)] ERROR: no backup found on the server!"
     exit 1
 fi
 
 FILENAME=$(basename "$LATEST_FILE")
-echo "[$(date)] Topildi: $FILENAME"
+echo "[$(date)] Found: $FILENAME"
 
-# Yuklab olish
+# Download
 sshpass -p "$SERVER_PASS" scp \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
@@ -43,12 +43,12 @@ sshpass -p "$SERVER_PASS" scp \
     "${LOCAL_BACKUP_DIR}/${FILENAME}"
 
 FILE_SIZE=$(du -h "${LOCAL_BACKUP_DIR}/${FILENAME}" | cut -f1)
-echo "[$(date)] Yuklab olindi: ${LOCAL_BACKUP_DIR}/${FILENAME} ($FILE_SIZE)"
+echo "[$(date)] Downloaded: ${LOCAL_BACKUP_DIR}/${FILENAME} ($FILE_SIZE)"
 
-# Eskiragan local backuplarni o'chirish
+# Remove old local backups
 ls -1t "$LOCAL_BACKUP_DIR"/real_avto_*.sql.gz 2>/dev/null | tail -n +$((RETAIN_COUNT + 1)) | while read -r f; do
-    echo "[$(date)] Local eskiragan backup o'chirilmoqda: $(basename "$f")"
+    echo "[$(date)] Removing old local backup: $(basename "$f")"
     rm -f "$f"
 done
 
-echo "[$(date)] Jarayon yakunlandi."
+echo "[$(date)] Done."

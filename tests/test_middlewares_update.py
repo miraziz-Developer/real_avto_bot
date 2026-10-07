@@ -1,6 +1,6 @@
 """Middlewarelar `dp.update.middleware` sifatida (Update obyekti bilan) to'g'ri ishlashi."""
 
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from unittest.mock import AsyncMock
 
 import pytest
@@ -21,7 +21,7 @@ def clear_bucket():
 def _msg_update(uid: int = 42, chat_type: str = "private") -> Update:
     msg = Message(
         message_id=1,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=Chat(id=uid if chat_type == "private" else -100500, type=chat_type),
         from_user=User(id=uid, is_bot=False, first_name="T"),
         text="salom",

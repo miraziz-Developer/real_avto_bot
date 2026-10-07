@@ -1,4 +1,3 @@
-import html
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -6,10 +5,7 @@ from aiogram.types import CallbackQuery
 
 from bot.config import settings
 from bot.db.repositories import UserRepository
-from bot.handlers.helpers import edit_or_answer
-from bot.handlers.render import invite_text, present_root_menu, present_user_state
-from bot.keyboards import back_home_keyboard, main_menu_keyboard
-from bot.services.leaderboard import LeaderboardService
+from bot.handlers.render import present_root_menu, present_user_state
 from bot.services.subscription import SubscriptionService
 from bot.utils import messages as msg
 
