@@ -79,7 +79,9 @@ Every listing posted to the main channel is written to the `cars` table. The sal
 - **Stale cars:** a car on sale for more than `CAR_STALE_DAYS` (7) days triggers an "is it still for sale?" prompt to admins, sent during working hours.
 - **Approved bot listings** are added to the database as well.
 
-**Admin commands:** `/statistika [days]` · `/sotuvda` · `/tekshiruv` · `/mashina ID` · `/sotildi ID [price]` · `/umumiy` · `/navbat`
+**Admin commands:** `/statistika [days]` · `/sotuvda` · `/tekshiruv` · `/mashina ID` · `/sotildi ID [price]` · `/qayta ID` · `/umumiy` · `/navbat`
+
+`/qayta ID` re-transcribes a car's videos with the current AI and replaces the facts taken from speech (fields an admin fixed by hand are kept). Use it when a car was created while AI misheard the audio, e.g. before Gemini was configured.
 
 On a car card, **✏️ Edit** accepts: `narx 9800`, `yil 2021`, `probeg 76000`, and for cars the dealership bought itself `xarid 8000`, `xarajat 300`.
 

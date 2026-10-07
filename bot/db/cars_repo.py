@@ -80,6 +80,47 @@ class CarRepository:
     async def add_event(self, car: Car, kind: str, data: dict | None = None) -> None:
         await self._event(car, kind, data)
 
+    async def admin_edited_fields(self, car: Car) -> set[str]:
+        """Admin qo'lda tuzatgan maydonlar (actor bilan «edited»/«price_changed» hodisalari)."""
+        rows = await self.session.execute(
+            select(CarEvent.kind, CarEvent.data).where(
+                CarEvent.car_id == car.id,
+                CarEvent.actor_telegram_id.is_not(None),
+                CarEvent.kind.in_(("edited", "price_changed")),
+            )
+        )
+        fields: set[str] = set()
+        for kind, data in rows:
+            if kind == "price_changed":
+                fields.add("price_usd")
+            elif isinstance(data, dict):
+                fields.update(data)
+        return fields
+
+    async def reapply_parsed(self, car: Car, parsed: ParsedCar, *, raw_text: str) -> dict[str, Any]:
+        """Qayta tahlil: avtomatik olingan maydonlarni yangi natija bilan almashtiradi.
+
+        Admin qo'lda tuzatgan maydonlarga tegilmaydi. Yangi natijada yo'q qiymat (masalan noto'g'ri eshitilgan
+        «avtomat») tozalanadi. Holat o'zgarmaydi — tekshiruvdagi mashina admin tasdig'ini kutadi.
+        """
+        keep = await self.admin_edited_fields(car)
+        changes: dict[str, Any] = {}
+        for f in PARSED_FIELDS:
+            if f in keep:
+                continue
+            new = getattr(parsed, f)
+            new = None if new == "" else new
+            old = getattr(car, f)
+            if old != new and not (f in ("brand", "model") and new is None):
+                changes[f] = {"old": old, "new": new}
+                setattr(car, f, new)
+        car.raw_text = raw_text
+        if parsed.confidence is not None:
+            car.ai_confidence = parsed.confidence
+        if changes:
+            await self._event(car, "reanalyzed", changes)
+        return changes
+
     async def remember_thread(
         self, *, group_chat_id: int, thread_message_id: int, channel_chat_id: int, channel_message_id: int
     ) -> None:

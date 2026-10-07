@@ -1040,3 +1040,53 @@ async def test_crafted_deep_links_do_not_crash(env):
         await dp.feed_update(bot, _text_update(CUSTOMER_ID, f"/start {payload}"))
     texts = [m.text or "" for m in session.sent(SendMessage, CUSTOMER_ID)]
     assert texts and not any("Texnik xato" in t for t in texts)
+
+
+async def test_admin_reanalyze_replaces_misheard_speech_facts(env, monkeypatch):
+    import io
+    from types import SimpleNamespace
+
+    from bot.handlers import car_admin
+    from bot.services.car_parser import parse_car_text
+
+    dp, bot, session, factory, _ = env
+    async with factory() as s:
+        repo = CarRepository(s)
+        car = await repo.create_from_parsed(
+            ParsedCar(brand="Chevrolet", model="Matiz", year=2017, transmission="avtomat", color="qizil",
+                      paint_status="varligin", price_usd=3000),
+            source=CarSource.CHANNEL,
+            raw_text="MATIZ BEST 2017\n[Ovoz]: yala yala sudyoda",
+            video_file_ids=["vn:F1"],
+        )
+        await repo.update_fields(car, {"price_usd": 2800}, actor=ADMIN_ID)  # admin's manual fix is kept
+        await s.commit()
+        car_id = car.id
+
+    class FakeAI:
+        enabled = True
+        provider = "gemini"
+
+        async def transcribe(self, data, *, filename, mime_type=None):
+            assert data == b"video-bytes"
+            return "Matiz Best 2017, oq rang, metan, narxi 3000 dollar"
+
+    async def fake_extract(text, *, ai=None, usd_rate_uzs):
+        return parse_car_text(text, usd_rate_uzs=usd_rate_uzs)
+
+    monkeypatch.setattr(car_admin, "get_ai", lambda: FakeAI())
+    monkeypatch.setattr(car_admin, "extract_car", fake_extract)
+    monkeypatch.setattr(bot, "get_file", lambda fid: _awaitable(SimpleNamespace(file_path=f"p/{fid}")), raising=False)
+    monkeypatch.setattr(bot, "download_file", lambda path: _awaitable(io.BytesIO(b"video-bytes")), raising=False)
+
+    await dp.feed_update(bot, Update(update_id=next(_ids), message=_msg(ADMIN_ID, f"/qayta {car_id}")))
+    async with factory() as s:
+        car = await CarRepository(s).get(car_id)
+        assert car.transmission is None and car.paint_status is None  # misheard values cleared
+        assert car.fuel == "metan" and car.price_usd == 2800  # new speech facts; admin price kept
+        assert "[Ovoz]: Matiz Best" in car.raw_text and "yala" not in car.raw_text
+    assert "Qayta tahlil qilindi" in session.sent(SendMessage, ADMIN_ID)[-1].text
+
+
+async def _awaitable(value):
+    return value

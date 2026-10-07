@@ -20,10 +20,12 @@ from aiogram.types import (
     WebAppInfo,
 )
 
+from bot.ai import AIError, get_ai
 from bot.config import is_admin, settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import Car, CarStatus
 from bot.db.repositories import CrmRepository
+from bot.handlers.channel_watch import VIDEO_NOTE_PREFIX
 from bot.services.car_cards import (
     STATUS_LABELS,
     car_admin_kb,
@@ -31,6 +33,7 @@ from bot.services.car_cards import (
     car_card_html,
     car_channel_caption,
 )
+from bot.services.car_extract import extract_car
 from bot.services.car_parser import REQUIRED_FIELDS, parse_admin_edit, parse_price_usd
 from bot.services.wishlist_notify import notify_wishlist_matches_car
 from bot.utils.numbers import parse_db_id, parse_int_in_range
@@ -248,6 +251,65 @@ async def cmd_sold(message: Message, command: CommandObject, cars: CarRepository
     await cars.session.commit()
     await message.answer(
         car_card_html(car, header="🔴 Sotildi deb belgilandi"),
+        parse_mode=ParseMode.HTML,
+        reply_markup=car_admin_kb(car),
+        disable_web_page_preview=True,
+    )
+
+
+REANALYZE_MAX_VIDEOS = 4
+_SPEECH_PREFIXES = ("[Ovoz]", "[Videoda", "[Video]")
+
+
+@router.message(Command("qayta"))
+async def cmd_reanalyze(message: Message, command: CommandObject, cars: CarRepository) -> None:
+    """Mashina videolarini hozirgi AI bilan qayta tinglash va ma'lumotni yangilash.
+
+    Masalan, mashina Groq Whisper davrida (o'zbekchani yomon taniydi) yaratilgan bo'lsa yoki AI xato eshitgan bo'lsa.
+    """
+    if message.from_user is None or not is_admin(message.from_user.id):
+        return
+    car_id = parse_db_id((command.args or "").strip())
+    car = await cars.get(car_id) if car_id is not None else None
+    if car is None:
+        await message.answer("Foydalanish: <code>/qayta 12</code> — mashina videolarini qayta tahlil qilish", parse_mode=ParseMode.HTML)
+        return
+    ai = get_ai()
+    if not ai.enabled:
+        await message.answer("AI o'chiq — .env ga GEMINI_API_KEY qo'ying.")
+        return
+    if not car.video_file_ids:
+        await message.answer("Bu mashinada video/ovoz yo'q — qayta tahlil qilinadigan narsa yo'q.")
+        return
+    await message.answer(f"⏳ #{car.id} videolari qayta tinglanmoqda…")
+    text_lines = [ln for ln in (car.raw_text or "").splitlines() if not ln.lstrip().startswith(_SPEECH_PREFIXES)]
+    heard: list[str] = []
+    for fid in car.video_file_ids[:REANALYZE_MAX_VIDEOS]:
+        real_id = fid.removeprefix(VIDEO_NOTE_PREFIX)
+        try:
+            f = await message.bot.get_file(real_id)
+            buf = await message.bot.download_file(f.file_path)
+            text = await ai.transcribe(buf.read() if buf else b"", filename="video.mp4", mime_type="video/mp4")
+        except (AIError, TelegramBadRequest) as e:
+            logger.warning("Qayta tahlil: #%s video o'qilmadi: %s", car.id, e)
+            continue
+        if text:
+            heard.append(text)
+    if not heard:
+        await message.answer("Videolardan hech narsa eshitilmadi (fayl juda katta yoki nutq yo'q).")
+        return
+    full = "\n".join([*text_lines, *[f"[Ovoz]: {t}" for t in heard]]).strip()
+    parsed = await extract_car(full, ai=ai, usd_rate_uzs=settings.usd_rate_uzs)
+    changes = await cars.reapply_parsed(car, parsed, raw_text=full)
+    await cars.session.commit()
+    who = "Gemini" if ai.provider == "gemini" else "Groq Whisper"
+    summary = ", ".join(sorted(changes)) if changes else "o'zgarish yo'q"
+    await message.answer(
+        car_card_html(
+            car,
+            header=f"🔄 <b>Qayta tahlil qilindi</b> ({who}) — {html.escape(summary)}\n"
+            f"🎙 <i>«{html.escape(' '.join(heard)[:300])}»</i>",
+        ),
         parse_mode=ParseMode.HTML,
         reply_markup=car_admin_kb(car),
         disable_web_page_preview=True,
