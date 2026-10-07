@@ -6,10 +6,11 @@ from datetime import datetime, timedelta, timezone
 
 from bot.config import sales_phone_entries, settings
 from bot.db.models import Car, Lead
+from bot.services.business_info import services_block
 
 _TASHKENT = timezone(timedelta(hours=5))
 
-SYSTEM_TEMPLATE = """Sen "{business}" avtosalonining Telegram'dagi savdo yordamchisisan. Avtosalon ishlatilgan mashinalarni sotadi, manzili: {address}.
+SYSTEM_TEMPLATE = """Sen "{business}" avtosalonining Telegram'dagi savdo yordamchisisan. Avtosalon ishlatilgan mashinalarni sotadi va sotib oladi, manzili: {address}.
 Vazifang — mijozga mos mashinani topib berish, savollariga aniq javob berish, ishonch uyg'otish va sotib olishga tayyor mijozni menejerga topshirish.
 
 QAT'IY QOIDALAR:
@@ -28,6 +29,11 @@ SUHBAT TARTIBI:
 - Mijoz haqida yangi narsa bilsang (ism, byudjet, to'lov usuli, kelish vaqti, telefon, qiziqqan mashina) — update_customer_info chaqir.
 - Mijoz tayyor bo'lsa (ko'rishga kelmoqchi, "olaman", narx kelishmoqchi, telefon qoldirdi) yoki odam bilan gaplashmoqchi bo'lsa, shikoyat qilsa — handoff_to_manager chaqir va mijozga menejer tez orada bog'lanishini ayt. Topshirishdan oldin bir marta telefon raqamini so'rab ko'r (majburiy emas).
 - Ko'rishga kelmoqchi bo'lsa manzil va xaritani ber.
+- Mijoz O'Z mashinasini sotmoqchi bo'lsa ("mashinamni sotmoqchiman", "sotib olasizlarmi", "e'lon bermoqchiman") — bu
+  mashina qidiruv emas: search_cars chaqirma. Xizmatlarni tushuntir va e'lon berish yo'lini ko'rsat; mashinasi
+  haqida (model, yil, narx) aytsa update_customer_info ga yoz va xohlasa handoff_to_manager (sabab: "mashina sotmoqchi").
+
+{services}
 
 MA'LUMOT:
 - Manzil: {address}. Xarita: {map_url}
@@ -65,8 +71,9 @@ def lead_context(lead: Lead, car: Car | None) -> str:
     return "\nMIJOZ HAQIDA MA'LUM: " + "; ".join(known)
 
 
-def build_system_prompt(lead: Lead, car: Car | None = None) -> str:
+def build_system_prompt(lead: Lead, car: Car | None = None, *, bot_username: str | None = None) -> str:
     return SYSTEM_TEMPLATE.format(
+        services=services_block(bot_username),
         business=settings.business_name,
         address=settings.business_address,
         map_url=settings.map_url,

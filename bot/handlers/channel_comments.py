@@ -25,6 +25,7 @@ from bot.config import is_admin, settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import Car, CarStatus
 from bot.handlers.channel_watch import channel_post_by_content, is_main_channel
+from bot.services.business_info import sell_link
 from bot.services.car_cards import notify_admins_text
 from bot.services.car_parser import detect_brand_model, normalize_text
 from bot.services.comment_ai import CommentDecision, decide_comment_reply, public_post_text
@@ -313,6 +314,7 @@ async def _ai_handle(
             post_text=post_text,
             replied_text=replied_text,
             general_inventory=general,
+            bot_username=bot_username,
         )
     except AIError as e:
         logger.warning("Komment AI ishlamadi, shablon rejimi: %s", e)
@@ -324,9 +326,15 @@ async def _ai_handle(
     )
 
     if decision.should_reply:
-        target = car or (other[0] if other and not general else None)
-        deep = f"https://t.me/{bot_username}?start=car_{target.id}" if target else f"https://t.me/{bot_username}"
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🤖 Botda batafsil", url=deep)]])
+        if decision.category == "sell_car":
+            # Mashinasini sotmoqchi — to'g'ridan-to'g'ri e'lon berish oqimiga
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="📢 E'lon berish / sotish", url=sell_link(bot_username))]]
+            )
+        else:
+            target = car or (other[0] if other and not general else None)
+            deep = f"https://t.me/{bot_username}?start=car_{target.id}" if target else f"https://t.me/{bot_username}"
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🤖 Botda batafsil", url=deep)]])
         await message.reply(decision.reply, parse_mode=None, reply_markup=kb, disable_web_page_preview=True)
 
     if _from_admin(message):

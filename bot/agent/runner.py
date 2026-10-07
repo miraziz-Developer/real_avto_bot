@@ -38,7 +38,14 @@ def clean_reply(text: str) -> str:
 
 async def build_messages(ctx: AgentContext) -> list[dict]:
     car = await ctx.current_car()
-    messages: list[dict] = [{"role": "system", "content": build_system_prompt(ctx.lead, car)}]
+    bot_username = None
+    try:
+        bot_username = (await ctx.bot.me()).username
+    except Exception:  # tarmoq xatosi — havolasiz ham ishlaydi
+        logger.debug("Bot username olinmadi")
+    messages: list[dict] = [
+        {"role": "system", "content": build_system_prompt(ctx.lead, car, bot_username=bot_username)}
+    ]
     for m in await ctx.leads.history(ctx.lead):
         if m.role == "user":
             messages.append({"role": "user", "content": m.content})

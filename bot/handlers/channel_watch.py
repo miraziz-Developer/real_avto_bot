@@ -24,6 +24,7 @@ from bot.services.car_cards import notify_admins_text, send_car_card_to_admins
 from bot.services.car_extract import extract_car
 from bot.db.repositories import CrmRepository
 from bot.services.car_parser import (
+    ParsedCar,
     has_phone,
     is_reserved_text,
     is_sold_confirmation,
@@ -287,6 +288,21 @@ async def _apply_reply_to_car(
         car.photo_file_ids = [*car.photo_file_ids, *photos]
     if videos:
         car.video_file_ids = [*car.video_file_ids, *videos]
+    if changes.keys() & {"brand", "model", "year", "mileage_km", "price_usd"}:
+        # Avval faqat videodan (to'liq bo'lmagan) yaratilgan mashina endi to'ldi — bu qayta joylangan eski mashina
+        # bo'lib chiqsa, dublikat qoldirmaymiz
+        existing = await cars.find_repost_candidate(
+            ParsedCar(brand=car.brand, model=car.model, year=car.year, mileage_km=car.mileage_km, price_usd=car.price_usd),
+            exclude_id=car.id,
+        )
+        if existing is not None and existing.id < car.id:
+            await cars.merge_duplicate(car, existing)
+            logger.info("Mashina #%s qayta joylangan #%s bilan birlashtirildi", car.id, existing.id)
+            for chat_id, (ts, cid) in list(_recent_media_car.items()):
+                if cid == car.id:
+                    _recent_media_car[chat_id] = (ts, existing.id)
+            car = existing
+            header = f"♻️ <b>Qayta joylangan mashina</b> — mavjud <code>#{existing.id}</code> bilan birlashtirildi"
     await cars.session.commit()
     if changes or photos or videos:
         if transcripts and not text:

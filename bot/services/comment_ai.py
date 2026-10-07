@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone, UTC
 from bot.ai import AIClient, AIError
 from bot.config import sales_phone_entries, settings
 from bot.db.models import Car, CarStatus
+from bot.services.business_info import services_block
 from bot.services.car_parser import _PHONE_RE
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ _TASHKENT = timezone(timedelta(hours=5))
 REPLY_MAX_CHARS = 700
 _MD_RE = re.compile(r"(\*\*|__|^#{1,6}\s*|`)", re.MULTILINE)
 
-CATEGORIES = frozenset({"question", "buy_intent", "negative", "toxic", "spam", "praise", "chat", "other"})
+CATEGORIES = frozenset({"question", "buy_intent", "sell_car", "negative", "toxic", "spam", "praise", "chat", "other"})
 
 COMMENT_SYSTEM_PROMPT = """Sen "{business}" avtosalonining Telegram kanali kommentlari va muhokama guruhidagi yordamchisisan.
 Senga bitta foydalanuvchi xabari, (bo'lsa) u yozgan kanal posti va shu mashina haqidagi BAZA FAKTLARI keladi.
@@ -44,6 +45,9 @@ VAZIYATLAR:
   botda ko'rsatishimizni ayt.
 - Umumiy savol ("qanday mashinalar bor", "nima sotuvda", "10 ming dollargacha nima bor") → hozir_sotuvdagi_mashinalardan
   2–4 tasini qisqa sana (nomi, yili, narxi), to'liq ro'yxat botda ekanini ayt. Ro'yxat bo'lmasa — botda ko'rsatamiz de.
+- O'z mashinasini sotmoqchi ("mashinamni sotib olasizmi", "e'lon bermoqchiman", "vikup qilasizlarmi") → category=sell_car:
+  ha, sotib olamiz yoki e'lonini kanalga chiqaramiz — botdagi «E'lon berish» orqali yuborsin (tugma javob ostida
+  bo'ladi). Narx va'da qilma.
 - Xarid niyati ("olaman", "ko'rsam bo'ladimi", "kredit bormi", raqam so'rash) → qisqa javob + menejer bog'lanishini ayt; buy_intent=true.
 - Salbiy fikr (qimmat, aldov, yomon xizmat, mashina nuqsoni haqida) → himoyalanma, bahslashma, ayblama. Xushmuomala,
   hamdardlik bilan javob ber, faktni (bo'lsa) tinch tushuntir, muammoni botda yoki menejer bilan hal qilishni taklif qil.
@@ -53,9 +57,11 @@ VAZIYATLAR:
 - Mavzudan tashqari oddiy suhbat (salon/mashinalarga aloqasi yo'q) → ignore.
 
 JAVOB — faqat JSON:
-{{"action": "reply" | "ignore", "category": "question|buy_intent|negative|toxic|spam|praise|chat|other",
+{{"action": "reply" | "ignore", "category": "question|buy_intent|sell_car|negative|toxic|spam|praise|chat|other",
   "reply": "javob matni (action=reply bo'lsa)", "buy_intent": true|false, "notify_admin": true|false,
   "admin_note": "adminga 1 gap (notify_admin bo'lsa)"}}
+
+{services}
 
 SALON:
 - Manzil: {address}. Xarita: {map_url}
@@ -118,8 +124,9 @@ def public_post_text(raw_text: str | None) -> str:
     return "\n".join(lines).strip()
 
 
-def build_system_prompt(now: datetime | None = None) -> str:
+def build_system_prompt(now: datetime | None = None, *, bot_username: str | None = None) -> str:
     return COMMENT_SYSTEM_PROMPT.format(
+        services=services_block(bot_username),
         business=settings.business_name,
         address=settings.business_address,
         map_url=settings.map_url,
@@ -213,10 +220,11 @@ async def decide_comment_reply(
     post_text: str | None = None,
     replied_text: str | None = None,
     general_inventory: bool = False,
+    bot_username: str | None = None,
 ) -> CommentDecision:
     """AI qarori. AIError (kalit yo'q, chegara tugagan, tarmoq) — chaqiruvchiga o'tadi."""
     data = await ai.chat_json(
-        build_system_prompt(),
+        build_system_prompt(bot_username=bot_username),
         build_user_payload(
             text=text,
             author=author,

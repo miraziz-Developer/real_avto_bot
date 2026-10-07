@@ -257,7 +257,12 @@ def detect_brand_model(text: str) -> tuple[str | None, str | None]:
         model = None
         if tok and tok.start() - end <= 2:
             cand = tok.group(0)
-            if not re.fullmatch(r"\d{4,}", cand):  # yil yoki narx emas (BMW 318, Peugeot 406 — model)
+            known = {m.split()[0].lower(): m for m in BRAND_MODELS.get(brand, [])}
+            # Faqat model ko'rinishidagi so'z: raqamli (BMW 318, JAC J7, CX-5) yoki katalogdagi model.
+            # Oddiy so'z model emas: «BMW nasib bo'lsa», «BMW avtomobili»
+            if cand.lower() in known:
+                model = known[cand.lower()]
+            elif re.search(r"\d", cand) and not re.fullmatch(r"\d{4,}", cand):  # yil yoki narx emas
                 model = cand.upper() if len(cand) <= 3 else cand.capitalize()
         return brand, model
     return None, None

@@ -218,7 +218,9 @@ class CarRepository:
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
-    async def find_repost_candidate(self, parsed: ParsedCar, *, within_days: int = 90) -> Car | None:
+    async def find_repost_candidate(
+        self, parsed: ParsedCar, *, within_days: int = 90, exclude_id: int | None = None
+    ) -> Car | None:
         """Kanalga qayta tashlangan (yoki bot e'loni qo'lda qayta joylangan) o'sha mashina.
 
         Moslik: marka + model + yil bir xil VA probeg bir xil (probeg yo'q bo'lsa — narx bir xil).
@@ -240,8 +242,34 @@ class CarRepository:
             conds.append(and_(Car.mileage_km.is_(None), Car.price_usd == parsed.price_usd))
         else:
             return None
+        if exclude_id is not None:
+            conds.append(Car.id != exclude_id)
         stmt = select(Car).where(*conds).order_by(Car.id.desc()).limit(1)
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def merge_duplicate(self, dup: Car, into: Car) -> None:
+        """Endi to'lgan (masalan avval faqat videodan yaratilgan) dublikatni mavjud mashinaga qo'shib, o'chiradi.
+
+        Xabarlar, rasm/videolar, matnlar va izoh ko'chadi; mavjud mashinada yo'q maydonlar dublikatdan olinadi.
+        """
+        into.channel_message_ids = [
+            *into.channel_message_ids, *(m for m in dup.channel_message_ids if m not in into.channel_message_ids)
+        ]
+        into.photo_file_ids = [*into.photo_file_ids, *(f for f in dup.photo_file_ids if f not in into.photo_file_ids)]
+        into.video_file_ids = [*into.video_file_ids, *(f for f in dup.video_file_ids if f not in into.video_file_ids)]
+        into.post_texts = {**(dup.post_texts or {}), **(into.post_texts or {})}
+        into.raw_text = f"{into.raw_text}\n{dup.raw_text}".strip()
+        for f in PARSED_FIELDS:
+            if f == "notes":
+                if dup.notes:
+                    into.notes = merged_notes(into.notes, dup.notes)
+            elif getattr(into, f) in (None, "") and getattr(dup, f) not in (None, ""):
+                setattr(into, f, getattr(dup, f))
+        if into.channel_chat_id is None:
+            into.channel_chat_id = dup.channel_chat_id
+        await self._event(into, "reposted", {"merged_car": dup.id, "message_ids": list(dup.channel_message_ids)})
+        await self.session.delete(dup)
+        await self.session.flush()
 
     async def find_sold_candidates(self, parsed: ParsedCar, *, limit: int = 5) -> list[Car]:
         """«Sotildi»/tabrik posti (ko'pincha faqat model aytilgan) qaysi sotuvdagi mashinaga tegishli bo'lishi mumkin.

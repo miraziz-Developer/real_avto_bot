@@ -161,6 +161,7 @@ def watch(monkeypatch):
     channel_watch._orphan_media.clear()  # testlar orasida «egasiz media» buferi aralashmasin
     channel_watch._recent_media_car.clear()
     channel_watch._transcript_cache.clear()
+    car_cards._recent_cards.clear()  # car ids restart in every test — don't edit another test's card
     return channel_watch
 
 
@@ -986,3 +987,24 @@ def test_parse_post_ref():
     assert parse_post_ref("https://t.me/c/123456/789?single") == 789
     assert parse_post_ref("4567") == 4567
     assert parse_post_ref("salom") is None
+
+
+async def test_reposted_video_and_description_merge_into_existing_car(session_factory, watch, monkeypatch):
+    """Repost: first a video without facts (new review car), then its description makes it a known car."""
+    speech = {1301: "Spark 2012, mexanika, orqa salonlari, kalonkalar"}  # no mileage/price yet → separate review car
+
+    async def fake_transcribe(bot, messages):
+        return [speech[m.message_id] for m in messages if m.message_id in speech]
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(1300, text_="Spark 2012, probeg 406 000 km, narxi 3400$")])
+    watch._recent_media_car.clear()
+    await watch.process_channel_post(bot, [_vnote(1301, "rep")])  # repost starts with a vague video
+    await watch.process_channel_post(bot, [_channel_msg(1302, text_="Spark 2012, probeg 406 000 km, narxi 3400$ 🔥")])
+    async with session_factory() as s:
+        rows = (await s.execute(select(Car))).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].channel_message_ids == [1300, 1301, 1302] and rows[0].video_file_ids == ["vn:rep"]
+        assert rows[0].transmission == "mexanika"  # facts heard in the repost video are kept
+    assert any("Qayta joylangan mashina" in t for _, _, t in bot.sent)

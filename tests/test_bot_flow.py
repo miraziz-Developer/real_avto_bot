@@ -1090,3 +1090,24 @@ async def test_admin_reanalyze_replaces_misheard_speech_facts(env, monkeypatch):
 
 async def _awaitable(value):
     return value
+
+
+async def test_comment_from_someone_selling_a_car_links_to_listing_flow(env, comment_ai):
+    dp, bot, session, factory, _ = env
+    fake = comment_ai(_FakeCommentAI([
+        {"action": "reply", "category": "sell_car", "reply": "Ha, sotib olamiz yoki e'lon qilib beramiz."},
+    ]))
+    _, thread = await _comment_setup(factory, dp, bot)
+    await dp.feed_update(bot, _group_msg(9130, "mashina sotib olasizlarmi?", thread=thread))
+    assert "XIZMATLARIMIZ" in fake.calls[0][0] and "SOTIB OLAMIZ" in fake.calls[0][0]
+    sent = session.sent(SendMessage, GROUP_ID)[-1]
+    assert sent.reply_markup.inline_keyboard[0][0].url.endswith("?start=sell")
+
+
+def test_fallback_understands_people_selling_their_car():
+    from bot.agent.fallback import is_sell_intent, sell_reply
+
+    assert is_sell_intent("Nexiamni sotmoqchiman, olasizlarmi?") and is_sell_intent("Купите мою машину")
+    assert not is_sell_intent("Cobalt bormi?") and not is_sell_intent("mashina olmoqchiman")
+    text, kb = sell_reply()
+    assert "sotib olamiz" in text and kb.inline_keyboard[0][0].callback_data == "ad_start"

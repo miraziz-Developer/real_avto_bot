@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.agent.tools import AgentContext
 from bot.config import settings
-from bot.services.car_parser import parse_car_text
+from bot.services.car_parser import normalize_text, parse_car_text
 from bot.utils.currency import fmt_price
 
 HANDOFF_CB = "agent:handoff"
@@ -32,7 +34,35 @@ async def fallback_reply(ctx: AgentContext, text: str) -> tuple[str, InlineKeybo
     return reply, kb
 
 
+# Mijoz o'z mashinasini sotmoqchi (vikup / e'lon) — bu mashina qidiruv emas
+_SELL_INTENT_RE = re.compile(
+    r"sotmoqchi|sotaman|sotib\s+olasiz|sotib\s+olasizlar|olasizlarmi|vikup|выкуп|e'?lon\s+ber|elon\s+ber|"
+    r"продать|продаю|купите|объявлени",
+    re.IGNORECASE,
+)
+
+
+def is_sell_intent(text: str) -> bool:
+    return bool(_SELL_INTENT_RE.search(normalize_text(text)))
+
+
+def sell_reply() -> tuple[str, InlineKeyboardMarkup]:
+    fee = "pullik" if settings.listing_payment_enabled else "bepul"
+    return (
+        "Ha, mashinangizni sotib olamiz yoki e'loningizni kanalimizga chiqaramiz (e'lon berish " + fee + "). "
+        "Mashina ma'lumoti va rasmlarini yuboring — jamoa ko'rib chiqib, narx taklif qiladi yoki e'lonni chiqaradi 👇",
+        InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📢 E'lon berish / sotish", callback_data="ad_start")],
+                [InlineKeyboardButton(text="📞 Menejer bilan bog'lanish", callback_data=HANDOFF_CB)],
+            ]
+        ),
+    )
+
+
 async def _fallback_reply(ctx: AgentContext, text: str) -> tuple[str, InlineKeyboardMarkup]:
+    if is_sell_intent(text):
+        return sell_reply()
     p = parse_car_text(text, usd_rate_uzs=settings.usd_rate_uzs)
     if not (p.brand or p.model or p.price_usd):
         return (
