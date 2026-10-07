@@ -294,6 +294,21 @@ async def _set_catalog_menu_button(bot: Bot) -> None:
                 logger.warning("Admin %s uchun panel tugmasi o'rnatilmadi: %s", aid, e)
 
 
+async def _warn_if_weak_speech_ai(bot: Bot) -> None:
+    """Ovoz/dumaloq video Groq Whisper'da — o'zbekchani ko'pincha boshqa til deb taniydi. Adminlar bilsin."""
+    ai = get_ai()
+    if not ai.enabled:
+        await notify_admins_text(bot, "⚠️ AI o'chiq: ovoz va videolar tinglanmaydi. .env ga GEMINI_API_KEY qo'ying.")
+    elif ai.provider != "gemini":
+        logger.warning("Ovoz/video Groq Whisper bilan — o'zbekcha sifati past. GEMINI_API_KEY tavsiya etiladi")
+        await notify_admins_text(
+            bot,
+            "⚠️ Ovoz va dumaloq videolar <b>Groq Whisper</b> bilan eshitilyapti — o'zbekchani yomon taniydi "
+            "(ko'pincha boshqa til deb o'ylaydi). .env ga <code>GEMINI_API_KEY</code> qo'yib, botni qayta "
+            "ishga tushiring (AI_PROVIDER=auto yoki gemini).",
+        )
+
+
 async def _run() -> None:
     _configure_logging()
 
@@ -314,6 +329,7 @@ async def _run() -> None:
     get_ai()  # provayder/model logga yoziladi
     get_budget().set_alert(lambda text: notify_admins_text(bot, text))
     await _set_catalog_menu_button(bot)
+    await _warn_if_weak_speech_ai(bot)
 
     storage = await _fsm_storage()
     dp = Dispatcher(storage=storage)

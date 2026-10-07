@@ -699,3 +699,17 @@ async def test_edit_of_old_unknown_post_with_bron_is_reserved(session_factory, w
     async with session_factory() as s:
         assert (await s.execute(select(Car))).scalar_one().status == CarStatus.RESERVED
     assert "Eski post tahrirlandi" in bot.sent[-1][2]
+
+
+async def test_sold_video_naming_lacetti_marks_gentra(session_factory, watch, monkeypatch):
+    async def fake_transcribe(bot, messages):
+        return ["Ha, sotildi, baraka bo'libdi. [Videoda ko'rinadi]: oq Chevrolet Lacetti"] if messages[0].video_note else []
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(960, text_="Gentra 2018, probeg 120 000 km, narxi 11800$")])
+    await watch.process_channel_post(bot, [_vnote(961, "lac")])
+    async with session_factory() as s:
+        rows = (await s.execute(select(Car))).scalars().all()
+        assert len(rows) == 1 and rows[0].status == CarStatus.SOLD
+    assert "Eshitilgani" in bot.sent[-1][2]

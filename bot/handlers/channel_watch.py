@@ -225,7 +225,7 @@ async def _apply_reply_to_car(
     if changes or photos or videos:
         if transcripts and not text:
             heard = html.escape(" ".join(transcripts)[:300])
-            header += f"\n🎙 Eshitilgani: <i>«{heard}»</i>"
+            header += f"\n🎙 Eshitilgani ({_stt_name()}): <i>«{heard}»</i>"
         await send_car_card_to_admins(bot, car, header=header)
     if not was_active and car.status == CarStatus.ACTIVE:
         await notify_wishlist_matches_car(bot, CrmRepository(cars.session), cars, car)
@@ -244,7 +244,12 @@ def _post_link(chat: Chat, message_id: int) -> str | None:
 
 
 def _heard_line(heard: list[str]) -> str:
-    return f"\n🎙 Eshitilgani: <i>«{html.escape(' '.join(heard)[:300])}»</i>" if heard else ""
+    return f"\n🎙 Eshitilgani ({_stt_name()}): <i>«{html.escape(' '.join(heard)[:300])}»</i>" if heard else ""
+
+
+def _stt_name() -> str:
+    """Kim eshitdi — admin transkripsiya sifatini baholay olsin (Groq Whisper o'zbekchani yomon taniydi)."""
+    return "Gemini" if get_ai().provider == "gemini" else "Groq Whisper — o'zbekchani yomon taniydi, GEMINI_API_KEY qo'ying"
 
 
 async def _car_for_old_post(bot: Bot, cars: CarRepository, post: Message):
@@ -503,7 +508,9 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             if recent_car is not None:
                 # Tavsif o'zidan oldingi (gapirilgan) videodan yaratilgan mashinaga tegishli
                 _orphan_media.pop(chat_id, None)
-                await _apply_reply_to_car(bot, cars, recent_car, messages, text)
+                await _apply_reply_to_car(
+                    bot, cars, recent_car, messages, text, header="📝 <b>Videodan keyingi tavsif posti qo'shildi</b>"
+                )
                 return
             orphan = _take_orphan_media(chat_id)
             if orphan:
@@ -573,7 +580,7 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             heard = html.escape(" ".join(transcripts)[:300])
             header = (
                 "🎙 <b>Ma'lumot videodagi ovozdan olindi</b> — to'g'riligini tekshirib tasdiqlang.\n"
-                f"Eshitilgani: <i>«{heard}»</i>"
+                f"Eshitilgani ({_stt_name()}): <i>«{heard}»</i>"
             )
         elif car.status == CarStatus.REVIEW:
             header = "🆕 <b>Kanalda yangi post</b> — ma'lumot to'liq emas, tekshirib bering"

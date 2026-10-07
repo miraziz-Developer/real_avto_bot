@@ -418,7 +418,10 @@ _COLOR_RE = re.compile(
     r"(?<![\w'])(" + "|".join(re.escape(c) for c in sorted(_COLORS, key=len, reverse=True)) + r")(?![\w'])",
     re.IGNORECASE,
 )
-_PAINT_RE = re.compile(r"(?:kraskasi|kraska|краскаси|краска|покраска)\s*[:\-–]?\s*([^\n,;]{2,80})", re.IGNORECASE)
+# So'z chegarasi bilan: «kraskalari bor ekan» → «lari bor ekan» bo'lib qolmasin
+_PAINT_RE = re.compile(
+    r"(?<![\w])(?:kraskasi|kraska|краскаси|краска|покраска)(?![\w'])\s*[:\-–]?\s*([^\n,;]{2,80})", re.IGNORECASE
+)
 _LOCATION_RE = re.compile(r"(?:📍|manzil|lokatsiya|адрес)\s*[:\-–]?\s*([^\n]{2,80})", re.IGNORECASE)
 # 📍 ba'zi postlarda boshqa maydonlar oldidan ham qo'yiladi («📍 probeg: 76.000km») — bunday qatorlar lokatsiya emas
 _NOT_LOCATION_RE = re.compile(r"probeg|пробег|yili|narx|цена|\d\s*(?:km|км)|\$", re.IGNORECASE)

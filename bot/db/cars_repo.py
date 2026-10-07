@@ -39,6 +39,13 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Bir xil mashina, turli nom: Gentra — Lacetti'ning yangi nomi (video ovozida ham, AI ham ikkalasini aytadi)
+SAME_CAR_MODELS: dict[str, tuple[str, ...]] = {
+    "gentra": ("Gentra", "Lacetti"),
+    "lacetti": ("Lacetti", "Gentra"),
+}
+
+
 class CarRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -136,9 +143,11 @@ class CarRepository:
         """
         if not parsed.model:
             return []
+        base = parsed.model.split()[0]
+        names = SAME_CAR_MODELS.get(base.lower(), (base,))
         conds = [
             Car.status.in_((CarStatus.ACTIVE, CarStatus.RESERVED, CarStatus.REVIEW)),
-            Car.model.ilike(f"%{parsed.model.split()[0]}%"),
+            or_(*[Car.model.ilike(f"%{n}%") for n in names]),
         ]
         if parsed.year:
             conds.append(Car.year == parsed.year)
