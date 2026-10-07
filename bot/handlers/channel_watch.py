@@ -247,7 +247,7 @@ async def _apply_reply_to_car(
             parsed.brand, parsed.model = car.brand, car.model
         # Faqat ovoz (matnsiz video) — tekshiruvdagi mashinani o'zicha sotuvga chiqarmaydi
         changes = await cars.apply_parsed(
-            car, parsed, raw_text=f"{car.raw_text}\n{full}".strip(), allow_activate=bool(text)
+            car, parsed, raw_text=f"{car.raw_text}\n{full}".strip(), allow_activate=bool(text), merge_notes=True
         )
     # Yangi list beramiz — ARRAY ustunidagi o'zgarish saqlanishi uchun
     new_ids = [m.message_id for m in messages if m.message_id not in car.channel_message_ids]
@@ -640,7 +640,7 @@ async def _merge_repost(
 ) -> None:
     was_active = car.status == CarStatus.ACTIVE
     changes = await cars.apply_parsed(
-        car, parsed, raw_text=f"{car.raw_text}\n{full_text}".strip(), allow_activate=allow_activate
+        car, parsed, raw_text=f"{car.raw_text}\n{full_text}".strip(), allow_activate=allow_activate, merge_notes=True
     )
     new_ids = [m.message_id for m in messages if m.message_id not in car.channel_message_ids]
     car.channel_message_ids = [*car.channel_message_ids, *new_ids]

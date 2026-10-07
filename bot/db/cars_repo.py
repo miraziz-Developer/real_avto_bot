@@ -46,6 +46,20 @@ SAME_CAR_MODELS: dict[str, tuple[str, ...]] = {
 }
 
 
+NOTES_MAX_CHARS = 600
+
+
+def merged_notes(old: str | None, new: str) -> str:
+    """Avvalgi izohni saqlab, yangisini qo'shadi (takrorlanmasdan, uzunlik chegarasi bilan)."""
+    old = (old or "").strip()
+    new = new.strip()
+    if not old or old in new:
+        return new[:NOTES_MAX_CHARS]
+    if new in old:
+        return old
+    return f"{old.rstrip('. ')}. {new}"[:NOTES_MAX_CHARS]
+
+
 def same_car_model(a: str, b: str) -> bool:
     """«Gentra» va «Lacetti», «Matiz» va «Matiz Best» — bitta mashina."""
     x, y = a.split()[0].lower(), b.split()[0].lower()
@@ -236,14 +250,26 @@ class CarRepository:
         return car
 
     async def apply_parsed(
-        self, car: Car, parsed: ParsedCar, *, raw_text: str | None = None, allow_activate: bool = True
+        self,
+        car: Car,
+        parsed: ParsedCar,
+        *,
+        raw_text: str | None = None,
+        allow_activate: bool = True,
+        merge_notes: bool = False,
     ) -> dict[str, Any]:
-        """Tahrirlangan post: topilgan qiymatlarni yangilash. O'zgarishlar ro'yxatini qaytaradi."""
+        """Tahrirlangan post: topilgan qiymatlarni yangilash. O'zgarishlar ro'yxatini qaytaradi.
+
+        merge_notes=True — qo'shimcha post/video (reply, ketma-ket video, tavsif): izoh almashtirilmaydi,
+        yangi ma'lumot avvalgisiga qo'shiladi (qisqa tavsif batafsil video xulosasini o'chirib yubormasin).
+        """
         changes: dict[str, Any] = {}
         for f in PARSED_FIELDS:
             new = getattr(parsed, f)
             if new in (None, ""):
                 continue
+            if f == "notes" and merge_notes:
+                new = merged_notes(car.notes, new)
             old = getattr(car, f)
             if old != new:
                 changes[f] = {"old": old, "new": new}

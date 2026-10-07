@@ -740,3 +740,22 @@ def test_spoken_paint_and_absurd_mileage_are_ignored():
     assert parse_car_text("kraska ikki joyda", usd_rate_uzs=12700).paint_status == "ikki joyda"
     assert parse_car_text("probeg 905 ming", usd_rate_uzs=12700).mileage_km is None
     assert parse_car_text("probeg 297 ming", usd_rate_uzs=12700).mileage_km == 297000
+
+
+async def test_follow_up_post_adds_to_notes_instead_of_replacing(session_factory, watch, monkeypatch):
+    from bot.services.car_parser import ParsedCar as _P
+
+    async def fake_extract(text, *, ai=None, usd_rate_uzs):
+        if "Nexia" in text and "metan" in text:
+            return _P(brand="Chevrolet", model="Nexia 3", year=2019, mileage_km=284000, notes="Metan, shumka, laboyda yoriq.")
+        return _P(price_usd=5450, notes="Nexia 3 sotiladi, 2019-yil.")
+
+    monkeypatch.setattr(watch, "extract_car", fake_extract)
+    bot = FakeBot()
+    post = _channel_msg(980, text_="Nexia 3 2019, probeg 284 000 km, metan")
+    await watch.process_channel_post(bot, [post])
+    await watch.process_channel_post(bot, [_channel_msg(981, text_="narxi 5450$", reply_to=post)])
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert car.notes == "Metan, shumka, laboyda yoriq. Nexia 3 sotiladi, 2019-yil."
+        assert car.price_usd == 5450
