@@ -120,6 +120,38 @@ def _message_text(m: Message) -> str:
     return (m.caption or m.text or "").strip()
 
 
+# Kanal posti → muhokama guruhidagi avto-forward nusxasini bog'lash uchun tarkib kaliti.
+# Boshqa kanaldan forward qilingan post guruhga tushganda forward_origin asl manbani ko'rsatadi
+# (bizning kanal emas) — shunda postni media fayli yoki matni bo'yicha topamiz.
+_POST_KEYS_MAX = 5000
+_post_keys: dict[tuple[int, str], int] = {}
+
+
+def content_key(m: Message) -> str | None:
+    """Telegram'da forward qilinganda ham o'zgarmaydigan kalit: media file_unique_id yoki matn."""
+    media = m.video_note or m.video or m.voice or m.audio or m.animation or m.document
+    if media is not None:
+        return f"f:{media.file_unique_id}"
+    if m.photo:
+        return f"f:{m.photo[-1].file_unique_id}"
+    text = _message_text(m)
+    return f"t:{' '.join(text.split())[:300]}" if text else None
+
+
+def remember_post_content(m: Message) -> None:
+    key = content_key(m)
+    if key is None:
+        return
+    if len(_post_keys) >= _POST_KEYS_MAX:
+        _post_keys.pop(next(iter(_post_keys)))
+    _post_keys[(m.chat.id, key)] = m.message_id
+
+
+def channel_post_by_content(channel_chat_id: int, m: Message) -> int | None:
+    key = content_key(m)
+    return _post_keys.get((channel_chat_id, key)) if key else None
+
+
 def _media_mime(m: Message) -> str:
     if m.voice is not None:
         return m.voice.mime_type or "audio/ogg"
@@ -649,6 +681,7 @@ async def _flush_album(bot: Bot, group_id: str) -> None:
 async def on_channel_post(message: Message, bot: Bot) -> None:
     if not is_main_channel(message.chat):
         return
+    remember_post_content(message)
     if message.media_group_id:
         gid = f"{message.chat.id}:{message.media_group_id}"
         _albums.setdefault(gid, []).append(message)

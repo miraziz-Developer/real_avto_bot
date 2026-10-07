@@ -920,6 +920,57 @@ async def test_comment_ai_answers_anonymous_admin_in_group(env, comment_ai):
     assert session.sent(SendMessage, ADMIN_ID) == []  # admin's own test — no alerts
 
 
+async def test_comments_under_post_forwarded_from_another_channel(env, comment_ai):
+    """Post forwarded into our channel: the group copy's forward_origin is the other channel."""
+    import json as _json
+
+    from aiogram.types import VideoNote
+
+    from bot.handlers import channel_watch
+
+    dp, bot, session, factory, _ = env
+    fake = comment_ai(_FakeCommentAI([
+        {"action": "reply", "category": "question", "reply": "9 800$."},
+        {"action": "reply", "category": "question", "reply": "Hali sotuvda."},
+    ]))
+    async with factory() as s:
+        car = await CarRepository(s).create_from_parsed(
+            ParsedCar(brand="Chevrolet", model="Gentra", year=2019, mileage_km=120000, price_usd=9800),
+            source=CarSource.CHANNEL,
+            raw_text="Gentra 2019",
+            channel_chat_id=CHANNEL_CHAT.id,
+            channel_message_ids=[88],
+            video_file_ids=["vn:VN_FILE"],
+        )
+        await s.commit()
+        car_id = car.id
+    other_channel = Chat(id=-1009999, type="channel", title="REAL AVTO")
+
+    def auto_forward(unique_id: str) -> Message:
+        return Message(
+            message_id=next(_ids),
+            date=datetime.now(UTC),
+            chat=Chat(id=GROUP_ID, type="supergroup"),
+            sender_chat=CHANNEL_CHAT,
+            is_automatic_forward=True,
+            forward_origin=MessageOriginChannel(date=datetime.now(UTC), chat=other_channel, message_id=5),
+            video_note=VideoNote(file_id="VN_FILE", file_unique_id=unique_id, length=240, duration=59),
+        )
+
+    # 1) Mapping from the in-memory content key recorded when the channel post arrived
+    channel_watch._post_keys[(CHANNEL_CHAT.id, "f:U88")] = 88
+    first = auto_forward("U88")
+    await dp.feed_update(bot, Update(update_id=next(_ids), message=first))
+    await dp.feed_update(bot, _group_msg(9120, "narxi qancha?", thread=first.message_id, reply_to=first))
+    assert _json.loads(fake.calls[0][1])["shu_post_mashinasi"]["id"] == car_id
+
+    # 2) After a restart (cache empty) the car is found by the media file in the database
+    channel_watch._post_keys.clear()
+    second = auto_forward("U-other")
+    await dp.feed_update(bot, _group_msg(9121, "sotildimi?", thread=second.message_id, reply_to=second))
+    assert _json.loads(fake.calls[1][1])["shu_post_mashinasi"]["id"] == car_id
+
+
 async def test_comment_ai_post_text_used_when_car_unknown(env, comment_ai):
     import json as _json
 

@@ -24,7 +24,7 @@ from bot.ai import AIError, get_ai, get_budget
 from bot.config import is_admin, settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import Car, CarStatus
-from bot.handlers.channel_watch import is_main_channel
+from bot.handlers.channel_watch import channel_post_by_content, is_main_channel
 from bot.services.car_cards import notify_admins_text
 from bot.services.car_parser import detect_brand_model, normalize_text
 from bot.services.comment_ai import CommentDecision, decide_comment_reply, public_post_text
@@ -128,13 +128,45 @@ def comment_reply_text(car: Car | None, first_name: str | None) -> str:
     return f"{hello} Bu mashina sotilgan. O'xshash variantlarni botda ko'rsatamiz 👇"
 
 
+def _media_file_ids(m: Message) -> list[str]:
+    media = m.video_note or m.video or m.voice or m.audio or m.animation or m.document
+    if media is not None:
+        return [media.file_id]
+    return [m.photo[-1].file_id] if m.photo else []
+
+
+async def _channel_post_of_auto_forward(auto: Message, cars: CarRepository) -> tuple[int, int] | None:
+    """Guruhdagi avto-forward qaysi kanal postining nusxasi.
+
+    Oddiy holatda forward_origin — bizning kanal. Post boshqa kanaldan forward qilingan bo'lsa, origin asl
+    manbani ko'rsatadi; u holda kanal sender_chat'da, post esa tarkibi (media/matn) bo'yicha topiladi.
+    """
+    origin = auto.forward_origin
+    if isinstance(origin, MessageOriginChannel) and is_main_channel(origin.chat):
+        return origin.chat.id, origin.message_id
+    channel = auto.sender_chat
+    if channel is None or not is_main_channel(channel):
+        return None
+    mid = channel_post_by_content(channel.id, auto)
+    if mid is not None:
+        return channel.id, mid
+    file_ids = _media_file_ids(auto)
+    car = await cars.find_by_media(channel.id, file_ids) if file_ids else None
+    if car is not None and car.channel_message_ids:
+        return channel.id, car.channel_message_ids[0]
+    return None
+
+
 async def _resolve_channel_post(message: Message, cars: CarRepository) -> tuple[int, int] | None:
     """Komment qaysi kanal postiga tegishli: avto-forwardga reply yoki thread orqali."""
     reply = message.reply_to_message
-    if reply is not None and reply.is_automatic_forward and isinstance(reply.forward_origin, MessageOriginChannel):
-        origin = reply.forward_origin
-        if is_main_channel(origin.chat):
-            return origin.chat.id, origin.message_id
+    if reply is not None and reply.is_automatic_forward:
+        known = await cars.channel_post_for_thread(message.chat.id, reply.message_id)
+        if known is not None:
+            return known
+        post = await _channel_post_of_auto_forward(reply, cars)
+        if post is not None:
+            return post
     if message.message_thread_id:
         return await cars.channel_post_for_thread(message.chat.id, message.message_thread_id)
     return None
@@ -143,14 +175,15 @@ async def _resolve_channel_post(message: Message, cars: CarRepository) -> tuple[
 @router.message(F.is_automatic_forward)
 async def on_auto_forward(message: Message, cars: CarRepository) -> None:
     """Kanal posti muhokama guruhiga tushdi — thread → post xaritasini saqlaymiz."""
-    origin = message.forward_origin
-    if not isinstance(origin, MessageOriginChannel) or not is_main_channel(origin.chat):
+    post = await _channel_post_of_auto_forward(message, cars)
+    if post is None:
+        logger.info("Avto-forward %s: kanal posti aniqlanmadi", message.message_id)
         return
     await cars.remember_thread(
         group_chat_id=message.chat.id,
         thread_message_id=message.message_id,
-        channel_chat_id=origin.chat.id,
-        channel_message_id=origin.message_id,
+        channel_chat_id=post[0],
+        channel_message_id=post[1],
     )
     await cars.session.commit()
 

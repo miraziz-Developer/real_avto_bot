@@ -108,6 +108,22 @@ class CarRepository:
     async def get(self, car_id: int) -> Car | None:
         return await self.session.get(Car, car_id)
 
+    async def find_by_media(self, chat_id: int, file_ids: list[str]) -> Car | None:
+        """Kanal mashinasi shu media fayllaridan biri bilan (dumaloq video «vn:» prefiksi bilan saqlanadi)."""
+        ids = [*file_ids, *(f"vn:{f}" for f in file_ids)]
+        if not ids:
+            return None
+        stmt = (
+            select(Car)
+            .where(
+                Car.channel_chat_id == chat_id,
+                or_(Car.video_file_ids.overlap(ids), Car.photo_file_ids.overlap(ids)),
+            )
+            .order_by(Car.id.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def find_by_channel_message(self, chat_id: int, message_id: int) -> Car | None:
         stmt = (
             select(Car)
