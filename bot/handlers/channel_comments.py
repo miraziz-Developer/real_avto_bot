@@ -161,16 +161,28 @@ async def _is_our_group(message: Message, cars: CarRepository) -> bool:
     return await cars.is_discussion_group(message.chat.id)
 
 
+def _sent_on_behalf_of_chat(message: Message) -> bool:
+    """Anonymous group admin («Send anonymously») or a post made as the linked channel.
+
+    Telegram sets sender_chat and uses the GroupAnonymousBot / channel bot as from_user, so these
+    messages look like bot messages — but only admins can send them.
+    """
+    return message.sender_chat is not None and not message.is_automatic_forward
+
+
 def _is_customer_message(message: Message) -> bool:
     """Bot javob beradigan xabar: oddiy foydalanuvchi yoki (sinash uchun) admin o'z savoli bilan."""
-    user = message.from_user
-    if user is None or user.is_bot:
-        logger.debug("Guruh xabari %s: bot/anonim — o'tkazildi", message.message_id)
+    if message.is_automatic_forward:
         return False
-    if message.sender_chat is not None:
-        logger.info("Guruh xabari %s: kanal/guruh nomidan yozilgan — o'tkazildi", message.message_id)
-        return False
-    if not is_admin(user.id):
+    if _sent_on_behalf_of_chat(message):
+        admin = True
+    else:
+        user = message.from_user
+        if user is None or user.is_bot:
+            logger.debug("Guruh xabari %s: bot yozdi — o'tkazildi", message.message_id)
+            return False
+        admin = is_admin(user.id)
+    if not admin:
         return True
     if not settings.comments_answer_admins:
         logger.info("Guruh xabari %s: admin yozdi (COMMENTS_ANSWER_ADMINS=false) — o'tkazildi", message.message_id)
@@ -183,7 +195,16 @@ def _is_customer_message(message: Message) -> bool:
     return True
 
 
+def _author_name(message: Message) -> str | None:
+    """First name for the greeting; none for anonymous/channel messages (from_user is a service bot)."""
+    if _sent_on_behalf_of_chat(message) or message.from_user is None:
+        return None
+    return message.from_user.first_name
+
+
 def _from_admin(message: Message) -> bool:
+    if _sent_on_behalf_of_chat(message):
+        return True
     return message.from_user is not None and is_admin(message.from_user.id)
 
 
@@ -248,7 +269,7 @@ async def _ai_handle(
         decision: CommentDecision = await decide_comment_reply(
             ai,
             text=text,
-            author=message.from_user.first_name,
+            author=_author_name(message),
             car=car,
             other_cars=other,
             post_text=post_text,
@@ -292,7 +313,7 @@ async def _template_handle(message: Message, bot: Bot, cars: CarRepository, bot_
     deep = f"https://t.me/{bot_username}?start=car_{car.id}" if car else f"https://t.me/{bot_username}"
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🤖 Botda batafsil", url=deep)]])
     await message.reply(
-        comment_reply_text(car, message.from_user.first_name),
+        comment_reply_text(car, _author_name(message)),
         parse_mode=ParseMode.HTML,
         reply_markup=kb,
         disable_web_page_preview=True,

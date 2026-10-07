@@ -902,6 +902,24 @@ async def test_comment_ai_answers_admin_own_question_without_admin_alerts(env, c
     assert len(fake.calls) == 1
 
 
+async def test_comment_ai_answers_anonymous_admin_in_group(env, comment_ai):
+    """«Send anonymously» admins post as the group itself (from_user = GroupAnonymousBot)."""
+    dp, bot, session, factory, _ = env
+    fake = comment_ai(_FakeCommentAI([{"action": "reply", "category": "question", "reply": "Ha, Gentra bor."}]))
+    _, thread = await _comment_setup(factory, dp, bot)
+    update = _group_msg(1087968824, "gentra bormi?", thread=thread)
+    msg = update.message.model_copy(
+        update={
+            "from_user": User(id=1087968824, is_bot=True, first_name="Group", username="GroupAnonymousBot"),
+            "sender_chat": Chat(id=GROUP_ID, type="supergroup", title="Chat"),
+        }
+    )
+    await dp.feed_update(bot, update.model_copy(update={"message": msg}))
+    assert len(fake.calls) == 1
+    assert session.sent(SendMessage, GROUP_ID)[-1].text == "Ha, Gentra bor."
+    assert session.sent(SendMessage, ADMIN_ID) == []  # admin's own test — no alerts
+
+
 async def test_comment_ai_post_text_used_when_car_unknown(env, comment_ai):
     import json as _json
 
