@@ -177,7 +177,7 @@ async def on_customer_text(
     await handle_customer_text(message, bot, message.text or "", leads=leads, cars=cars, crm=crm)
 
 
-@router.message(StateFilter(None), F.voice | F.video_note)
+@router.message(StateFilter(None), F.voice | F.video_note | F.audio)
 async def on_customer_voice(
     message: Message, bot: Bot, leads: LeadRepository, cars: CarRepository, crm: CrmRepository
 ) -> None:
@@ -189,18 +189,19 @@ async def on_customer_voice(
         await _forward_to_manager(bot, leads, lead, message, None)
         return
     ai = get_ai()
-    media = message.voice or message.video_note
+    media = message.voice or message.video_note or message.audio
     if not ai.enabled or media is None or not await get_budget().allow_user(f"tg:{message.from_user.id}"):
         await message.answer("Iltimos, savolingizni matn bilan yozing 🙏", parse_mode=None)
         return
     try:
         f = await bot.get_file(media.file_id)
         buf = await bot.download_file(f.file_path)
-        text = await ai.transcribe(
-            buf.read() if buf else b"",
-            filename="audio.ogg" if message.voice else "video.mp4",
-            mime_type=(media.mime_type if message.voice else None) or ("audio/ogg" if message.voice else "video/mp4"),
-        )
+        if message.video_note:
+            filename, mime = "video.mp4", "video/mp4"
+        else:
+            filename = "audio.ogg" if message.voice else "audio.mp3"
+            mime = media.mime_type or ("audio/ogg" if message.voice else "audio/mpeg")
+        text = await ai.transcribe(buf.read() if buf else b"", filename=filename, mime_type=mime)
     except (AIError, TelegramBadRequest) as e:
         logger.warning("Mijoz ovozini o'qib bo'lmadi: %s", e)
         text = ""

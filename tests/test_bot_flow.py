@@ -1111,3 +1111,48 @@ def test_fallback_understands_people_selling_their_car():
     assert not is_sell_intent("Cobalt bormi?") and not is_sell_intent("mashina olmoqchiman")
     text, kb = sell_reply()
     assert "sotib olamiz" in text and kb.inline_keyboard[0][0].callback_data == "ad_start"
+
+
+def _media_comment(uid: int, thread: int, **media) -> Update:
+    return Update(
+        update_id=next(_ids),
+        message=Message(
+            message_id=next(_ids),
+            date=datetime.now(UTC),
+            chat=Chat(id=GROUP_ID, type="supergroup"),
+            from_user=User(id=uid, is_bot=False, first_name="Sardor"),
+            message_thread_id=thread,
+            **media,
+        ),
+    )
+
+
+async def test_comments_listen_to_voice_round_video_and_plain_video(env, comment_ai, monkeypatch):
+    import io
+    import json as _json
+    from types import SimpleNamespace
+
+    from aiogram.types import Video, VideoNote, Voice
+
+    dp, bot, session, factory, _ = env
+    fake = comment_ai(_FakeCommentAI([
+        {"action": "reply", "category": "question", "reply": "Narxi 9 800$."},
+        {"action": "reply", "category": "question", "reply": "Narxi 9 800$."},
+        {"action": "reply", "category": "sell_car", "reply": "Ha, sotib olamiz."},
+    ]))
+    monkeypatch.setattr(bot, "get_file", lambda fid: _awaitable(SimpleNamespace(file_path=fid)), raising=False)
+    monkeypatch.setattr(bot, "download_file", lambda path: _awaitable(io.BytesIO(b"media")), raising=False)
+    _, thread = await _comment_setup(factory, dp, bot)
+
+    await dp.feed_update(bot, _media_comment(9140, thread, voice=Voice(file_id="v", file_unique_id="v1", duration=3)))
+    await dp.feed_update(bot, _media_comment(
+        9141, thread, video_note=VideoNote(file_id="n", file_unique_id="n1", length=240, duration=5)))
+    await dp.feed_update(bot, _media_comment(
+        9142, thread, caption="sotaman, olasizmi?",
+        video=Video(file_id="vid", file_unique_id="vid1", width=640, height=360, duration=20)))
+
+    payloads = [_json.loads(c[1])["xabar"] for c in fake.calls]
+    assert payloads[0] == "[Ovozli xabar]: narxi qancha"
+    assert payloads[1] == "[Video]: narxi qancha"
+    assert payloads[2] == "sotaman, olasizmi?\n[Video]: narxi qancha"  # caption and speech together
+    assert session.sent(SendMessage, GROUP_ID)[-1].reply_markup.inline_keyboard[0][0].url.endswith("?start=sell")

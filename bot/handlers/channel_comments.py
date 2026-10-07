@@ -385,35 +385,61 @@ async def on_comment(message: Message, bot: Bot, cars: CarRepository, bot_userna
     await _handle_group_text(message, bot, cars, bot_username, message.text or "")
 
 
-@router.message(F.voice | F.video_note | (F.caption & (F.photo | F.video)))
+def _listenable_media(message: Message):
+    """Ovozi tinglanadigan media: ovozli xabar, dumaloq video, oddiy video, audio fayl."""
+    return message.voice or message.video_note or message.video or message.audio
+
+
+def _media_mime(message: Message) -> tuple[str, str]:
+    if message.voice:
+        return "audio.ogg", message.voice.mime_type or "audio/ogg"
+    if message.audio:
+        return "audio.mp3", message.audio.mime_type or "audio/mpeg"
+    if message.video:
+        return "video.mp4", message.video.mime_type or "video/mp4"
+    return "video.mp4", "video/mp4"
+
+
+@router.message(F.voice | F.video_note | F.video | F.audio | (F.caption & F.photo))
 async def on_media_comment(message: Message, bot: Bot, cars: CarRepository, bot_username: str) -> None:
-    """Ovozli / dumaloq video komment (AI tinglaydi) yoki izohli rasm/video (izoh o'qiladi)."""
+    """Ovozli xabar, dumaloq/oddiy video, audio (AI tinglaydi; Gemini videoni ko'radi ham) yoki izohli rasm.
+
+    Izoh va eshitilgan gap birga o'qiladi — masalan «sotaman» deb o'z mashinasining videosini tashlagan odam.
+    """
     if not settings.comments_enabled or not _is_customer_message(message):
         return
-    if message.caption:
-        await _handle_group_text(message, bot, cars, bot_username, message.caption)
-        return
+    caption = (message.caption or "").strip()
+    media = _listenable_media(message)
     ai = get_ai()
-    media = message.voice or message.video_note
-    if media is None or not settings.comments_ai_enabled or not ai.enabled:
-        return
-    if (media.file_size or 0) > _VOICE_MAX_BYTES:
+    can_listen = (
+        media is not None
+        and settings.comments_ai_enabled
+        and ai.enabled
+        and (getattr(media, "file_size", 0) or 0) <= _VOICE_MAX_BYTES
+        and (message.video_note or message.voice or message.audio or getattr(ai, "supports_video", False))
+    )
+    if not can_listen:
+        if caption:
+            await _handle_group_text(message, bot, cars, bot_username, caption)
         return
     post = await _resolve_channel_post(message, cars)
     if post is None and not await _is_our_group(message, cars):
         return
-    if not await get_budget().allow_user(f"tg:{message.from_user.id}"):
+    uid = message.from_user.id if message.from_user else 0
+    if not await get_budget().allow_user(f"tg:{uid}"):
+        if caption:
+            await _handle_group_text(message, bot, cars, bot_username, caption)
         return
+    heard = ""
     try:
         f = await bot.get_file(media.file_id)
         buf = await bot.download_file(f.file_path)
-        heard = await ai.transcribe(
-            buf.read() if buf else b"",
-            filename="audio.ogg" if message.voice else "video.mp4",
-            mime_type=(message.voice.mime_type if message.voice else None) or ("audio/ogg" if message.voice else "video/mp4"),
-        )
+        filename, mime = _media_mime(message)
+        heard = await ai.transcribe(buf.read() if buf else b"", filename=filename, mime_type=mime)
     except (AIError, TelegramBadRequest) as e:
-        logger.warning("Guruhdagi ovozni o'qib bo'lmadi: %s", e)
-        return
-    if heard:
-        await _handle_group_text(message, bot, cars, bot_username, heard)
+        logger.warning("Guruhdagi ovoz/videoni o'qib bo'lmadi: %s", e)
+    kind = "Ovozli xabar" if (message.voice or message.audio) else "Video"
+    text = "\n".join(t for t in (caption, f"[{kind}]: {heard}" if heard else "") if t)
+    if text:
+        logger.info("Guruh xabari %s: media eshitildi (%d belgi)", message.message_id, len(heard))
+        await _handle_group_text(message, bot, cars, bot_username, text)
