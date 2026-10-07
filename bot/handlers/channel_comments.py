@@ -167,6 +167,11 @@ async def _resolve_channel_post(message: Message, cars: CarRepository) -> tuple[
         post = await _channel_post_of_auto_forward(reply, cars)
         if post is not None:
             return post
+        logger.info(
+            "Komment %s: kanal posti aniqlanmadi (avto-forward %s, sender_chat=%s, media=%s)",
+            message.message_id, reply.message_id, reply.sender_chat.id if reply.sender_chat else None,
+            _media_file_ids(reply)[:1],
+        )
     if message.message_thread_id:
         return await cars.channel_post_for_thread(message.chat.id, message.message_thread_id)
     return None
