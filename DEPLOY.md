@@ -1,53 +1,67 @@
-# Real Avto — serverga o‘rnatish (Docker)
+# Deployment guide (Docker)
 
-Bu qo‘llanma **barcha stack**ni bir serverda ko‘tarish uchun: PostgreSQL, Redis, Node backend (CRM API), Nginx+React frontend, Python Telegram bot.
+This guide brings up the whole stack on a single server:
 
-**Ishlab chiqarishda albatta**: ildiz `.env` da `ADMIN_TELEGRAM_IDS`, `SALES_PHONE`, haqiqiy `BOT_TOKEN` / kanallar; `backend/.env` da kuchli `JWT_SECRET`, `CRM_ADMIN_PASSWORD`, `NODE_ENV=production` va kerak bo‘lsa `CORS_ORIGIN`; Postgres paroli ildiz `.env` dagi `POSTGRES_PASSWORD` dan olinadi (kodda saqlanmaydi) — u `DATABASE_URL` lardagi parol bilan bir xil bo‘lishi kerak.
+- PostgreSQL and Redis;
+- the Node.js CRM API;
+- the CRM web app and the catalog (both served by nginx);
+- the Python Telegram bot.
 
-## 1. Server talablari
+**Production checklist:**
 
-- **OS**: Ubuntu 22.04/24.04 LTS yoki boshqa Linux (Docker qo‘llab-quvvatlanadi).
-- **RAM**: kamida **2 GB** (4 GB tavsiya).
-- **Disk**: **10 GB+** bo‘sh joy.
-- **Tarmoq**: chiqish internet (Telegram **long polling** — ochiq kiruvchi port shart emas, faqat chiqish).
-- **Domen** (ixtiyoriy): HTTPS orqali CRM ochish uchun Trafik / Cloudflare / Nginx tashqarisida proksi.
+- Root `.env`:
+  - a real `BOT_TOKEN`, the channels, `ADMIN_TELEGRAM_IDS` and `SALES_PHONE`;
+  - `POSTGRES_PASSWORD`, which must match the password inside every `DATABASE_URL`. It is never stored in the repository.
+- `backend/.env`:
+  - a strong `JWT_SECRET` and `CRM_ADMIN_PASSWORD`;
+  - `NODE_ENV=production`;
+  - `CORS_ORIGIN` if the CRM is served from its own domain.
 
-## 2. Docker o‘rnatish (Ubuntu qisqacha)
+## 1. Server requirements
+
+| | Minimum |
+|---|---|
+| OS | Ubuntu 22.04 / 24.04 LTS or another Linux distribution supported by Docker |
+| RAM | 2 GB (4 GB recommended) |
+| Disk | 10 GB free |
+| Network | Outbound internet. The bot uses long polling, so no inbound port is needed for Telegram |
+| Domain (optional) | Needed for HTTPS: the catalog Mini App and the Instagram webhook require it |
+
+## 2. Install Docker (Ubuntu)
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y ca-certificates curl
-# Rasmiy Docker — https://docs.docker.com/engine/install/ubuntu/
+# Official instructions: https://docs.docker.com/engine/install/ubuntu/
 sudo apt-get install -y docker.io docker-compose-plugin
-sudo usermod -aG docker "$USER"
-# yangi sessiyaga qayta kiring yoki newgrp docker
+sudo usermod -aG docker "$USER"   # then log in again (or run: newgrp docker)
 ```
 
-## 3. Loyihani yuklash
+## 3. Get the code
 
 ```bash
-cd /opt   # yoki boshqa papka
-sudo git clone <REPO_URL> real_avto_konkurs
-sudo chown -R "$USER:$USER" real_avto_konkurs
-cd real_avto_konkurs
+cd /opt
+sudo git clone <REPO_URL> real_avto_bot
+sudo chown -R "$USER:$USER" real_avto_bot
+cd real_avto_bot
 ```
 
-## 4. Muhit fayllari
+## 4. Configuration
 
-### 4.1 Ildiz `.env` (bot)
+### 4.1 Root `.env` (bot)
 
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-**Docker ichida** `DATABASE_URL` hosti **`db`** bo‘lishi kerak:
+Inside Docker the database host is **`db`**:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/real_avto_konkurs
+DATABASE_URL=postgresql+asyncpg://postgres:<POSTGRES_PASSWORD>@db:5432/real_avto_konkurs
 ```
 
-`REDIS_URL` ni odatda qo‘lda yozmasangiz ham bo‘ladi — `docker-compose.yml` botga `redis://redis:6379/0` beradi.
+`REDIS_URL` can be left empty, because `docker-compose.yml` passes `redis://redis:6379/0` to the bot.
 
 ### 4.2 `backend/.env` (CRM API)
 
@@ -56,34 +70,38 @@ cp backend/.env.example backend/.env
 nano backend/.env
 ```
 
-**Docker** uchun `DATABASE_URL` (Node `pg` — `+asyncpg` yo‘q):
+The Node `pg` driver uses a plain URL (no `+asyncpg`):
 
 ```env
-DATABASE_URL=postgresql://postgres:postgres@db:5432/real_avto_konkurs
-```
-
-**Majburiy ishlab chiqarish**: `JWT_SECRET` ni uzun random bilan almashtiring (`openssl rand -hex 32`), `CRM_ADMIN_PASSWORD` ni kuchli qiling.
-
-Backend uchun:
-
-```env
+DATABASE_URL=postgresql://postgres:<POSTGRES_PASSWORD>@db:5432/real_avto_konkurs
 NODE_ENV=production
-# CRM ochilgan brauzer manzili (bir nechta bo‘lsa vergul bilan). Yo‘q qoldirish ogohlantirish beradi.
-CORS_ORIGIN=https://crm.sizning-domen.uz
+JWT_SECRET=<output of: openssl rand -hex 32>
+CRM_ADMIN_PASSWORD=<strong password>
+# Browser origin(s) of the CRM, comma-separated
+CORS_ORIGIN=https://crm.example.com
 ```
 
-### 4.3 Frontend (Docker ichida odatda shart emas)
+With `NODE_ENV=production`, the backend **refuses to start** in either of these cases:
 
-Nginx `/api/` ni `backend:3001` ga proksilaydi; brauzerda **nisbiy** `/api` ishlashi uchun `VITE_API_URL` bo‘sh qoldirish mumkin. Alohida API domen bo‘lsa `frontend/.env` da `VITE_API_URL=https://api.sizning-domen.uz/api` qilib qayta `docker compose build frontend`.
+- `JWT_SECRET` is shorter than 32 characters;
+- `CRM_ADMIN_PASSWORD` is still the default.
 
-## 5. Ishga tushirish
+### 4.3 Frontend
+
+Usually nothing to configure. nginx proxies `/api/` to `backend:3001`, so the CRM calls the API through the relative `/api` path.
+
+For a separate API domain:
+
+1. Set `VITE_API_URL=https://api.example.com/api` in `frontend/.env`.
+2. Rebuild: `docker compose build frontend`.
+
+## 5. Start
 
 ```bash
-chmod +x scripts/server_bootstrap.sh
 bash scripts/server_bootstrap.sh
 ```
 
-Yoki qo‘lda:
+Or manually:
 
 ```bash
 docker compose build
@@ -92,208 +110,226 @@ docker compose ps
 docker compose logs -f bot
 ```
 
-**Toza qayta build** (muammo tuzatishda):
+Clean rebuild (when troubleshooting): `BOOTSTRAP_NO_CACHE=1 bash scripts/server_bootstrap.sh`.
 
-```bash
-BOOTSTRAP_NO_CACHE=1 bash scripts/server_bootstrap.sh
-```
+## 6. Telegram checklist
 
-## 6. Telegram va kanallar checklist
+- [ ] **@BotFather**: the token is set as `BOT_TOKEN`. Under *Bot Settings → Menu Button*, remove any old Mini App URL. The bot manages the menu button itself from `CATALOG_URL` and `CRM_URL`.
+- [ ] **Main channel** (`CHANNEL_ID`): the bot is an **admin**, so it can read and publish posts.
+- [ ] **Discussion group** of the channel: the bot is an **admin**, so it can answer comments.
+- [ ] **Leaderboard channel** (`LEADERBOARD_CHANNEL_ID`): defaults to the main channel.
+- [ ] **Reviews channel** (`REVIEWS_CHANNEL_ID`): the bot is an admin.
+- [ ] **`ADMIN_TELEGRAM_IDS`**: the team that receives moderation, car and lead cards. Each admin must have pressed /start in the bot.
 
-1. **@BotFather** — `BOT_TOKEN` ildiz `.env` da.
-2. **Asosiy kanal** (`CHANNEL_ID`) — bot **admin** (post yozish, a’zolar soni / obuna tekshiruvi uchun kerak bo‘lgan huquqlar).
-3. **LEADERBOARD_CHANNEL_ID** — TOP postlari shu yerga; odatda asosiy kanal bilan bir xil bo‘lishi mumkin.
-4. **@real_avto_otzivlar** (sharhlar) — bot **admin**; kodda default shu kanal ishlatiladi, kerak bo‘lsa `REVIEWS_CHANNEL_ID` bilan almashtiring.
-5. **ADMIN_TELEGRAM_IDS** — e’lon moderatsiyasi (vergul bilan bir nechta ID).
+## 7. Ports and firewall
 
-## 7. Portlar va firewall
-
-Standart `docker-compose.yml`:
-
-| Xizmat   | Host port |
-|----------|-------------|
-| Frontend (CRM) | **3000** → konteyner 80 (`/api/` backendga proksi) |
-| Katalog | **3002** → konteyner 80 |
-| Backend  | **127.0.0.1:3001** — faqat server ichidan (Caddy / nginx orqali) |
+| Service | Host port |
+|---|---|
+| CRM web app | **3000** → container 80 (proxies `/api/` to the backend) |
+| Catalog | **3002** → container 80 |
+| CRM API | **127.0.0.1:3001** (local only; expose through a reverse proxy) |
 | Bot (Instagram webhook) | **127.0.0.1:8081** |
-| Postgres / Redis | faqat ichki tarmoq |
+| PostgreSQL / Redis | internal Docker network only |
 
-Tashqi dunyoga faqat kerak bo‘lganini oching (443 — HTTPS). 5432 va 3001 ni internetga ochmang.
+Expose only what is needed (443 for HTTPS). Never expose 5432 or 3001 to the internet.
 
-> Docker o‘z portlarini `ufw` qoidalaridan chetlab ochadi — shuning uchun backend `127.0.0.1` ga bog‘langan.
+> Docker publishes ports bypassing `ufw` rules. This is why internal services are bound to `127.0.0.1`.
 
-## 8. Yangilash (deploy)
+## 8. Updating
 
 ```bash
-cd /opt/real_avto_konkurs
+cd /opt/real_avto_bot
 git pull
 docker compose build
 docker compose up -d
 ```
 
-**Muhim:** `docker compose up -d` **o‘zi yangi kodni tortmaydi** — avvalo image qayta **build** qilinadi (`COPY bot/` Dockerfile ichida). Faqat bot yangilansa ham:
+`docker compose up -d` alone does **not** pick up new code: images must be rebuilt first. To update only the bot:
 
 ```bash
-docker compose build bot --no-cache
+docker compose build bot
 docker compose up -d bot
 ```
 
-`--no-cache` ixtiyoriy, lekin ba’zan eski qatlamdan foydalangan konteynerni oldini oladi.
+Database migrations run automatically when the bot starts and are idempotent, so restarting is safe.
 
-Migratsiyalar bot **birinchi marta** ishga tushganda PostgreSQLga qo‘llanadi (`bot/main.py` ichidagi `migrate` chaqiruvlari).
+## 9. Verification
 
-## 9. Tekshirish
+- **CRM:** `http://SERVER_IP:3000`. Log in with `CRM_ADMIN_USER` / `CRM_ADMIN_PASSWORD` from `backend/.env`.
+- **API:** `curl -s http://127.0.0.1:3001/health` (run on the server).
+- **Bot:** `docker compose logs -f bot` shows `Run polling` without errors. `docker compose ps` reports the bot as `healthy`, because a heartbeat is checked every 30 seconds.
 
-- **CRM**: brauzerda `http://SERVER_IP:3000` — login `backend/.env` dagi `CRM_ADMIN_USER` / `CRM_ADMIN_PASSWORD`.
-- **API**: `curl -s http://127.0.0.1:3001/health` serverda.
-- **Bot**: `docker compose logs -f bot` — xatolarsiz polling, kanal tekshiruvi loglari.
-
-## 10. Avtomatik testlar (CI yoki mahalliy)
+## 10. Automated tests
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 pytest tests -q
+docker compose config && docker compose build
 ```
 
-Docker image buildni tekshirish:
+See [README.md](README.md#tests) for running the database tests against PostgreSQL.
 
-```bash
-docker compose config
-docker compose build
-```
+## 11. Notes
 
-## 11. Eslatmalar
-
-- **Mahalliy** ishlab chiqishda bot `DATABASE_URL` da `localhost` ishlatadi; Dockerda **`db`** hostname `docker-compose` tarmog‘ida DNS bo‘ladi.
-- **Webhook** ishlatilmaydi — bot process doimiy ishlashi kerak (systemd yoki Docker `restart: unless-stopped` allaqachon bor).
+- **Database host:** in local development, outside Docker, `DATABASE_URL` uses `localhost`. Inside Docker it uses `db`.
+- **Polling:** the bot uses long polling, not webhooks. The process must run continuously, which `restart: unless-stopped` already ensures.
+- **One bot per token:** a second process polling with the same token causes conflicts.
 
 ---
 
-## 12. AI CRM yangilanishi (kanal kuzatuvchi, AI agent, katalog, Instagram)
+## 12. Upgrading to the AI CRM release
 
-Bir martalik qadamlar — eski versiyadan yangisiga o'tishda **tartib bilan**.
+Follow these steps in order when upgrading from a version without the inventory database, the AI agent and the catalog.
 
-### 12.1 Zaxira nusxa (majburiy)
+### 12.1 Back up (mandatory)
+
 ```bash
 cd /opt/real_avto_bot
 docker compose exec -T db pg_dump -U postgres real_avto_konkurs | gzip > ~/backup_before_ai_crm_$(date +%F).sql.gz
-ls -lh ~/backup_before_ai_crm_*.sql.gz   # hajmi 0 emasligini tekshiring
+ls -lh ~/backup_before_ai_crm_*.sql.gz   # make sure the file is not empty
 ```
 
-### 12.2 DB parolini almashtirish
-Eski parol `docker-compose.yml` ichida edi va git tarixida qolgan — **almashtirish shart**.
-`POSTGRES_PASSWORD` faqat **yangi** bazani yaratishda ishlatiladi, mavjud bazada parolni qo'lda o'zgartiring:
+### 12.2 Rotate the database password
+
+Older versions kept the password in `docker-compose.yml`, so it is still in git history and **must be rotated**.
+
+`POSTGRES_PASSWORD` is only used when a new database is created. For an existing database, change the password manually:
+
 ```bash
-NEW_PW="$(openssl rand -hex 24)"; echo "$NEW_PW"     # saqlab qo'ying
+NEW_PW="$(openssl rand -hex 24)"; echo "$NEW_PW"     # store it safely
 docker compose exec -T db psql -U postgres -c "ALTER USER postgres WITH PASSWORD '$NEW_PW';"
 ```
-Keyin shu parolni yozing:
-- ildiz `.env`: `POSTGRES_PASSWORD=...` va `DATABASE_URL=postgresql+asyncpg://postgres:...@db:5432/real_avto_konkurs`
-- `backend/.env`: `DATABASE_URL=postgresql://postgres:...@db:5432/real_avto_konkurs`
 
-### 12.3 Yangi `.env` sozlamalari (ildiz)
-| O'zgaruvchi | Nima uchun |
+Then put the new password into:
+
+- the root `.env`: `POSTGRES_PASSWORD=...` and `DATABASE_URL=postgresql+asyncpg://postgres:...@db:5432/real_avto_konkurs`;
+- `backend/.env`: `DATABASE_URL=postgresql://postgres:...@db:5432/real_avto_konkurs`.
+
+### 12.3 New settings (root `.env`)
+
+| Variable | Purpose |
 |---|---|
-| `GEMINI_API_KEY` (yoki `GROQ_API_KEY`) | AI: kanal postlari, ovoz/video tahlili, savdo agenti (bo'sh bo'lsa oddiy rejim) — 12.10 |
-| `AI_DAILY_BUDGET_USD`, `AI_USER_DAILY_LIMIT` | AI xarajat chegarasi (standart $1/kun, 40 so'rov/mijoz) |
-| `BUSINESS_NAME`, `BUSINESS_ADDRESS`, `BUSINESS_HOURS`, `REAL_AVTO_MAP_URL` | Agent va katalog javoblari |
-| `BOT_USERNAME`, `CATALOG_URL` | Katalog (Mini App uchun HTTPS) |
-| `LISTING_FREEZE_HOURS`, `WORK_HOUR_START/END`, `BUYOUT_REPLY_HOURS` | E'lon muzlatish va «Sotib olamiz» |
-| `INSTAGRAM_ENABLED`, `IG_*` | Instagram (Meta ruxsatidan keyin) |
-To'liq ro'yxat va izohlar: `.env.example`.
+| `GEMINI_API_KEY` (or `GROQ_API_KEY`) | AI for channel posts, voice and video, the sales agent and comments. See 12.10 |
+| `AI_DAILY_BUDGET_USD`, `AI_USER_DAILY_LIMIT` | AI spending cap (default $1/day, 40 requests per customer) |
+| `BUSINESS_NAME`, `BUSINESS_ADDRESS`, `BUSINESS_HOURS`, `REAL_AVTO_MAP_URL` | Used in agent and catalog answers |
+| `BOT_USERNAME`, `CATALOG_URL`, `CRM_URL` | Catalog and CRM Mini Apps (HTTPS only) |
+| `LISTING_FREEZE_HOURS`, `WORK_HOUR_START` / `WORK_HOUR_END`, `BUYOUT_REPLY_HOURS` | Listing freeze and buy-out offers |
+| `COMMENTS_ENABLED`, `COMMENTS_AI_ENABLED`, `COMMENTS_ANSWER_ADMINS`, `DISCUSSION_GROUP_ID` | Channel comments |
+| `CAR_STALE_DAYS` | "Still for sale?" prompt (default 7 days) |
+| `INSTAGRAM_ENABLED`, `IG_*` | Instagram, after Meta approval |
 
-### 12.4 Yangilash
+The complete list with comments is in [`.env.example`](.env.example).
+
+### 12.4 Update
+
 ```bash
 git fetch && git checkout main && git pull
 docker compose build
 docker compose up -d
 docker compose logs -f bot backend catalog | head -100
 ```
-Bot ishga tushganda yangi jadvallar (`cars`, `leads`, ...) va ustunlar avtomatik yaratiladi — qayta ishga tushirish xavfsiz.
 
-### 12.5 HTTPS (katalog Mini App va Instagram webhook uchun)
-Masalan Caddy (sertifikat avtomatik):
+On startup the bot creates the new tables (`cars`, `leads`, …) and columns.
+
+### 12.5 HTTPS
+
+HTTPS is required for the catalog Mini App and the Instagram webhook. Example Caddy configuration (certificates are issued automatically):
+
 ```
-katalog.realavto.uz {
+catalog.example.com {
     reverse_proxy 127.0.0.1:3002
 }
-crm.realavto.uz {
+crm.example.com {
     reverse_proxy 127.0.0.1:3000
 }
-hook.realavto.uz {
+hook.example.com {
     reverse_proxy /webhooks/instagram 127.0.0.1:8081
 }
 ```
-CRM'ni tashqi internetga ochmaslik ham mumkin (faqat VPN / IP cheklovi) — u ichki panel.
 
-### 12.6 Telegram sozlamalari
-- [ ] Bot asosiy kanalda **admin** (postlarni o'qish va joylash)
-- [ ] Bot kanalning **muhokama guruhida admin** (kommentlarga javob)
-- [ ] `ADMIN_TELEGRAM_IDS` — lead va mashina kartalarini oladigan jamoa
-- [ ] (ixtiyoriy) Telegram Business: egasining akkauntida *Chatbotlar* → bot, **kontaktlarni chiqarib tashlang**
+The CRM is an internal panel. You may keep it off the public internet (VPN or IP allow-list).
 
-### 12.7 Kanal tarixini import qilish
-Yangilangan bot **birinchi ishga tushganda** avvaldan tasdiqlangan (sotuvdagi) bot e'lonlarini mashinalar bazasiga
-o'zi ko'chiradi — AI agent ularni darhol taklif qila oladi (logda: «Eski tasdiqlangan e'lonlardan N ta mashina
-bazaga qo'shildi»). Kanal tarixini importni **shundan keyin** qiling — bot e'lonlari ikki marta tushmaydi.
+### 12.6 Telegram
 
-Telegram Desktop → kanal → Export chat history (JSON, rasmlarsiz) → serverga `/opt/real_avto_bot/import/result.json`:
+- [ ] The bot is an **admin** in the main channel and in its **discussion group**.
+- [ ] `ADMIN_TELEGRAM_IDS` lists the team that receives lead and car cards.
+- [ ] Optional, Telegram Business: in the owner's account open *Chatbots*, add the bot, and **exclude contacts**.
+
+### 12.7 Import channel history
+
+On its **first start**, the upgraded bot copies previously approved bot listings that are still on sale into the inventory. The log shows the number of cars added.
+
+Import the channel history **after** that, so bot listings are not added twice:
+
+1. Export from Telegram Desktop: channel → *Export chat history* → JSON, without media.
+2. Copy the export to the server as `/opt/real_avto_bot/import/result.json`.
+3. Run:
+
 ```bash
 docker compose cp import/result.json bot:/app/result.json
 docker compose exec bot python -m scripts.import_channel_export /app/result.json --dry-run
 docker compose exec bot python -m scripts.import_channel_export /app/result.json --ai
 ```
 
-### 12.8 Tekshiruv (smoke test)
-- [ ] Kanalga test post tashlang → adminlarga «🆕 Kanalda yangi mashina» kartasi keldi
-- [ ] Postni tahrirlab «SOTILDI» yozing → «🔴 sotildi» xabari
-- [ ] Botga boshqa akkauntdan «Cobalt bormi?» → bazadan javob; «menejer bilan gaplashmoqchiman» → lead kartasi
-- [ ] Lead kartasiga reply → javob mijozga bordi
-- [ ] Botda test e'lon → kartada «⏳ … da avtomatik chiqadi» va «💰 Sotib olamiz»
-- [ ] `/statistika`, CRM «Mashinalar» va «Mijozlar (AI)» sahifalari ochiladi
-- [ ] Katalog: `https://katalog…` ochiladi, rasmlar ko'rinadi, botda «🚗 Katalog» tugmasi bor
+### 12.8 Smoke test
 
-### 12.9 Orqaga qaytarish
+- [ ] **New post:** post a car to the channel → admins receive "🆕 Kanalda yangi mashina".
+- [ ] **Edit:** change the post to say "SOTILDI" → the car is marked sold.
+- [ ] **Reply:** reply "sotildi" to an old post that is not in the database → the car is restored and marked sold.
+- [ ] **Speech:** post a spoken round video → the card shows "🎙 Eshitilgani (Gemini): …".
+- [ ] **Agent:** from another account, ask the bot "Cobalt bormi?" → it answers from the database. "I want to talk to a manager" → a lead card is sent.
+- [ ] **Lead reply:** reply to the lead card → the customer receives the message.
+- [ ] **Comments:** comment "narxi qancha?" under a post → a public answer appears.
+- [ ] **Listing:** submit a test listing → the card shows the scheduled time and "💰 Sotib olamiz".
+- [ ] **Statistics:** `/statistika` works, and the CRM *Cars* and *Customers (AI)* pages open.
+- [ ] **Catalog:** the catalog opens over HTTPS, photos load, and the bot shows the "🚗 Katalog" button.
+
+### 12.9 Rollback
+
 ```bash
-git checkout <oldingi-commit> && docker compose build && docker compose up -d
-# Ma'lumotni qaytarish kerak bo'lsa:
+git checkout <previous-commit> && docker compose build && docker compose up -d
+# Only if data must be restored as well:
 gunzip -c ~/backup_before_ai_crm_YYYY-MM-DD.sql.gz | docker compose exec -T db psql -U postgres real_avto_konkurs
 ```
-Yangi jadvallar eski kodga xalaqit bermaydi — faqat kodni qaytarish yetarli bo'lishi mumkin.
 
-### 12.10 Gemini'ga o'tish (video + ovoz + o'zbek tili)
+The new tables do not affect the old code, so rolling back the code alone is usually enough.
 
-1. Kalit oling: <https://aistudio.google.com/apikey> → loyihada **billing** yoqing (bepul tarif limiti prod uchun kichik).
-2. Ildiz `.env`:
+### 12.10 Switching to Gemini (video + voice + Uzbek)
+
+1. **Get a key** at <https://aistudio.google.com/apikey> and enable **billing** on the project. Free-tier limits are too low for production.
+2. **Configure** the root `.env`:
    ```env
-   AI_PROVIDER=auto          # GEMINI_API_KEY bo'lsa Gemini tanlanadi
+   AI_PROVIDER=auto          # Gemini is selected when GEMINI_API_KEY is set
    GEMINI_API_KEY=...
-   AI_DAILY_BUDGET_USD=1     # kunlik chegara, oshsa AI ertangacha o'chadi va adminlarga xabar keladi
+   AI_DAILY_BUDGET_USD=1     # when exceeded, AI pauses until tomorrow and admins are notified
    ```
-   `GROQ_API_KEY` ni qoldirish mumkin — `AI_PROVIDER=groq` qilib bir zumda qaytsa bo'ladi.
-3. `docker compose up -d --build bot` → logda `AI: gemini (model=gemini-3.1-flash-lite, yoqilgan=True ...)` chiqadi.
-4. **Sinov:** kanalga gapirilgan dumaloq video va ovozsiz (faqat mashina ko'rsatilgan) video tashlang — admin kartasida
-   «🎙 Eshitilgani» ichida nutq va `[Videoda ko'rinadi]: ...` chiqishi kerak. Faqat ovoz/videodan olingan faktlar
-   avvalgidek **tekshiruv** holatida qoladi (admin tasdiqlaydi).
-5. 20–30 ta haqiqiy namuna bilan aniqlikni tekshiring. Yetmasa: `GEMINI_MODEL=gemini-3.7-flash` (~3x qimmat) yoki
-   `GEMINI_MEDIA_RESOLUTION=medium`.
+   Keep `GROQ_API_KEY` if you want a quick way back (`AI_PROVIDER=groq`).
+3. **Restart:** `docker compose up -d --build bot`. The log must show `AI: gemini (model=gemini-3.1-flash-lite, yoqilgan=True ...)`. If the bot falls back to Groq, admins receive a warning on startup.
+4. **Test:** post a spoken round video and a silent video that only shows a car.
+   - The card should show the speech and a `[Videoda ko'rinadi]: …` line.
+   - Facts taken only from speech or video stay in **Review** until an admin confirms them.
+5. **Tune:** check accuracy on 20–30 real samples. If it is not good enough, set `GEMINI_MODEL` to a larger Flash model (about 3× the cost) or `GEMINI_MEDIA_RESOLUTION=medium`.
 
-**Cheklov:** Telegram bot 20 MB dan katta faylni yuklab bera olmaydi — bunday video AI'siz qayta ishlanadi
-(kanalda saqlanadi, mijozga yuboriladi, faqat tahlil qilinmaydi). Dumaloq video va ovozli xabarlar doim kichik.
+**Limitation:** bots cannot download files larger than 20 MB. Such videos are stored and can be sent to customers, but they are not analysed. Round videos and voice messages are always small enough.
 
-**Taxminiy narx (Flash-Lite):** matn ~$0.0008, 30 s ovoz ~$0.001, 40 s dumaloq video ~$0.003 — oyiga bir necha ming
-xabar bilan **$5–7**. Bugungi xarajat logda va chegara tugaganda adminga keladigan xabarda ko'rinadi.
+**Estimated cost (Flash-Lite):**
 
-### 12.11 Xavfsizlik yangilanishi (shu versiyada)
+| Item | Cost |
+|---|---|
+| Text message | ≈ $0.0008 |
+| 30 s voice message | ≈ $0.001 |
+| 40 s round video | ≈ $0.003 |
 
-- **Backend porti** endi faqat `127.0.0.1:3001`. Brauzerda `http://IP:3001/...` ishlamaydi — CRM: `http://IP:3000`
-  yoki HTTPS domen. Host'dagi Caddy `localhost:3001` ga proksi qilsa — o'zgarish shart emas.
-- **`backend/.env`:** `NODE_ENV=production` bo'lsa `JWT_SECRET` kamida 32 belgi va `CRM_ADMIN_PASSWORD`
-  `admin123` bo'lmasligi shart — aks holda backend ishga tushmaydi (`docker compose logs backend` → `[FATAL]`).
-- **CRM login:** 15 daqiqada IP+login bo'yicha 8 ta xato urinishdan keyin vaqtincha bloklanadi (429).
-- **Redis** FSM ma'lumotini diskka yozadi (`redis_data` volume) va xotira to'lsa o'chirmaydi — restartda
-  foydalanuvchilarning yarim to'ldirilgan formalari yo'qolmaydi.
-- **Bot healthcheck:** `docker compose ps` da bot `healthy` — Telegram API ga har 30 soniyada ulanish tekshiriladi.
-- **Yangi admin buyruqlari:** `/navbat` — moderatsiya kutayotgan foydalanuvchi e'lonlarini tugmalar bilan qayta
-  yuboradi; `/umumiy` — foydalanuvchi/e'lon/sotuv statistikasi.
+A few thousand messages a month comes to roughly **$5–7**. Today's spend appears in the log and in the admin alert when the cap is reached.
+
+### 12.11 Security changes in this release
+
+- **CRM API port:** the API is bound to `127.0.0.1:3001` only. Open the CRM through `http://IP:3000` or its HTTPS domain. A reverse proxy on the host that targets `localhost:3001` keeps working.
+- **Production checks:** with `NODE_ENV=production`, the backend refuses to start with a short `JWT_SECRET` or the default `CRM_ADMIN_PASSWORD`. The reason is logged as `[FATAL]` (`docker compose logs backend`).
+- **Login throttling:** 8 failed attempts per IP and username within 15 minutes cause a temporary block (HTTP 429). Passwords are hashed with scrypt.
+- **Redis persistence:** Redis persists bot conversation state (`redis_data` volume, AOF, `noeviction`), so half-filled forms survive restarts.
+- **Non-root containers:** the bot and CRM API containers run as non-root users.
+- **Admin commands:**
+  - `/navbat` re-sends listings waiting for moderation;
+  - `/umumiy` shows user, listing, sales and AI-spend statistics.

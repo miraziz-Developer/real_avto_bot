@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
@@ -71,7 +71,7 @@ async def _run_once(
     first_after: timedelta,
     repeat: str,
 ) -> int:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with session_factory() as session:
         rows = await CrmRepository(session).listings_due_for_sale_followup(
             now=now,

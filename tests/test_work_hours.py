@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import pytest
 
@@ -28,7 +28,7 @@ def test_add_work_hours(start, hours, expected):
 
 
 def test_input_in_utc():
-    start = datetime(2026, 10, 5, 15, 0, tzinfo=timezone.utc)  # Toshkent 20:00
+    start = datetime(2026, 10, 5, 15, 0, tzinfo=UTC)  # Toshkent 20:00
     assert add_work_hours(start, 6, start_hour=9, end_hour=21) == tk(6, 14)
 
 

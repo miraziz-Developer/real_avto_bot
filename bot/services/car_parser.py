@@ -426,6 +426,8 @@ _COLOR_RE = re.compile(
 _PAINT_RE = re.compile(
     r"(?<![\w])(?:kraskasi|kraska|краскаси|краска|покраска)(?![\w'])\s*[:\-–]?\s*([^\n,;]{2,80})", re.IGNORECASE
 )
+# «Kraska: ...» — ajratgich bilan yozilgan qiymat har doim olinadi
+_PAINT_LABELLED_RE = re.compile(r"(?:kraskasi|kraska|краскаси|краска|покраска)\s*[:\-–]", re.IGNORECASE)
 # Ajratgichsiz (ko'pincha ovozdan) qiymat faqat shu so'zlar bilan boshlansa olinadi — «kraska ikkilaydigan bo'lsak» emas
 _PAINT_VALUE_OK_RE = re.compile(
     r"^\s*(?:\d|(?:toza|chistiy|чистый|чист|тоза|yo'q|йўқ|нет|bor|бор|ideal|zavod|завод|bir|ikki|uch|to'rt|besh|"
@@ -495,9 +497,8 @@ def parse_car_text(text: str, *, usd_rate_uzs: int) -> ParsedCar:
     pos = _POSITION_RE.search(t) or _POSITION_RE2.search(t)
     color_m = _COLOR_RE.search(t)
     paint_m = _PAINT_RE.search(t)
-    if paint_m and not re.search(r"(?:kraskasi|kraska|краскаси|краска|покраска)\s*[:\-–]", paint_m.group(0), re.IGNORECASE):
-        if not _PAINT_VALUE_OK_RE.match(paint_m.group(1)):
-            paint_m = None
+    if paint_m and not _PAINT_LABELLED_RE.match(paint_m.group(0)) and not _PAINT_VALUE_OK_RE.match(paint_m.group(1)):
+        paint_m = None
     loc_m = next((m for m in _LOCATION_RE.finditer(t) if not _NOT_LOCATION_RE.search(m.group(1))), None)
     has_accident = True if _ACCIDENT_YES_RE.search(t) else (False if _ACCIDENT_NO_RE.search(t) else None)
     return ParsedCar(

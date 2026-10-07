@@ -46,6 +46,7 @@ from bot.workers.sale_followup import sale_followup_loop
 from bot.workers.lead_reminder import lead_reminder_loop
 from bot.workers.listing_freeze import listing_freeze_loop
 from bot.workers.stale_cars import stale_cars_loop
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -276,11 +277,10 @@ async def _set_catalog_menu_button(bot: Bot) -> None:
             logger.warning("Menyu tugmasini tozalab bo'lmadi: %s", e)
     if not settings.crm_url.startswith("https://"):
         for aid in settings.admin_telegram_ids:
-            try:
-                # «Default» — global (BotFather) tugmaga qaytaradi; aniq «buyruqlar» tugmasi qo'yamiz
+            # «Default» would fall back to the BotFather button, so set an explicit commands button.
+            # TelegramBadRequest: the admin has not started the bot yet.
+            with contextlib.suppress(TelegramBadRequest):
                 await bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonCommands())
-            except TelegramBadRequest:
-                pass  # admin hali botga /start bosmagan
         logger.info("CRM_URL berilmagan — «Admin panel» tugmasi olib tashlandi (CRM: brauzerda oching)")
     if settings.crm_url.startswith("https://"):
         for aid in settings.admin_telegram_ids:
@@ -362,10 +362,8 @@ async def _run() -> None:
     finally:
         # worker_lb.cancel()
         heartbeat.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await heartbeat
-        except asyncio.CancelledError:
-            pass
         worker_sale.cancel()
         worker_stale.cancel()
         worker_leads.cancel()
@@ -376,10 +374,8 @@ async def _run() -> None:
         # except asyncio.CancelledError:
         #     pass
         for w in (worker_sale, worker_stale, worker_leads, worker_freeze, worker_posts):
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await w
-            except asyncio.CancelledError:
-                pass
         await close_ai()
         if ig_runner is not None:
             await ig_runner.cleanup()

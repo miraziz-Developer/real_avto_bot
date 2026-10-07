@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from bot.db.migrate import apply_listing_payment_unique_id_column
 from bot.db.models import Base, ListingSubmissionStatus
 from bot.db.repositories import CrmRepository
+from datetime import UTC
 
 DB_URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DB_URL, reason="TEST_DATABASE_URL berilmagan")
@@ -176,7 +177,7 @@ async def test_sale_feedback_double_click_only_once(factory):
 
 
 async def test_stale_feedback_pending_is_prompted_again(factory):
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from sqlalchemy import text
 
@@ -196,7 +197,7 @@ async def test_stale_feedback_pending_is_prompted_again(factory):
         )
         await s.commit()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with factory() as s:
         due = await CrmRepository(s).listings_due_for_sale_followup(
             now=now, interval=timedelta(hours=24), first_after=timedelta(hours=1)
@@ -213,7 +214,7 @@ async def test_stale_feedback_pending_is_prompted_again(factory):
 
 
 async def test_fresh_feedback_pending_is_not_interrupted(factory):
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     lid = await _new_listing(factory, tg_id=12)
     async with factory() as s:
@@ -226,7 +227,7 @@ async def test_fresh_feedback_pending_is_not_interrupted(factory):
         await s.commit()
     async with factory() as s:
         due = await CrmRepository(s).listings_due_for_sale_followup(
-            now=datetime.now(timezone.utc) + timedelta(hours=2),
+            now=datetime.now(UTC) + timedelta(hours=2),
             interval=timedelta(hours=24),
             first_after=timedelta(hours=1),
         )

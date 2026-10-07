@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   bot:
-    name: Bot (Python) — unit + PostgreSQL + Dispatcher testlari
+    name: Bot (Python) — unit, PostgreSQL and dispatcher tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -26,7 +26,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      # Testlar haqiqiy Telegram/Groq'ga ulanmaydi — soxta qiymatlar yetarli
+      # Tests never call Telegram or AI providers — dummy values are enough
       DATABASE_URL: postgresql+asyncpg://x:x@localhost/x
       BOT_TOKEN: "1:x"
       CHANNEL_ID: "@x"
@@ -41,11 +41,13 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check bot scripts tests
       - run: python -m compileall -q bot
       - run: pytest tests -q
 
   web:
-    name: CRM backend testlari + frontend/katalog build
+    name: CRM backend tests, frontend and catalog builds
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,22 +60,22 @@ jobs:
       - name: CRM frontend
         working-directory: frontend
         run: npm ci && npm run build
-      - name: Katalog (sayt + Mini App)
+      - name: Catalog (website + Mini App)
         working-directory: catalog
         run: npm ci && npm run build
 
   compose:
-    name: docker compose konfiguratsiyasi + image build
+    name: docker compose config and image builds
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Konfiguratsiya
+      - name: Validate configuration
         run: |
           touch .env backend/.env
           POSTGRES_PASSWORD=ci docker compose config -q
-      - name: Barcha image'larni build qilish (bot, backend, CRM, katalog)
+      - name: Build all images (bot, backend, CRM, catalog)
         run: POSTGRES_PASSWORD=ci docker compose build
-      - name: Bot image ichida (Python 3.13, root emas) butun kod import bo'ladimi
+      - name: Import the whole bot inside the image (Python 3.13, non-root)
         run: |
           POSTGRES_PASSWORD=ci docker compose run --rm --no-deps \
             -e DATABASE_URL=postgresql+asyncpg://x:x@db/x -e BOT_TOKEN=1:x -e CHANNEL_ID=@x \
@@ -81,7 +83,7 @@ jobs:
             bot python -c "import bot.main, scripts.import_channel_export, os; assert os.getuid() != 0; print('bot image OK')"
 
   backend-smoke:
-    name: Backend — haqiqiy PostgreSQL bilan ishga tushirish
+    name: Backend smoke test against PostgreSQL
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -98,7 +100,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Ishga tushirish, health va login
+      - name: Start, health check and login
         working-directory: backend
         env:
           PORT: "3999"

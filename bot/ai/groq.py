@@ -90,7 +90,7 @@ class GroqClient:
                     last = f"HTTP {resp.status}: {body[:300]}"
                     if resp.status not in _RETRY_STATUSES:
                         break
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            except (TimeoutError, aiohttp.ClientError) as e:
                 last = f"{type(e).__name__}: {e}"
             await asyncio.sleep(1.5 * (attempt + 1))
         raise AIError(last or "Groq javob bermadi")

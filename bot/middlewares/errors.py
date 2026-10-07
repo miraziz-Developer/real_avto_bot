@@ -7,7 +7,8 @@ shunda xato avval DB sessiyasini rollback qiladi, keyin shu yerda ushlanadi.
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable
+from typing import Any
+from collections.abc import Awaitable, Callable
 
 from aiogram import BaseMiddleware
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError

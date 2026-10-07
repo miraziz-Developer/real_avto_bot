@@ -1,7 +1,7 @@
-# Bot kod yangilanganda image qayta build:
+# After code changes, rebuild the image:
 #   docker compose build bot --no-cache && docker compose up -d bot
 #
-# Server rebootdan keyin avtomatik ishga tushirish: scripts/real-avto-stack.service ni systemd ga qo'shing.
+# Start on boot: install scripts/real-avto-stack.service as a systemd unit.
 
 x-logging: &default-logging
   driver: json-file
@@ -14,8 +14,8 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      # Parol kodda emas — ildiz .env dagi POSTGRES_PASSWORD (DATABASE_URL lardagi parol bilan bir xil bo'lsin)
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ildiz .env da POSTGRES_PASSWORD kerak}
+      # Never hard-coded: POSTGRES_PASSWORD from the root .env (must match the password in every DATABASE_URL)
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in the root .env}
       POSTGRES_DB: real_avto_konkurs
     volumes:
       - pg_data:/var/lib/postgresql/data
@@ -31,7 +31,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    # FSM (e'lon formasi) ma'lumotlari o'chib ketmasligi uchun: noeviction + AOF.
+    # Conversation state (listing forms) must survive restarts and memory pressure: noeviction + AOF.
     command: redis-server --maxmemory 256mb --maxmemory-policy noeviction --appendonly yes
     volumes:
       - redis_data:/data
@@ -49,11 +49,11 @@ services:
     build: ./backend
     env_file:
       - ./backend/.env
-    # Katalog uchun ildiz .env dan faqat kerakli qiymatlar (Groq/Instagram kalitlari backend'ga berilmaydi)
+    # Only the root .env values the catalog needs (AI and Instagram keys are not passed to the backend)
     environment:
       BOT_TOKEN: ${BOT_TOKEN:-}
       BOT_USERNAME: ${BOT_USERNAME:-}
-      # Telegram Mini App orqali CRM'ga parolsiz kirish huquqi
+      # Password-less CRM sign-in through the Telegram Mini App
       ADMIN_TELEGRAM_IDS: ${ADMIN_TELEGRAM_IDS:-}
       SALES_PHONE: ${SALES_PHONE:-}
       BUSINESS_NAME: ${BUSINESS_NAME:-}
@@ -76,7 +76,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 25s
-    # Faqat server ichidan (CRM/katalog nginx va host'dagi Caddy orqali). Internetga ochilmaydi.
+    # Local only (reached through the CRM/catalog nginx or a host reverse proxy). Never exposed directly.
     ports:
       - "127.0.0.1:3001:3001"
     restart: unless-stopped
@@ -100,7 +100,7 @@ services:
     stop_grace_period: 15s
     logging: *default-logging
 
-  # Ochiq mashinalar katalogi (sayt + Telegram Mini App). Faqat /api/public/ ni proksi qiladi
+  # Public car catalog (website + Telegram Mini App). Proxies /api/public/ only
   catalog:
     build: ./catalog
     depends_on:
@@ -122,7 +122,7 @@ services:
     build: .
     env_file:
       - .env
-    # Instagram webhook (INSTAGRAM_ENABLED=true bo'lsa). Tashqariga HTTPS reverse-proxy orqali chiqaring
+    # Instagram webhook (when INSTAGRAM_ENABLED=true). Expose through an HTTPS reverse proxy
     ports:
       - "127.0.0.1:8081:8081"
     environment:

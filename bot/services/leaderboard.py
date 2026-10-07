@@ -1,5 +1,5 @@
 import html
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
@@ -117,7 +117,7 @@ class LeaderboardService:
 
     @staticmethod
     def _now_str() -> str:
-        return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        return datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     @classmethod
     async def post_to_channel(cls, bot: Bot, rows: list[User]) -> None:

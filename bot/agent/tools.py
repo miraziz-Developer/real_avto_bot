@@ -7,7 +7,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Any
 
 from aiogram import Bot
@@ -21,6 +21,7 @@ from bot.db.repositories import CrmRepository
 from bot.services.car_cards import channel_post_url
 from bot.services.lead_cards import send_lead_card
 from bot.services.car_parser import _PHONE_RE
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +70,8 @@ async def send_car_media(
             logger.warning("Video yuborilmadi (car #%s): %s", car.id, e)
     if sent and not photos and caption and all(v.startswith(VIDEO_NOTE_PREFIX) for v in videos):
         # Dumaloq videoga izoh qo'yib bo'lmaydi — nomi va narxini alohida yozamiz
-        try:
+        with contextlib.suppress(TelegramBadRequest, TelegramForbiddenError):
             await bot.send_message(chat_id, caption, business_connection_id=bc, parse_mode=None)
-        except (TelegramBadRequest, TelegramForbiddenError):
-            pass
     return sent
 
 
@@ -179,7 +178,7 @@ def car_for_agent(car: Car) -> dict[str, Any]:
     """Agentga beriladigan mashina ma'lumoti — faqat bazadagi faktlar."""
     days = None
     if car.published_at:
-        days = (datetime.now(timezone.utc) - car.published_at).days
+        days = (datetime.now(UTC) - car.published_at).days
     d: dict[str, Any] = {
         "id": car.id,
         "title": car.title,

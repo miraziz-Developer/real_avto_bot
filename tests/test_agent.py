@@ -8,7 +8,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from types import SimpleNamespace
 
 import pytest
@@ -113,7 +113,7 @@ def final(text_: str) -> dict:
 
 async def _seed(s) -> dict[str, int]:
     cars = CarRepository(s)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     async def mk(status=None, **kw):
         base = dict(brand="Chevrolet", model="Cobalt", year=2020, mileage_km=98000, price_usd=9200, confidence=0.9)
@@ -286,7 +286,7 @@ async def test_take_back_to_ai_and_reminder(session_factory):
         await _seed(s)
         ctx = await _ctx(s, bot)
         assert await ctx.leads.hand_off(ctx.lead, reason="r", summary=None)
-        ctx.lead.handed_off_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+        ctx.lead.handed_off_at = datetime.now(UTC) - timedelta(minutes=10)
         await s.commit()
     assert await remind_once(bot, session_factory) == 1
     assert any("daqiqadan beri hech kim olmadi" in t for _, _, t in bot.sent)

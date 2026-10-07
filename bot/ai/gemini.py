@@ -184,7 +184,7 @@ class GeminiClient:
                     last = f"HTTP {resp.status}: {body[:300]}"
                     if resp.status not in _RETRY_STATUSES:
                         break
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            except (TimeoutError, aiohttp.ClientError) as e:
                 last = f"{type(e).__name__}: {e}"
             await asyncio.sleep(1.5 * (attempt + 1))
         raise AIError(last or "Gemini javob bermadi")
@@ -293,7 +293,7 @@ class GeminiClient:
                 if resp.status != 200:
                     raise AIError(f"Fayl yuklanmadi: HTTP {resp.status} {body[:200]}")
                 info = json.loads(body).get("file") or {}
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        except (TimeoutError, aiohttp.ClientError) as e:
             raise AIError(f"Fayl yuklanmadi: {e}") from e
         name, uri = info.get("name", ""), info.get("uri", "")
         if not name or not uri:

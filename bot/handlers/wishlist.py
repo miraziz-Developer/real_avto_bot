@@ -38,6 +38,7 @@ from bot.utils import messages as msg
 from bot.utils.contact_html import sales_phones_links_html
 from bot.utils.currency import fmt_usd
 from bot.utils.listing_links import channel_post_url
+import contextlib
 
 router = Router(name="wishlist")
 
@@ -788,7 +789,7 @@ async def wl_interest_yes(cq: CallbackQuery, crm: CrmRepository) -> None:
         if ask_u
         else None
     )
-    try:
+    with contextlib.suppress(TelegramBadRequest):
         await cq.bot.send_message(
             cq.from_user.id,
             footer,
@@ -796,8 +797,6 @@ async def wl_interest_yes(cq: CallbackQuery, crm: CrmRepository) -> None:
             reply_markup=reply_kb,
             disable_web_page_preview=True,
         )
-    except TelegramBadRequest:
-        pass
 
     phone = html.escape((client.phone or "—")[:32])
     name = html.escape((client.full_name or "Mijoz")[:120])
@@ -810,15 +809,11 @@ async def wl_interest_yes(cq: CallbackQuery, crm: CrmRepository) -> None:
         f"💰 {html.escape(fmt_usd(sub.price_ask_usd))}"
     )
     for aid in settings.admin_telegram_ids:
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.bot.send_message(aid, adm, parse_mode=ParseMode.HTML)
-        except TelegramBadRequest:
-            pass
 
-    try:
+    with contextlib.suppress(TelegramBadRequest):
         await cq.message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest:
-        pass
 
 
 @router.callback_query(F.data.startswith("wl_l:"))
@@ -840,10 +835,8 @@ async def wl_interest_later(cq: CallbackQuery, crm: CrmRepository) -> None:
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
     await cq.answer("Yaxshi — boshqa mos e'lon chiqqanda yana xabar beramiz.")
-    try:
+    with contextlib.suppress(TelegramBadRequest):
         await cq.message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest:
-        pass
 
 
 @router.message(StateFilter(WishlistStates))

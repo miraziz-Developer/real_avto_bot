@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
@@ -21,7 +21,7 @@ async def leaderboard_loop(bot: Bot, session_factory: async_sessionmaker[AsyncSe
                 try:
                     meta = AppMetaRepository(session)
                     users_repo = UserRepository(session)
-                    now = datetime.now(timezone.utc)
+                    now = datetime.now(UTC)
                     next_at = await meta.get_next_leaderboard_at()
                     if next_at is None:
                         await meta.set_next_leaderboard_at(

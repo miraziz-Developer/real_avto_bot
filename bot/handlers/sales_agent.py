@@ -34,6 +34,7 @@ from bot.db.models import CarStatus, Lead
 from bot.db.repositories import CrmRepository
 from bot.services.lead_cards import lead_score, send_lead_card
 from bot.utils.currency import fmt_price
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -149,10 +150,8 @@ async def handle_customer_text(
             business_connection_id=business_connection_id,
             buttons_supported=business_connection_id is None,
         )
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await bot.send_chat_action(user.id, ChatAction.TYPING, business_connection_id=business_connection_id)
-        except TelegramBadRequest:
-            pass
         reply, kb = await generate_agent_reply(ctx, text)
 
         await leads.add_message(lead, "assistant", reply)

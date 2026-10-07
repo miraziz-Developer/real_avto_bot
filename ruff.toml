@@ -1,0 +1,21 @@
+# Lint configuration (ruff). Run: ruff check bot scripts tests
+target-version = "py311"
+line-length = 120
+extend-exclude = ["frontend", "catalog", "backend"]
+
+[lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "B",       # bugbear
+    "SIM",     # simplifications
+    "UP",      # modern syntax
+    "PIE",
+    "C4",      # comprehensions
+]
+ignore = [
+    "E501",    # long lines: Uzbek prompts and user-facing texts are kept on one line
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["B011", "SIM117", "C408"]  # dict(...) keeps test fixtures readable

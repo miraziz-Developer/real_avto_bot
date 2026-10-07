@@ -18,6 +18,7 @@ from bot.db.models import CarStatus
 from bot.db.repositories import CrmRepository
 from bot.handlers.ad_listing import listing_caption_from_sub_public, truncate_caption_html
 from bot.utils.contact_html import sales_phones_links_html
+import contextlib
 
 router = Router(name="listing_sale_followup")
 
@@ -101,18 +102,14 @@ async def listing_sale_callback(cq: CallbackQuery, state: FSMContext, crm: CrmRe
             return
         await state.clear()
         await cq.answer("Bekor qilindi.")
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.answer(
                 "Sharh bekor qilindi. Keyinroq yana "
                 f"{sale_followup_retry_hint(settings)} so'raymiz.",
                 parse_mode=ParseMode.HTML,
             )
-        except TelegramBadRequest:
-            pass
         return
 
     if action == "n":
@@ -121,14 +118,10 @@ async def listing_sale_callback(cq: CallbackQuery, state: FSMContext, crm: CrmRe
             await cq.answer("Bu e'lon uchun javob qabul qilinmadi.", show_alert=True)
             return
         await cq.answer()
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.answer(_not_sold_message_html(), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-        except TelegramBadRequest:
-            pass
         return
 
     if action == "y":
@@ -137,16 +130,14 @@ async def listing_sale_callback(cq: CallbackQuery, state: FSMContext, crm: CrmRe
             await cq.answer("Bu e'lon uchun «sotildi» bosilmadi yoki allaqachon yopilgan.", show_alert=True)
             return
         await cq.answer()
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
         await state.set_state(ListingSaleReviewStates.waiting_review)
         await state.update_data(lid=lid)
         kb = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"lfs:{lid}:cancel")]],
         )
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await cq.message.answer(
                 "🎉 <b>Tabriklaymiz!</b>\n\n"
                 "Real Avto jamoasi uchun <b>iliq so‘z</b>, <b>qisqa video</b> yoki "
@@ -156,8 +147,6 @@ async def listing_sale_callback(cq: CallbackQuery, state: FSMContext, crm: CrmRe
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb,
             )
-        except TelegramBadRequest:
-            pass
         return
 
     await cq.answer()
@@ -170,10 +159,8 @@ async def listing_sale_cmd_cancel(message: Message, state: FSMContext, crm: CrmR
     await state.clear()
     if isinstance(lid, int):
         await crm.try_revert_sale_feedback_pending(lid, user_telegram_id=message.from_user.id)
-    try:
+    with contextlib.suppress(TelegramBadRequest):
         await message.answer("Bekor qilindi.", parse_mode=ParseMode.HTML)
-    except TelegramBadRequest:
-        pass
 
 
 _ALLOWED_REVIEW = frozenset(
@@ -194,14 +181,12 @@ async def listing_sale_in_review_state(
     message: Message, state: FSMContext, crm: CrmRepository, cars: CarRepository
 ) -> None:
     if message.content_type not in _ALLOWED_REVIEW:
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await message.answer(
                 "Iltimos, matn, rasm, video, dumaloq video yoki ovoz yuboring.\n"
                 "Bekor: /cancel",
                 parse_mode=ParseMode.HTML,
             )
-        except TelegramBadRequest:
-            pass
         return
 
     data = await state.get_data()
@@ -213,10 +198,8 @@ async def listing_sale_in_review_state(
     sub = await crm.try_finalize_sale_sold(lid, user_telegram_id=uid)
     if sub is None:
         await state.clear()
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await message.answer("Bu qadam endi amal qilmaydi. Yangi so‘rov kuting.")
-        except TelegramBadRequest:
-            pass
         return
 
     car = await cars.find_by_listing(lid)
@@ -227,12 +210,10 @@ async def listing_sale_in_review_state(
     await _append_sold_to_channel_caption(message.bot, sub)
 
     await state.clear()
-    try:
+    with contextlib.suppress(TelegramBadRequest):
         await message.answer(
             "🙏 <b>Rahmat!</b> Biz bilan ishlaganingiz uchun minnatdorligimizni bildiramiz.\n"
             "Sharhingiz sharhlar kanaliga yo‘naltirildi; asosiy kanaldagi "
             "e'lon matniga <b>SOTILDI</b> belgisi qo‘shildi.",
             parse_mode=ParseMode.HTML,
         )
-    except TelegramBadRequest:
-        pass

@@ -7,7 +7,7 @@ odam rejimida mijoz xabari → adminga, FSM oqimidagi foydalanuvchi matnini agen
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import pytest
 from aiogram import Bot, Dispatcher
@@ -81,7 +81,7 @@ class MockSession(BaseSession):
         self._mid += 1
         return Message(
             message_id=self._mid,
-            date=datetime.now(timezone.utc),
+            date=datetime.now(UTC),
             chat=Chat(id=chat_id, type="private"),
             text=text_,
         )
@@ -176,10 +176,10 @@ _ids = iter(range(1, 100_000))
 def _msg(user_id: int, text_: str, *, reply_to: int | None = None) -> Message:
     reply = None
     if reply_to is not None:
-        reply = Message(message_id=reply_to, date=datetime.now(timezone.utc), chat=Chat(id=user_id, type="private"), text="x")
+        reply = Message(message_id=reply_to, date=datetime.now(UTC), chat=Chat(id=user_id, type="private"), text="x")
     return Message(
         message_id=next(_ids),
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=Chat(id=user_id, type="private"),
         from_user=User(id=user_id, is_bot=False, first_name="Aziz" if user_id == CUSTOMER_ID else "Jasur"),
         text=text_,
@@ -271,7 +271,7 @@ def _biz_msg(from_id: int, text_: str, *, from_bot: bool = False) -> Update:
         update_id=next(_ids),
         business_message=Message(
             message_id=next(_ids),
-            date=datetime.now(timezone.utc),
+            date=datetime.now(UTC),
             chat=Chat(id=BIZ_CUSTOMER_ID, type="private"),
             from_user=User(id=from_id, is_bot=False, first_name="Ikrom aka" if from_id == OWNER_ID else "Bobur"),
             text=text_,
@@ -291,7 +291,7 @@ async def test_business_chat_ai_replies_and_owner_takes_over(env):
                 id="bc1",
                 user=User(id=OWNER_ID, is_bot=False, first_name="Ikrom aka"),
                 user_chat_id=OWNER_ID,
-                date=datetime.now(timezone.utc),
+                date=datetime.now(UTC),
                 can_reply=True,
                 is_enabled=True,
             ),
@@ -351,11 +351,11 @@ async def test_channel_comments_answer_questions_from_db(env):
             update_id=next(_ids),
             message=Message(
                 message_id=auto_id,
-                date=datetime.now(timezone.utc),
+                date=datetime.now(UTC),
                 chat=Chat(id=GROUP_ID, type="supergroup"),
                 sender_chat=CHANNEL_CHAT,
                 is_automatic_forward=True,
-                forward_origin=MessageOriginChannel(date=datetime.now(timezone.utc), chat=CHANNEL_CHAT, message_id=55),
+                forward_origin=MessageOriginChannel(date=datetime.now(UTC), chat=CHANNEL_CHAT, message_id=55),
                 text="Gentra 2019 ...",
             ),
         ),
@@ -366,7 +366,7 @@ async def test_channel_comments_answer_questions_from_db(env):
             update_id=next(_ids),
             message=Message(
                 message_id=next(_ids),
-                date=datetime.now(timezone.utc),
+                date=datetime.now(UTC),
                 chat=Chat(id=GROUP_ID, type="supergroup"),
                 from_user=User(id=uid, is_bot=False, first_name="Sardor"),
                 text=text_,
@@ -418,7 +418,7 @@ async def _pending_listing(factory, *, frozen_until: datetime | None = None, buy
             photo_file_ids=["a1", "a2"],
             payment_screenshot_file_id=None,
         )
-        sub.frozen_until = frozen_until or datetime.now(timezone.utc) + timedelta(hours=3)
+        sub.frozen_until = frozen_until or datetime.now(UTC) + timedelta(hours=3)
         sub.buyout_status = buyout_status
         if buyout_status:
             sub.buyout_price_usd = 19000
@@ -445,7 +445,7 @@ async def test_buyout_accepted_bought_and_posted_to_channel(env):
     async with factory() as s:
         sub = await s.get(ListingSubmission, lid)
         assert sub.buyout_status == "offered" and sub.buyout_price_usd == 8500
-        assert sub.frozen_until > datetime.now(timezone.utc) + timedelta(hours=20)  # sotuvchi javobi kutiladi
+        assert sub.frozen_until > datetime.now(UTC) + timedelta(hours=20)  # sotuvchi javobi kutiladi
 
     # Begona odam taklif tugmasini bosa olmaydi
     await dp.feed_update(bot, _callback_update(CUSTOMER_ID, f"lbo:y:{lid}"))
@@ -575,7 +575,7 @@ async def test_channel_edit_completing_car_notifies_saved_searches(env):
     post_id = next(_ids)
 
     def channel_msg(text_: str) -> Message:
-        return Message(message_id=post_id, date=datetime.now(timezone.utc), chat=CHANNEL_CHAT, text=text_)
+        return Message(message_id=post_id, date=datetime.now(UTC), chat=CHANNEL_CHAT, text=text_)
 
     await dp.feed_update(bot, Update(update_id=next(_ids), channel_post=channel_msg("Spark 2021 keldi, 31000 km")))
     async with factory() as s:
@@ -664,7 +664,7 @@ async def test_customer_video_is_seen_by_ai_and_answered(env, monkeypatch):
 
     video_msg = Message(
         message_id=next(_ids),
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=Chat(id=CUSTOMER_ID, type="private"),
         from_user=User(id=CUSTOMER_ID, is_bot=False, first_name="Aziz"),
         video=Video(
@@ -693,7 +693,7 @@ async def test_customer_video_too_big_goes_to_manager_only(env, monkeypatch):
     monkeypatch.setattr(sales_agent, "get_ai", lambda: fake)
     video_msg = Message(
         message_id=next(_ids),
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=Chat(id=CUSTOMER_ID, type="private"),
         from_user=User(id=CUSTOMER_ID, is_bot=False, first_name="Aziz"),
         video=Video(
@@ -770,11 +770,11 @@ async def _comment_setup(factory, dp, bot, *, status=None):
             update_id=next(_ids),
             message=Message(
                 message_id=auto_id,
-                date=datetime.now(timezone.utc),
+                date=datetime.now(UTC),
                 chat=Chat(id=GROUP_ID, type="supergroup"),
                 sender_chat=CHANNEL_CHAT,
                 is_automatic_forward=True,
-                forward_origin=MessageOriginChannel(date=datetime.now(timezone.utc), chat=CHANNEL_CHAT, message_id=77),
+                forward_origin=MessageOriginChannel(date=datetime.now(UTC), chat=CHANNEL_CHAT, message_id=77),
                 text="Gentra 2019 ...",
             ),
         ),
@@ -789,7 +789,7 @@ def _group_msg(
         update_id=next(_ids),
         message=Message(
             message_id=next(_ids),
-            date=datetime.now(timezone.utc),
+            date=datetime.now(UTC),
             chat=Chat(id=chat_id, type="supergroup"),
             from_user=User(id=uid, is_bot=False, first_name="Sardor"),
             text=text_,
@@ -910,11 +910,11 @@ async def test_comment_ai_post_text_used_when_car_unknown(env, comment_ai):
     await _comment_setup(factory, dp, bot)
     old_post = Message(
         message_id=next(_ids),
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=Chat(id=GROUP_ID, type="supergroup"),
         sender_chat=CHANNEL_CHAT,
         is_automatic_forward=True,
-        forward_origin=MessageOriginChannel(date=datetime.now(timezone.utc), chat=CHANNEL_CHAT, message_id=5),
+        forward_origin=MessageOriginChannel(date=datetime.now(UTC), chat=CHANNEL_CHAT, message_id=5),
         text="Nexia 3 2017, narxi 7200$",
     )
     await dp.feed_update(bot, _group_msg(9110, "narxi qancha?", thread=None, reply_to=old_post))

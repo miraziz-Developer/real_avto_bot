@@ -18,6 +18,7 @@ from bot.db.repositories import CrmRepository
 from bot.handlers.ad_listing import listing_caption_from_sub_public, truncate_caption_html
 from bot.services.car_cards import car_from_approved_listing
 from bot.services.wishlist_notify import notify_wishlist_matches
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +76,8 @@ async def publish_listing(
     if updated is None:
         # Boshqa admin (yoki worker) bir vaqtda joylagan — dublikatni o'chiramiz
         for m in msgs:
-            try:
+            with contextlib.suppress(TelegramBadRequest):
                 await bot.delete_message(settings.channel_id, m.message_id)
-            except TelegramBadRequest:
-                pass
         return None
     updated.frozen_until = None
     updated.auto_published = auto

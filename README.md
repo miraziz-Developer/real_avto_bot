@@ -1,150 +1,242 @@
-# Real Avto konkurs
+# Real Avto
 
-Telegram bot (e’lon, wishlist, konkurs, anonim savol), CRM (Node + React), PostgreSQL, Redis.
+Sales automation for a used-car dealership that sells through Telegram: a Telegram bot with an AI sales agent, a channel tracker that keeps an inventory database in sync with the channel, a CRM, and a public car catalog (website + Telegram Mini App).
 
-- **Serverga o‘rnatish (Docker, qadam-baqadam)**: [DEPLOY.md](DEPLOY.md)
-- **Bot `.env` namunasi**: [.env.example](.env.example)
-- **Backend `.env`**: [backend/.env.example](backend/.env.example)
-- **Ishga tushirish (skript)**: `bash scripts/server_bootstrap.sh`
+| Component | Stack | Path |
+|---|---|---|
+| Telegram bot, AI agent, background workers | Python 3.13, aiogram 3, SQLAlchemy (async) | [`bot/`](bot) |
+| CRM API | Node.js 20, Express | [`backend/`](backend) |
+| CRM web app | React 18, Vite | [`frontend/`](frontend) |
+| Public catalog / Mini App | React 18, Vite | [`catalog/`](catalog) |
+| Storage | PostgreSQL 16, Redis 7 | [`docker-compose.yml`](docker-compose.yml) |
 
-Mahalliy testlar: `pip install -r requirements-dev.txt && pytest tests -q`
+- **Server deployment (Docker, step by step):** [DEPLOY.md](DEPLOY.md)
+- **Bot configuration:** [`.env.example`](.env.example) · **CRM API configuration:** [`backend/.env.example`](backend/.env.example)
+- **One-command bootstrap:** `bash scripts/server_bootstrap.sh`
 
----
+## Quick start (local)
 
-## Mashinalar bazasi va kanal kuzatuvchi (AI CRM, 1-bosqich)
-
-Kanalga tashlangan har bir e'lon avtomatik **mashinalar bazasiga** (`cars`) yoziladi — savdo agenti va statistika shu bazadan ishlaydi.
-
-**Qanday ishlaydi**
-- Bot asosiy kanalda (`CHANNEL_ID`) **admin** bo'lishi kerak. Yangi post (matn, albom, dumaloq video) → marka, model, yil, probeg, narx ajratiladi → adminlarga karta boradi.
-- Ma'lumot to'liq bo'lsa — 🟢 *Sotuvda*; yetishmasa — 🟡 *Tekshiruv* (kartadagi «✏️ Tuzatish» orqali to'ldiriladi).
-- **Sotildi** deb belgilash (istalgani): kanal postini tahrirlab «SOTILDI» yozish · postga «sotildi» deb reply · kartadagi «💰 Sotildi» · `/sotildi ID [narx]` · CRM.
-- **Eski postlar** (bot ulanmasdan oldingi): postga reply («sotildi», «bron», «narxi 8000$») yoki postni tahrirlash — bot reply ichidagi asl post matnidan mashinani bazaga tiklaydi va o'zgarishni qo'llaydi (qayta joylangan nusxasi bazada bo'lsa — o'shani topadi).
-- **Sotuvdan keyingi video** (mijoz bilan «muborak», «sotildi», «olib ketishdi» — reply yoki alohida dumaloq video): ovozi tinglanadi. Reply bo'lsa — o'sha post mashinasi sotildi. Alohida bo'lsa — model (yil, rang) bo'yicha bitta mos mashina topilsa sotildi qilinadi, bir nechta bo'lsa adminlardan so'raladi, topilmasa faqat ogohlantirish (keraksiz yozuv yaratilmaydi). «Mijozimizga Gentra muborak!» kabi matnli tabrik posti ham shunday.
-- Bot orqali berilgan va tasdiqlangan e'lonlar ham bazaga tushadi; egasi «sotildi» desa — bazada ham sotildi.
-- `CAR_STALE_DAYS` (7) kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi (ish vaqtida).
-
-**AI (ixtiyoriy)** — `.env` ga `GEMINI_API_KEY` (tavsiya) yoki `GROQ_API_KEY` qo'shilsa: aniqroq tahlil, qisqa xulosa, ovoz va dumaloq videoni tushunish. Gemini videoni **ko'radi** ham (marka, rang, kuzov, spidometr) — Groq faqat ovozni matnga aylantiradi. Kunlik xarajat chegarasi: `AI_DAILY_BUDGET_USD` (standart $1). Kalitsiz ham oddiy (regex) tahlil ishlaydi. Batafsil: [DEPLOY.md 12.10](DEPLOY.md#1210-geminiga-otish-video--ovoz--ozbek-tili).
-
-**Admin buyruqlari (botda)**: `/statistika [kun]` · `/sotuvda` · `/tekshiruv` · `/mashina ID` · `/sotildi ID [narx]`
-Kartada: ✏️ Tuzatish — `narx 9800`, `yil 2021`, `probeg 76000`, o'zimiz olgan bo'lsak `xarid 8000`, `xarajat 300`.
-
-**CRM** → «Mashinalar» bo'limi: sotuvdagilar, jami qiymat, o'rtacha sotilish muddati, turib qolganlar, foyda; har bir mashina tarixi (narx/holat o'zgarishlari).
-
-**Eski postlarni import qilish** (bot qo'shilishidan oldingi kanal tarixi):
 ```bash
-# Telegram Desktop → kanal → ⋮ → Export chat history → JSON
-python -m scripts.import_channel_export path/to/result.json --dry-run   # avval ko'rib chiqish
-python -m scripts.import_channel_export path/to/result.json             # bazaga yozish (--ai — Groq bilan)
+cp .env.example .env              # set BOT_TOKEN, CHANNEL_ID, ADMIN_TELEGRAM_IDS, GEMINI_API_KEY
+cp backend/.env.example backend/.env
+docker compose up -d --build
 ```
-`--active-days` (30) dan eski, sotilganligi noma'lum postlar arxivga tushadi (agent eski mashinani taklif qilmasligi uchun).
 
-**E'lon to'lovi**: hozircha bepul (`LISTING_PAYMENT_ENABLED=false`). Pullik rejim: `true`.
+- CRM: <http://localhost:3000> (credentials from `backend/.env`)
+- Catalog: <http://localhost:3002>
+- Bot logs: `docker compose logs -f bot`
 
-**DB testlari** (haqiqiy Postgres bilan):
+Run only one bot process per token — two pollers on the same token conflict.
+
+## Tests
+
 ```bash
-docker run -d --rm --name realavto-testdb -e POSTGRES_PASSWORD=test -e POSTGRES_DB=realavto_test -p 55432:5432 postgres:16-alpine
+pip install -r requirements.txt -r requirements-dev.txt
+ruff check bot scripts tests                      # lint (configured in ruff.toml)
+pytest tests -q                                   # unit tests (DB tests are skipped)
+
+# Full suite against a real PostgreSQL
+docker run -d --rm --name realavto-testdb -e POSTGRES_PASSWORD=test -e POSTGRES_DB=realavto_test \
+  -p 55432:5432 postgres:16-alpine
 TEST_DATABASE_URL=postgresql+asyncpg://postgres:test@localhost:55432/realavto_test pytest tests -q
 ```
 
----
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push and pull request:
 
-## AI savdo agenti (2-bosqich)
-
-Botga yozilgan har qanday savolga (matn yoki ovoz) agent **faqat mashinalar bazasidan** javob beradi, mijozni «pishiradi» va tayyor bo'lganda menejerga topshiradi.
-
-**Mijoz tomoni**
-- «Cobalt bormi?», «10 000$ gacha avtomat», ovozli xabar — agent sotuvdagi mashinalarni topadi (sotilganini hech qachon taklif qilmaydi), rasmlarini yuboradi, savollarga javob beradi.
-- Mos mashina yo'q bo'lsa — o'xshashlarini taklif qiladi yoki «chiqsa xabar beraman» (qidiruv saqlaydi). Kanalga mos mashina tushishi bilan mijozga xabar boradi.
-- Mijoz tayyor bo'lsa (ko'rishga kelmoqchi, «olaman», narx/kredit so'rayapti, odam bilan gaplashmoqchi) — menejerga topshiriladi.
-- AI kaliti (`GEMINI_API_KEY` / `GROQ_API_KEY`) bo'lmasa yoki kunlik chegara tugasa ham ishlaydi: matndan model/byudjetni ajratib, bazadan ro'yxat + «Menejer bilan bog'lanish» tugmasi.
-- Chegirma, kredit, hujjat bo'yicha va'da bermaydi; ma'lumot yo'q bo'lsa o'ylab topmaydi.
-
-**Menejer tomoni (botda)**
-- 🔥 **Lead kartasi**: ism, telefon, qiziqqan mashina, byudjet, to'lov usuli, kelish vaqti, AI xulosasi, oxirgi xabarlar.
-- **Kartaga reply qilsangiz — javob mijozga boradi** (AI shu zahoti jim turadi). Mijoz javoblari ham sizga keladi.
-- Tugmalar: ✅ Oldim · 🤖 AI davom etsin · 🏁 Sotuv bo'ldi · ❌ Yopish · 💬 To'liq suhbat.
-- `LEAD_REMINDER_MINUTES` (5) ichida hech kim olmasa — barcha adminlarga qayta eslatma.
-- Buyruqlar: `/leadlar` (ochiq mijozlar) · `/lead ID`.
-
-**CRM** → «Mijozlar (AI)»: ochiq mijozlar, menejer kutayotganlar, konversiya, topshirishgacha vaqt, har bir suhbat to'liq.
-
-**Sozlamalar** (`.env`): `AGENT_ENABLED`, `GEMINI_API_KEY` / `GROQ_API_KEY`, `GEMINI_AGENT_MODEL` / `GROQ_AGENT_MODEL`, `AI_USER_DAILY_LIMIT`, `BUSINESS_NAME`, `BUSINESS_ADDRESS`, `BUSINESS_HOURS` (bo'sh bo'lsa agent ish vaqtini aytmaydi), `REAL_AVTO_MAP_URL`, `LEAD_REMINDER_MINUTES`.
-
-**Kanaldan botga yo'naltirish**: istalgan mashina uchun havola `https://t.me/<bot>?start=car_<ID>` — mijoz shu mashina rasmlari va ma'lumoti bilan suhbatni boshlaydi.
-
-### Telegram Business (Ikrom akaning shaxsiy akkaunti) va kanal kommentlari
-
-**Business** — mijoz shaxsiy akkauntga yozsa ham agent javob beradi (akkaunt nomidan):
-1. Akkaunt egasi (Telegram **Premium** kerak) → *Sozlamalar → Telegram Business → Chatbotlar* → bot username'ini kiritadi.
-2. «Xabarlarga javob berish» ruxsatini yoqadi.
-3. ⚠️ **«Chatlar» bo'limida kontaktlarni chiqarib tashlang** (yoki faqat «yangi chatlar»ni tanlang) — aks holda AI oila va do'stlarga ham javob beradi.
-4. Ulanganda adminlarga «✅ Telegram Business ulandi» xabari keladi.
-
-Egasi mijozga **o'zi yozsa** — AI shu mijoz bilan `BUSINESS_OWNER_PAUSE_HOURS` (6) soat jim turadi. Business chatda tugmalar yuborilmaydi (Telegram cheklovi); menejer javobi ham akkaunt nomidan ketadi.
-
-**Kommentlar va muhokama guruhi** — AI har bir xabarni (matn, ovoz, dumaloq video, izohli rasm/video) o'qiydi va vaziyatga qarab ishlaydi:
-- **Savol** (narx, bormi, probeg, holat, manzil, kredit) → bazadagi faktlar bilan qisqa javob + «🤖 Botda batafsil» tugmasi. Post ostida bo'lmasa ham («gentra bormi?») — sotuvdagi mos mashinalardan javob; «qanday mashinalar bor?» — sotuvdagilardan 2–4 tasi. Post bazada bo'lmasa (eski post) — post matnidagi ochiq ma'lumotdan javob.
-- **Xarid niyati** («olaman», «ko'rsam bo'ladimi», raqam so'rash) → javob + adminlarga signal.
-- **Salbiy fikr** (qimmat, aldov, xizmat yomon) → bahslashmasdan, xushmuomala javob + adminlarga «😟 salbiy fikr» signali (xabarga havola bilan).
-- **Haqorat / provokatsiya / spam** → javob yo'q; haqorat bo'lsa adminlarga signal. **Maqtov va mavzudan tashqari suhbat** → jim.
-- Qoidalar: faqat bazadagi faktlar, chegirma/kredit va'dasi yo'q, foydalanuvchi qaysi tilda yozsa shu tilda. Tekshiruvdagi (tasdiqlanmagan) mashina raqamlari ochiq aytilmaydi; xarid narxi, foyda, ichki izohlar hech qachon.
-- Menejer (`ADMIN_TELEGRAM_IDS`) mijozga reply qilib yozsa — AI aralashmaydi; o'z savolini yozsa (sinash) — javob beradi, lekin adminlarga signal yubormaydi (`COMMENTS_ANSWER_ADMINS=false` — adminlarga umuman javob yo'q). Bitta odamga 10 daqiqada ko'pi bilan 3 ta javob. Bot boshqa guruhga qo'shilsa — u yerda jim.
-- AI kaliti yo'q / kunlik chegara tugagan bo'lsa — eski rejim: post ostidagi savolga bazadan shablon javob.
-- Talab: bot kanalga ulangan **muhokama guruhida admin** bo'lishi kerak. Sozlamalar: `COMMENTS_ENABLED`, `COMMENTS_AI_ENABLED`, `DISCUSSION_GROUP_ID` (ixtiyoriy).
+- lint and bot tests against PostgreSQL;
+- CRM backend tests;
+- frontend and catalog builds;
+- `docker compose` config check and image builds;
+- a backend smoke test against PostgreSQL.
 
 ---
 
-## E'lon muzlatish va «💰 Sotib olamiz» (3-bosqich)
+## Features
 
-Bot orqali kelgan e'lon darhol kanalga chiqmaydi — `LISTING_FREEZE_HOURS` (6) **ish soati** jamoada turadi. Shu vaqtda yaxshi mashinani o'zimiz sotib olishimiz mumkin.
+### 1. Inventory database and channel tracker
 
-- Ish vaqti `WORK_HOUR_START`–`WORK_HOUR_END` (9–21, Toshkent). Kechqurun 20:00 da kelgan e'lon ertasi 14:00 da chiqadi — tunda vaqt «yonib» ketmaydi, kanalga ham tunda e'lon chiqmaydi.
-- Admin kartasida: ✅ Tasdiqlash · ❌ Rad etish · **💰 Sotib olamiz** + «⏳ 12.10 14:00 da avtomatik chiqadi».
-- **💰 Sotib olamiz** → narx yoziladi (`8500` yoki `110 mln`) → sotuvchiga taklif: ✅ Roziman · 💬 Muhokama · 📢 Yo'q, e'lon qilinsin.
-  - Rozi / muhokama → adminlarga sotuvchi telefoni va «🏁 Sotib oldik» / «📢 Bekor — e'lon qilish».
-  - Rad → e'lon darhol kanalga.
-  - `BUYOUT_REPLY_HOURS` (24) ichida javob yo'q → e'lon avtomatik kanalga.
-- **🏁 Sotib oldik** → mashina bazaga «bizniki» bo'lib (xarid narxi bilan) tushadi. Ta'mir xarajati va sotuv narxini kartadagi «✏️ Tuzatish» orqali kiriting, tayyor bo'lgach **📢 Kanalga joylash** — bot o'zi Real Avto shablonida joylaydi, agent darhol taklif qila boshlaydi, foyda CRM statistikasida.
-- Hech kim hech narsa qilmasa — muddat tugagach e'lon o'zi kanalga chiqadi, adminlarga xabar boradi.
-- CRM «E'lonlar» bo'limida muzlatish vaqti va taklif holati ko'rinadi. O'chirish: `LISTING_FREEZE_HOURS=0`.
+Every listing posted to the main channel is written to the `cars` table. The sales agent, the catalog and the statistics all read from this table.
 
----
+- **Requirement:** the bot must be an **admin** of the main channel (`CHANNEL_ID`).
+- **New posts** are parsed: text, albums, round videos and voice. The bot extracts make, model, year, mileage and price, and admins receive a card for each car.
+- **Status:** complete data → 🟢 *Active*. Missing data, or facts taken only from speech → 🟡 *Review*, where an admin confirms or fixes the car from the card.
+- **Ways to mark a car sold** (any of these):
+  - edit the post to say "SOTILDI";
+  - reply "sotildi" to the post;
+  - press **💰 Sold** on the card;
+  - send `/sotildi ID [price]`;
+  - change it in the CRM.
+- **Reserved:** adding or removing "BRON" in a post moves the car between *Reserved* and *Active*.
+- **Reposts:** the same car posted again (for example, with a lower price) is merged into the existing record instead of being duplicated.
+- **Old posts** (published before the bot joined the channel):
+  - a reply such as "sotildi", "bron" or "narxi 8000$", or an edit of the post, restores the car from the original post and applies the change;
+  - Telegram includes the original post in the reply.
+- **Post-sale videos:** round videos or posts such as "muborak", "sotildi" or "olib ketishdi" are understood from the speech.
+  - As a reply, they mark the replied post's car sold.
+  - Standalone, they mark the single matching car sold. Matching uses the model (with aliases, e.g. Gentra ↔ Lacetti), plus the year and colour when given.
+  - If several cars match, admins are asked to choose. If none match, admins are notified and no junk record is created.
+- **Deleted posts:** checked every 3 hours. Deleted posts take the car off sale; a mass-deletion guard prevents accidents.
+- **Stale cars:** a car on sale for more than `CAR_STALE_DAYS` (7) days triggers an "is it still for sale?" prompt to admins, sent during working hours.
+- **Approved bot listings** are added to the database as well.
 
-## Mashinalar katalogi — sayt va Telegram Mini App (4-bosqich)
+**Admin commands:** `/statistika [days]` · `/sotuvda` · `/tekshiruv` · `/mashina ID` · `/sotildi ID [price]` · `/umumiy` · `/navbat`
 
-`catalog/` — ro'yxatdan o'tishsiz, telefonga mo'ljallangan katalog: faqat **sotuvdagi** mashinalar (bazadan avtomatik).
+On a car card, **✏️ Edit** accepts: `narx 9800`, `yil 2021`, `probeg 76000`, and for cars the dealership bought itself `xarid 8000`, `xarajat 300`.
 
-- Qidiruv va filtrlar (marka, byudjet, yil, avtomat/mexanika, saralash), rasmlar galereyasi.
-- **«Real narx»**: bazadagi o'xshash mashinalar (model, yil ±1, oxirgi 12 oy) medianasi bilan solishtirib «Bozordan ~10% arzon» / «Bozor narxida» belgisi (kamida 3 ta o'xshash bo'lsa; qimmat bo'lsa ko'rsatilmaydi).
-- Har mashinada: «🤖 Savol berish» (botda shu mashina bilan agent suhbati), qo'ng'iroq, xarita, o'xshash mashinalar.
-- «💰 Mashina sotaman» → botda e'lon berish; mos mashina bo'lmasa «🔔 Chiqsa xabar ber» (Mini App ichida bir bosishda, Telegram imzosi tekshiriladi).
-- Hech qachon ko'rsatilmaydi: sotuvchi telefoni, xarid narxi, foyda, ichki izohlar. Ochiq API: `/api/public/*` (IP bo'yicha cheklov), CRM endpointlari katalog orqali ochilmaydi.
+**Importing channel history** (posts from before the bot was added):
 
-**Ishga tushirish**: `docker compose up -d catalog` → `http://SERVER:3002`. Domen + HTTPS (masalan nginx/Caddy orqali `https://katalog.realavto.uz`) ulab, ildiz `.env` ga:
+```bash
+# Telegram Desktop → channel → ⋮ → Export chat history → JSON
+python -m scripts.import_channel_export path/to/result.json --dry-run   # preview
+python -m scripts.import_channel_export path/to/result.json --ai        # write to the database
 ```
-CATALOG_URL=https://katalog.realavto.uz
-BOT_USERNAME=real_avto_bot
+
+Posts older than `--active-days` (30) with an unknown sale status are archived, so the agent never offers stale cars.
+
+### 2. AI
+
+Set `GEMINI_API_KEY` (recommended) or `GROQ_API_KEY`. With `AI_PROVIDER=auto`, Gemini is used whenever its key is present.
+
+| | Gemini (recommended) | Groq |
+|---|---|---|
+| Text, tool calling | ✅ | ✅ |
+| Voice messages | ✅ accurate Uzbek | ⚠️ Whisper often misdetects Uzbek |
+| Round videos / videos | ✅ hears the speech **and** sees the car (make, colour, body, odometer) | speech only |
+
+- **Spending cap:** `AI_DAILY_BUDGET_USD` (default $1) and `AI_USER_DAILY_LIMIT` (40 requests per customer per day). When the cap is reached, AI pauses until the next day and admins are notified.
+- **Fallback:** without a key, rule-based parsing and template replies keep working.
+- **Feedback for admins:**
+  - each card shows which engine transcribed the speech;
+  - on startup the bot warns admins if voice and video fall back to Groq.
+
+Details and cost estimates: [DEPLOY.md § 12.10](DEPLOY.md#1210-switching-to-gemini-video--voice--uzbek).
+
+### 3. AI sales agent
+
+Customers can write or send voice messages to the bot. The agent answers **only from the inventory database** and hands the customer to a manager when they are ready to buy.
+
+- **Customer side:**
+  - finds cars on sale (never sold ones), sends photos and videos, and answers questions;
+  - offers similar cars, or saves a search and notifies the customer when a matching car is posted;
+  - never promises discounts, credit terms or paperwork, and never invents facts;
+  - answers in the customer's language: Uzbek Latin, Uzbek Cyrillic or Russian.
+- **Hand-off:**
+  - the customer wants to visit, buy, discuss price or credit, or talk to a person → a 🔥 **lead card** goes to admins;
+  - the card shows name, phone, car of interest, budget, payment method, visit time, AI summary and recent messages.
+- **Managers:**
+  - replying to the lead card sends the message to the customer and pauses the AI for that customer;
+  - buttons: ✅ Take · 🤖 Let AI continue · 🏁 Sold · ❌ Close · 💬 Full chat;
+  - unclaimed leads are re-announced after `LEAD_REMINDER_MINUTES` (5);
+  - commands: `/leadlar`, `/lead ID`.
+- **Deep links:** `https://t.me/<bot>?start=car_<ID>` opens a conversation about a specific car.
+
+**Configuration:** `AGENT_ENABLED`, `GEMINI_AGENT_MODEL` / `GROQ_AGENT_MODEL`, `BUSINESS_NAME`, `BUSINESS_ADDRESS`, `BUSINESS_HOURS`, `REAL_AVTO_MAP_URL`, `LEAD_REMINDER_MINUTES`.
+
+### 4. Channel comments and discussion group
+
+The AI reads every comment, including text, voice, round videos and captioned media, and acts according to its type:
+
+| Message | Action |
+|---|---|
+| Question (price, availability, mileage, condition, address, credit) | Short public answer from database facts + "🤖 Details in the bot" button |
+| General question ("what cars do you have?") | Lists 2–4 cars currently on sale |
+| Purchase intent | Answer + alert to admins |
+| Negative feedback | Polite, non-defensive answer + alert to admins with a link |
+| Insult, provocation, spam | No reply; insults are reported to admins |
+| Praise, off-topic chat | Ignored |
+
+Rules for public replies:
+
+- Only database facts are used, and replies are in the commenter's language.
+- Seller phone numbers, purchase prices, profit and internal notes are never disclosed.
+- Unverified (*Review*) cars are discussed without numbers.
+- If a post is not in the database, its public text is used.
+- A manager's reply to a customer is never interrupted. A manager's own test question is answered without alerts (`COMMENTS_ANSWER_ADMINS`).
+- At most 3 replies per person per 10 minutes, and the bot stays silent in groups that are not its own.
+
+**Requirement:** the bot must be an **admin of the channel's discussion group**. Settings: `COMMENTS_ENABLED`, `COMMENTS_AI_ENABLED`, `DISCUSSION_GROUP_ID` (optional).
+
+### 5. Telegram Business
+
+The agent can also answer customers who write to the owner's personal account, replying on behalf of that account.
+
+1. The account owner (Telegram **Premium** required) opens *Settings → Telegram Business → Chatbots* and adds the bot.
+2. Enable "Reply to messages".
+3. ⚠️ **Exclude contacts** (or select "New chats" only), otherwise the AI will reply to family and friends.
+4. Admins receive "✅ Telegram Business connected".
+
+When the owner writes to a customer personally, the AI stays silent with that customer for `BUSINESS_OWNER_PAUSE_HOURS` (6).
+
+### 6. Listing freeze and buy-out offers
+
+Listings submitted through the bot are held for `LISTING_FREEZE_HOURS` (6) **working hours** before they go to the channel. During this time the dealership can make the seller an offer.
+
+- **Working hours:** `WORK_HOUR_START`–`WORK_HOUR_END` (9–21, Tashkent time). Nothing is published at night.
+- **Admin card:** ✅ Approve · ❌ Reject · **💰 Buy out**, with the scheduled publication time.
+- **💰 Buy out:**
+  1. The admin enters a price (`8500` or `110 mln`).
+  2. The seller chooses ✅ Agree · 💬 Discuss · 📢 No, publish it.
+  3. If there is no answer within `BUYOUT_REPLY_HOURS` (24), the listing is published.
+- **🏁 Bought:**
+  - the car is stored as dealership-owned, with its purchase price;
+  - repair costs and sale price are entered on the card;
+  - **📢 Post to channel** publishes it in the house template;
+  - profit appears in CRM statistics.
+- **Disable:** `LISTING_FREEZE_HOURS=0`.
+
+### 7. Catalog website and Telegram Mini App
+
+`catalog/` is a mobile-first, sign-up-free catalog of cars **on sale**, served live from the database.
+
+- **Browsing:**
+  - search and filters: make, budget, year, transmission, sorting;
+  - photo galleries;
+  - similar cars.
+- **"Fair price" badge:** each car is compared with the median price of similar cars (same model, ±1 year, last 12 months). The badge needs at least 3 comparables and is never shown for above-market prices.
+- **Actions:**
+  - "🤖 Ask a question" opens the agent with that car;
+  - "💰 Sell my car" opens the listing flow in the bot;
+  - "🔔 Notify me" saves a search, verified with the Telegram signature.
+- **Never exposed:** seller phone, purchase price, profit or internal notes.
+- **Public API:** `/api/public/*` (rate-limited per IP). CRM endpoints are not reachable through it.
+
+Run with `docker compose up -d catalog` (port 3002), put it behind HTTPS and set:
+
+```env
+CATALOG_URL=https://catalog.example.com
+BOT_USERNAME=your_bot
 ```
-Bot qayta ishga tushgach chat pastida **«🚗 Katalog»** tugmasi va bosh menyuda «Sotuvdagi mashinalar» paydo bo'ladi (Mini App faqat HTTPS bilan ishlaydi).
 
-## CI
-`.github/workflows/ci.yml`: har PR'da bot testlari (PostgreSQL bilan), backend testlari, CRM va katalog build.
+After a restart the bot shows a **🚗 Katalog** menu button. Mini Apps require HTTPS.
 
----
+### 8. Instagram (Direct and comments)
 
-## Instagram — Direct va kommentlar (5-bosqich)
+The same agent answers Instagram Direct messages and comments, and qualified leads are delivered to admins in Telegram.
 
-Instagram'ga yozilgan savollarga ham **o'sha agent** javob beradi (bazadan), tayyor mijoz Telegram'dagi adminlarga lead kartasi bo'lib keladi.
+- **Direct:**
+  - questions are answered from the database;
+  - a manager's reply to the lead card is sent back to Direct;
+  - when the owner replies personally, the AI pauses for 6 hours.
+- **Comments:** a short public reply with a detailed private reply in Direct. Praise is ignored, and purchase intent alerts admins.
+- **Setup**, after Meta App Review:
+  1. In Meta Developers, open *Instagram API with Instagram Login* and request `instagram_business_basic`, `instagram_business_manage_messages` and `instagram_business_manage_comments`.
+  2. Set the webhook URL to `https://DOMAIN/webhooks/instagram` (proxy to `127.0.0.1:8081`). Use `IG_VERIFY_TOKEN` as the verify token and subscribe to `messages` and `comments`.
+  3. In `.env`, set `INSTAGRAM_ENABLED=true` and `IG_ACCESS_TOKEN`, `IG_APP_SECRET`, `IG_VERIFY_TOKEN`, `IG_ACCOUNT_ID`.
+  4. Every webhook request is verified with `X-Hub-Signature-256`.
 
-- **Direct**: savolga javob; menejer lead kartasiga reply qilsa — javob Instagram Direct'ga ketadi. Akkaunt egasi Instagram ilovasidan o'zi yozsa — AI shu mijoz bilan 6 soat jim.
-- **Kommentlar**: savol bo'lsa ochiq qisqa javob («Javobni Direct'ga yubordik 📩») + batafsil javob Direct'ga (private reply). «Zo'r 🔥» kabi kommentlarga javob yo'q; xarid niyati — adminlarga signal.
-- Rasmlar Direct'ga katalogning ochiq rasm manzili orqali yuboriladi (`CATALOG_URL` HTTPS bo'lishi kerak).
+In development mode, before App Review, only accounts added as app testers work.
 
-**Ulash** (Meta App Review tasdiqlagach):
-1. Meta Developers → ilova → *Instagram API with Instagram Login*: `instagram_business_basic`, `instagram_business_manage_messages`, `instagram_business_manage_comments`.
-2. Webhook: Callback URL `https://DOMEN/webhooks/instagram` (reverse-proxy → bot konteyneri `127.0.0.1:8081`), Verify token = `IG_VERIFY_TOKEN`, obunalar: `messages`, `comments`.
-3. Ildiz `.env`: `INSTAGRAM_ENABLED=true`, `IG_ACCESS_TOKEN`, `IG_APP_SECRET`, `IG_VERIFY_TOKEN`, `IG_ACCOUNT_ID`.
-4. Har webhook so'rovi `X-Hub-Signature-256` bilan tekshiriladi — imzosiz so'rovlar rad etiladi.
+### 9. CRM
 
-Development rejimida (App Review'dan oldin) faqat ilovaga tester qilib qo'shilgan akkauntlar bilan ishlaydi.
+- **Cars:**
+  - inventory, total value and time to sell;
+  - stale cars and profit;
+  - full history per car: price and status changes, reposts, deletions.
+- **Customers (AI):**
+  - open leads and leads waiting for a manager;
+  - conversion and time to hand-off;
+  - full conversation transcripts.
+- **Listings:** freeze timers and buy-out offer status.
+- **Clients, wishlists, contests.**
+
+**Listing payment:** free by default (`LISTING_PAYMENT_ENABLED=false`).

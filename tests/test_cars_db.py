@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import pytest
 from aiogram.types import Chat, Message, PhotoSize
@@ -92,7 +92,7 @@ async def test_price_change_and_status_events(session_factory):
 
 
 async def test_stats_and_profit(session_factory):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with session_factory() as s:
         cars = CarRepository(s)
         a = await cars.create_from_parsed(_parsed(), source=CarSource.CHANNEL, raw_text="", published_at=now - timedelta(days=10))
@@ -110,7 +110,7 @@ async def test_stats_and_profit(session_factory):
 
 
 async def test_stale_cars_query(session_factory):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with session_factory() as s:
         cars = CarRepository(s)
         old = await cars.create_from_parsed(_parsed(), source=CarSource.CHANNEL, raw_text="", published_at=now - timedelta(days=20))
@@ -140,7 +140,7 @@ class FakeBot:
 def _channel_msg(mid: int, *, caption: str | None = None, text_: str | None = None, photo: bool = False, reply_to=None):
     return Message(
         message_id=mid,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=Chat(id=CHANNEL_ID, type="channel", username="real_avto_test"),
         caption=caption,
         text=text_,
@@ -205,7 +205,7 @@ async def test_video_note_then_reply_with_details_becomes_one_car(session_factor
     bot = FakeBot()
     video_post = Message(
         message_id=80,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=Chat(id=CHANNEL_ID, type="channel", username="real_avto_test"),
         video_note=VideoNote(file_id="vnote1", file_unique_id="u80", length=240, duration=30),
     )
@@ -269,13 +269,13 @@ async def test_forwarded_video_then_description_becomes_one_car_with_original_da
     from aiogram.types import MessageOriginChannel, VideoNote
 
     bot = FakeBot()
-    original_date = datetime.now(timezone.utc) - timedelta(days=5)
+    original_date = datetime.now(UTC) - timedelta(days=5)
     origin = MessageOriginChannel(
         date=original_date, chat=Chat(id=-100777, type="channel", username="real_avto_arzon"), message_id=500
     )
     video = Message(
         message_id=200,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=Chat(id=CHANNEL_ID, type="channel", username="real_avto_test"),
         video_note=VideoNote(file_id="fwd_vn", file_unique_id="u200", length=240, duration=20),
         forward_origin=origin,
@@ -283,7 +283,7 @@ async def test_forwarded_video_then_description_becomes_one_car_with_original_da
     await watch.process_channel_post(bot, [video])
     description = Message(
         message_id=201,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=Chat(id=CHANNEL_ID, type="channel", username="real_avto_test"),
         text="Gentra 2019, probeg 120 ming km, narxi 9800$",
         forward_origin=MessageOriginChannel(date=original_date, chat=origin.chat, message_id=501),
@@ -323,11 +323,11 @@ async def test_spoken_video_and_description_processed_concurrently_make_one_car(
     bot = FakeBot()
     chat = Chat(id=CHANNEL_ID, type="channel", username="real_avto_test")
     video = Message(
-        message_id=300, date=datetime.now(timezone.utc), chat=chat,
+        message_id=300, date=datetime.now(UTC), chat=chat,
         video_note=VideoNote(file_id="spoken", file_unique_id="u300", length=240, duration=20),
     )
     description = Message(
-        message_id=301, date=datetime.now(timezone.utc), chat=chat, text="Cobalt narxi 9200$, probeg 98 000 km"
+        message_id=301, date=datetime.now(UTC), chat=chat, text="Cobalt narxi 9200$, probeg 98 000 km"
     )
     # Telegram ikkalasini ketma-ket yuboradi, aiogram esa parallel qayta ishlaydi
     await asyncio.gather(watch.process_channel_post(bot, [video]), watch.process_channel_post(bot, [description]))
@@ -349,7 +349,7 @@ async def test_audio_only_facts_wait_for_admin_but_text_posts_go_live(session_fa
     bot = FakeBot()
     chat = Chat(id=CHANNEL_ID, type="channel", username="real_avto_test")
     video = Message(
-        message_id=400, date=datetime.now(timezone.utc), chat=chat,
+        message_id=400, date=datetime.now(UTC), chat=chat,
         video_note=VideoNote(file_id="v400", file_unique_id="u400", length=240, duration=20),
     )
     await watch.process_channel_post(bot, [video])
@@ -362,7 +362,7 @@ async def test_audio_only_facts_wait_for_admin_but_text_posts_go_live(session_fa
     # Matnli post (+ ovoz) — faktlar matnda bor, darhol sotuvda
     watch._recent_media_car.clear()
     text_post = Message(
-        message_id=401, date=datetime.now(timezone.utc), chat=chat,
+        message_id=401, date=datetime.now(UTC), chat=chat,
         caption="🚘Avtomobil: Gentra 🗓️yili: 2019 📍probeg: 120.000km",
         video_note=None,
     )
@@ -378,7 +378,7 @@ def _vnote(mid: int, uid: str) -> Message:
 
     return Message(
         message_id=mid,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=Chat(id=CHANNEL_ID, type="channel", username="real_avto_test"),
         video_note=VideoNote(file_id=uid, file_unique_id=f"u{mid}", length=240, duration=55),
     )

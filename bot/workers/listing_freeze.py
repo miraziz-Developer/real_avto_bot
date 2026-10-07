@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -54,7 +54,7 @@ async def publish_due_once(
     *,
     now: datetime | None = None,
 ) -> int:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     # Tunda kanalga e'lon chiqarmaymiz — ertalab ish vaqti boshlanganda chiqadi
     if not is_work_time(now, start_hour=settings.work_hour_start, end_hour=settings.work_hour_end):
         return 0
@@ -95,7 +95,7 @@ async def remind_stale_deals_once(
     """Sotuvchi rozi bo'lgan/muhokamadagi kelishuv uzoq hal qilinmasa — adminlarga har kuni eslatma."""
     from bot.handlers.buyout import deal_kb
 
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     if not is_work_time(now, start_hour=settings.work_hour_start, end_hour=settings.work_hour_end):
         return 0
     async with session_factory() as session:

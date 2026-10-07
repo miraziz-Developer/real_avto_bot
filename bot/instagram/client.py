@@ -74,7 +74,7 @@ class InstagramClient:
                     last = f"HTTP {resp.status}: {str(data)[:300]}"
                     if resp.status < 500 and resp.status != 429:
                         break
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            except (TimeoutError, aiohttp.ClientError) as e:
                 last = f"{type(e).__name__}: {e}"
             await asyncio.sleep(1.5 * (attempt + 1))
         raise IGError(last or "Instagram javob bermadi")

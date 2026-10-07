@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -25,7 +25,7 @@ _WORK_HOURS_LOCAL = range(9, 22)
 
 
 def _is_quiet_now() -> bool:
-    hour = (datetime.now(timezone.utc).hour + _TASHKENT_UTC_OFFSET) % 24
+    hour = (datetime.now(UTC).hour + _TASHKENT_UTC_OFFSET) % 24
     return hour not in _WORK_HOURS_LOCAL
 
 
@@ -50,7 +50,7 @@ async def _check_once(bot: Bot, session_factory: async_sessionmaker[AsyncSession
     async with session_factory() as session:
         cars = CarRepository(session)
         rows = await cars.stale_active_cars(older_than_days=settings.car_stale_days, limit=10)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for car in rows:
             days = (now - car.published_at).days if car.published_at else settings.car_stale_days
             await send_car_card_to_admins(
