@@ -776,3 +776,94 @@ def test_location_needs_a_whole_word():
 
     assert parse_car_text("Instagram manzili ko'rinadi", usd_rate_uzs=12700).location is None
     assert parse_car_text("Manzil: Yangiyo'l bozori", usd_rate_uzs=12700).location == "Yangiyo'l bozori"
+
+
+# --- Kanal postini tahrirlash: har bir holat -------------------------------------------------
+
+
+async def _edit(watch, session_factory, bot, mid: int, text: str) -> Car:
+    async with session_factory() as s:
+        await watch.on_channel_post_edited(_channel_msg(mid, text_=text), bot, CarRepository(s))
+    async with session_factory() as s:
+        return (await s.execute(select(Car).where(Car.channel_message_ids.any(mid)))).scalar_one()
+
+
+async def test_edit_fixes_price_mileage_and_year_and_reports_them(session_factory, watch):
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(1000, text_="Cobalt 2020, probeg 98 000 km, narxi 9500$")])
+    car = await _edit(watch, session_factory, bot, 1000, "Cobalt 2021, probeg 89 000 km, narxi 9200$")
+    assert (car.year, car.mileage_km, car.price_usd, car.status) == (2021, 89000, 9200, CarStatus.ACTIVE)
+    card = bot.sent[-1][2]
+    assert "Kanaldagi post tahrirlandi" in card
+    assert "narx: $9 500 → $9 200" in card and "probeg: 98 000 km → 89 000 km" in card and "yil: 2020 → 2021" in card
+
+
+async def test_edit_sold_then_undo(session_factory, watch):
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(1010, text_="Nexia 3 2019, probeg 60 000 km, narxi 8200$")])
+    car = await _edit(watch, session_factory, bot, 1010, "SOTILDI ✅ Nexia 3 2019, probeg 60 000 km, narxi 8200$")
+    assert car.status == CarStatus.SOLD and "postga «sotildi» yozildi" in bot.sent[-1][2]
+    # Xato bilan yozilgan edi — «sotildi» olib tashlandi: yana sotuvda
+    car = await _edit(watch, session_factory, bot, 1010, "Nexia 3 2019, probeg 60 000 km, narxi 8200$")
+    assert car.status == CarStatus.ACTIVE and "postdan «sotildi» olib tashlandi" in bot.sent[-1][2]
+
+
+async def test_edit_phone_removed_then_restored(session_factory, watch):
+    bot = FakeBot()
+    with_phone = "Spark 2016, probeg 90 000 km, narxi 6800$\n📞 +998 90 111 22 33"
+    await watch.process_channel_post(bot, [_channel_msg(1020, text_=with_phone)])
+    car = await _edit(watch, session_factory, bot, 1020, "Spark 2016, probeg 90 000 km, narxi 6800$")
+    assert car.status == CarStatus.SOLD
+    car = await _edit(watch, session_factory, bot, 1020, with_phone)
+    assert car.status == CarStatus.ACTIVE and "telefon raqami qaytarildi" in bot.sent[-1][2]
+
+
+async def test_edit_of_description_keeps_video_speech_and_other_posts(session_factory, watch, monkeypatch):
+    async def fake_transcribe(bot, messages):
+        return ["Kobalt 2020, yurgani 98 ming, barakasini bersin"] if any(m.video_note for m in messages) else []
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_vnote(1030, "c1")])
+    await watch.process_channel_post(bot, [_channel_msg(1031, text_="Cobalt 2020, probeg 98 000 km, narxi 9500$")])
+    # Tavsif posti tahrirlandi: narx tushdi
+    car = await _edit(watch, session_factory, bot, 1031, "Cobalt 2020, probeg 98 000 km, narxi 9000$")
+    assert car.price_usd == 9000 and car.status == CarStatus.ACTIVE  # speech «barakasini» didn't count as sold
+    assert "[Ovoz]: Kobalt 2020" in car.raw_text and "narxi 9000$" in car.raw_text and "9500" not in car.raw_text
+    # Endi «SOTILDI» yozildi — videodagi «baraka» so'zi bunga xalaqit bermaydi
+    car = await _edit(watch, session_factory, bot, 1031, "SOTILDI Cobalt 2020, probeg 98 000 km, narxi 9000$")
+    assert car.status == CarStatus.SOLD
+
+
+async def test_edit_of_reply_updates_only_that_part(session_factory, watch):
+    bot = FakeBot()
+    post = _channel_msg(1040, text_="Damas 2021, probeg 50 000 km")
+    await watch.process_channel_post(bot, [post])
+    await watch.process_channel_post(bot, [_channel_msg(1041, text_="narxi 8000$", reply_to=post)])
+    car = await _edit(watch, session_factory, bot, 1041, "narxi 7500$")
+    assert car.price_usd == 7500
+    assert car.raw_text.startswith("Damas 2021, probeg 50 000 km") and "8000" not in car.raw_text
+
+
+async def test_unchanged_edit_sends_nothing(session_factory, watch):
+    bot = FakeBot()
+    text = "Matiz 2015, probeg 120 000 km, narxi 4000$"
+    await watch.process_channel_post(bot, [_channel_msg(1050, text_=text)])
+    sent = len(bot.sent)
+    await _edit(watch, session_factory, bot, 1050, text)
+    assert len(bot.sent) == sent
+
+
+async def test_edit_of_legacy_car_without_post_texts(session_factory, watch):
+    bot = FakeBot()
+    async with session_factory() as s:
+        await CarRepository(s).create_from_parsed(
+            _parsed(model="Lacetti", year=2014, mileage_km=150000, price_usd=7000),
+            source=CarSource.CHANNEL,
+            raw_text="Lacetti 2014, probeg 150 000 km, narxi 7000$\n[Ovoz]: lacetti 2014",
+            channel_chat_id=CHANNEL_ID,
+            channel_message_ids=[1060],
+        )
+        await s.commit()
+    car = await _edit(watch, session_factory, bot, 1060, "Lacetti 2014, probeg 150 000 km, narxi 6500$")
+    assert car.price_usd == 6500 and car.raw_text.endswith("[Ovoz]: lacetti 2014")

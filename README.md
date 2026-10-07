@@ -67,6 +67,11 @@ Every listing posted to the main channel is written to the `cars` table. The sal
   - send `/sotildi ID [price]`;
   - change it in the CRM.
 - **Reserved:** adding or removing "BRON" in a post moves the car between *Reserved* and *Active*.
+- **Editing a post** updates the database. Each channel message's text is stored separately, so the edit is compared with that message's previous text only; other posts of the same car and video transcripts are kept. Admins receive a card listing what changed (e.g. `narx: $9 500 → $9 200`).
+  - Price, mileage, year, model and other fields are corrected.
+  - "SOTILDI" added → *Sold*. Removed again → back to *Active*.
+  - Phone number removed → *Sold*. Phone restored → back to *Active*.
+  - An edited reply (e.g. "narxi 8000$" → "narxi 7500$") changes only that part.
 - **Reposts:** the same car posted again (for example, with a lower price) is merged into the existing record instead of being duplicated.
 - **Old posts** (published before the bot joined the channel):
   - a reply such as "sotildi", "bron" or "narxi 8000$", or an edit of the post, restores the car from the original post and applies the change;

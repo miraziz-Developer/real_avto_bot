@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -282,6 +283,8 @@ class Car(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)  # AI qisqa xulosasi (holat, kamchiliklar)
 
     raw_text: Mapped[str] = mapped_column(Text, nullable=False, default="")  # post matni + ovoz transkripti
+    # Har bir kanal xabarining o'z matni {message_id: matn} — tahrir aynan shu xabarning eski matni bilan solishtiriladi
+    post_texts: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
     photo_file_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
     video_file_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
 

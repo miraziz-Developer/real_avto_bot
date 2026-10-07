@@ -36,7 +36,6 @@ from bot.workers.post_watch import HAS_MARKUP_EVENT
 
 logger = logging.getLogger(__name__)
 
-STATUS_TITLES = {CarStatus.RESERVED: "Bron qilindi", CarStatus.ACTIVE: "Yana sotuvda"}
 
 router = Router(name="channel_watch")
 
@@ -118,6 +117,31 @@ def is_main_channel(chat: Chat) -> bool:
 
 def _message_text(m: Message) -> str:
     return (m.caption or m.text or "").strip()
+
+
+_SPEECH_PREFIXES = ("[Ovoz]", "[Videoda", "[Video]")
+
+
+def _speech_lines(raw_text: str | None) -> list[str]:
+    return [ln for ln in (raw_text or "").splitlines() if ln.lstrip().startswith(_SPEECH_PREFIXES)]
+
+
+def _text_part(raw_text: str | None) -> str:
+    return "\n".join(ln for ln in (raw_text or "").splitlines() if not ln.lstrip().startswith(_SPEECH_PREFIXES)).strip()
+
+
+def remember_post_texts(car, messages: list[Message]) -> None:
+    """Har bir kanal xabarining o'z matnini saqlaydi — keyingi tahrir aynan shu matn bilan solishtiriladi."""
+    texts = {str(m.message_id): t for m in messages if (t := _message_text(m))}
+    if texts:
+        car.post_texts = {**(car.post_texts or {}), **texts}
+
+
+def _rebuilt_raw_text(car) -> str:
+    """Mashina xabarlari matni (kanal tartibida) + ovoz/video transkripsiyalari."""
+    texts = car.post_texts or {}
+    ordered = [texts[str(mid)] for mid in car.channel_message_ids if texts.get(str(mid))]
+    return "\n".join([*ordered, *_speech_lines(car.raw_text)]).strip()
 
 
 # Kanal posti → muhokama guruhidagi avto-forward nusxasini bog'lash uchun tarkib kaliti.
@@ -252,6 +276,7 @@ async def _apply_reply_to_car(
     # Yangi list beramiz — ARRAY ustunidagi o'zgarish saqlanishi uchun
     new_ids = [m.message_id for m in messages if m.message_id not in car.channel_message_ids]
     car.channel_message_ids = [*car.channel_message_ids, *new_ids]
+    remember_post_texts(car, messages)
     if photos:
         car.photo_file_ids = [*car.photo_file_ids, *photos]
     if videos:
@@ -304,6 +329,7 @@ async def _car_for_old_post(bot: Bot, cars: CarRepository, post: Message):
     if existing is not None:
         if post.message_id not in existing.channel_message_ids:
             existing.channel_message_ids = [*existing.channel_message_ids, post.message_id]
+        remember_post_texts(existing, [post])
         return existing
     photos, videos = _media_of([post])
     text_only = parse_car_text(text, usd_rate_uzs=settings.usd_rate_uzs) if text else None
@@ -319,6 +345,7 @@ async def _car_for_old_post(bot: Bot, cars: CarRepository, post: Message):
         status=CarStatus.REVIEW if unverified else None,
         published_at=_original_date(post),
     )
+    remember_post_texts(car, [post])
     await cars.add_event(car, "old_post_imported", {"message_id": post.message_id})
     logger.info("Eski post %s bazaga tiklandi → mashina #%s (%s)", post.message_id, car.id, car.title)
     return car
@@ -387,6 +414,7 @@ async def _sold_by_announcement(
         new_ids = [m.message_id for m in messages if m.message_id not in car.channel_message_ids]
         if existing is not None:
             car.channel_message_ids = [*car.channel_message_ids, *new_ids]
+            remember_post_texts(car, messages)
         await cars.add_event(car, "sold_announcement", {"message_ids": [m.message_id for m in messages]})
         changed = await cars.set_status(car, CarStatus.SOLD)
         await cars.session.commit()
@@ -424,6 +452,7 @@ async def _sold_by_announcement(
             status=status_for_new or CarStatus.SOLD,
             published_at=_original_date(messages[0]),
         )
+        remember_post_texts(car, messages)
         await cars.session.commit()
         await send_car_card_to_admins(bot, car, header="🔴 <b>Kanalda sotilgan mashina posti</b> — tarix uchun saqlandi")
         logger.info("Kanal posti → sotilgan mashina #%s (%s)", car.id, car.title)
@@ -601,6 +630,7 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             status=status,
             published_at=_original_date(first),
         )
+        remember_post_texts(car, messages)
         if any(m.reply_markup for m in messages):
             # Boshqa bot orqali tugmali post — o'chirilganini tekshiruv uni chetlab o'tadi (tugmasi o'chmasin)
             await cars.add_event(car, HAS_MARKUP_EVENT)
@@ -644,6 +674,7 @@ async def _merge_repost(
     )
     new_ids = [m.message_id for m in messages if m.message_id not in car.channel_message_ids]
     car.channel_message_ids = [*car.channel_message_ids, *new_ids]
+    remember_post_texts(car, messages)
     if car.channel_chat_id is None and messages:
         car.channel_chat_id = messages[0].chat.id
     photos, videos = _media_of(messages)
@@ -702,69 +733,131 @@ async def on_channel_post_edited(message: Message, bot: Bot, cars: CarRepository
         await _on_channel_post_edited(message, bot, cars)
 
 
+_FIELD_LABELS = {
+    "price_usd": "narx",
+    "mileage_km": "probeg",
+    "year": "yil",
+    "brand": "marka",
+    "model": "model",
+    "color": "rang",
+    "transmission": "uzatma",
+    "fuel": "yoqilg'i",
+    "position": "pozitsiya",
+    "paint_status": "kraska",
+    "has_accident": "DTP",
+    "location": "joylashuv",
+}
+
+
+def _fmt_field(field: str, value) -> str:
+    if value is None or value == "":
+        return "—"
+    if field == "price_usd":
+        return f"${value:,}".replace(",", " ")
+    if field == "mileage_km":
+        return f"{value:,} km".replace(",", " ")
+    if field == "has_accident":
+        return "bor" if value else "yo'q"
+    return html.escape(str(value))
+
+
+def _changes_summary(changes: dict) -> str:
+    lines = [
+        f"• {_FIELD_LABELS[f]}: {_fmt_field(f, c['old'])} → {_fmt_field(f, c['new'])}"
+        for f, c in changes.items()
+        if f in _FIELD_LABELS
+    ]
+    return "\n".join(lines)
+
+
+def _edit_status_target(car, old_text: str, text: str) -> tuple[str, str] | None:
+    """Tahrir mashina holatini o'zgartiradimi: (yangi holat, sabab). Faqat shu xabarning eski/yangi matni solishtiriladi."""
+    sold_now, sold_before = is_sold_confirmation(text), is_sold_confirmation(old_text)
+    if sold_now and not sold_before and car.status != CarStatus.SOLD:
+        return CarStatus.SOLD, "postga «sotildi» yozildi"
+    if sold_before and not sold_now and car.status == CarStatus.SOLD:
+        return CarStatus.ACTIVE, "postdan «sotildi» olib tashlandi"
+    same = bool(text) and _same_post(text, old_text)
+    if same and has_phone(old_text) and not has_phone(text) and car.status in (CarStatus.ACTIVE, CarStatus.RESERVED):
+        # Jamoa odati: sotilgach postdan telefon raqami olib tashlanadi
+        return CarStatus.SOLD, "postdan telefon raqami olib tashlandi"
+    if same and not has_phone(old_text) and has_phone(text) and car.status == CarStatus.SOLD and not sold_now:
+        return CarStatus.ACTIVE, "postga telefon raqami qaytarildi"
+    if car.status in (CarStatus.ACTIVE, CarStatus.RESERVED):
+        now_reserved, was_reserved = is_reserved_text(text), is_reserved_text(old_text)
+        if now_reserved and not was_reserved and car.status == CarStatus.ACTIVE:
+            return CarStatus.RESERVED, "postga «bron» yozildi"
+        if was_reserved and not now_reserved and car.status == CarStatus.RESERVED:
+            return CarStatus.ACTIVE, "postdan «bron» olib tashlandi"
+    return None
+
+
 async def _on_channel_post_edited(message: Message, bot: Bot, cars: CarRepository) -> None:
+    """Kanaldagi post tahrirlandi: holat (sotildi/bron/qayta sotuvda) va maydonlar (narx, probeg...) yangilanadi.
+
+    Mashina bir nechta xabardan iborat bo'lishi mumkin (videolar, tavsif, reply) — tahrir faqat shu xabarning
+    eski matni bilan solishtiriladi, boshqa xabarlar matni va ovoz transkripsiyalari saqlanib qoladi.
+    """
     text = _message_text(message)
     car = await cars.find_by_channel_message(message.chat.id, message.message_id)
     if car is None:
-        # Avval matnsiz bo'lgan post tahrirlanib e'longa aylangan bo'lishi mumkin (lock allaqachon olingan)
+        # Bazada yo'q post (bot ulanmasdan oldingi yoki avval matnsiz bo'lgan) — e'lon sifatida qayta o'qiymiz
         if text:
             logger.info("Bazada yo'q post %s tahrirlandi — qayta o'qiladi", message.message_id)
             await _process_channel_post(bot, [message], edited=True)
         return
 
-    old_text = car.raw_text or ""
-    reason = None
-    if is_sold_confirmation(text) and not is_sold_confirmation(old_text):
-        reason = "postga «sotildi» yozildi"
-    elif (
-        text
-        and has_phone(old_text)
-        and _same_post(text, old_text)
-        and not has_phone(text)
-        and car.status in (CarStatus.ACTIVE, CarStatus.RESERVED)
-    ):
-        # Jamoa odati: sotilgach postdan telefon raqami olib tashlanadi
-        reason = "postdan telefon raqami olib tashlandi"
-    if not reason and text and car.status in (CarStatus.ACTIVE, CarStatus.RESERVED):
-        # Postga «BRON» yozildi yoki olib tashlandi
-        now_reserved, was_reserved = is_reserved_text(text), is_reserved_text(old_text)
-        target = None
-        if now_reserved and not was_reserved and car.status == CarStatus.ACTIVE:
-            target, why = CarStatus.RESERVED, "postga «bron» yozildi"
-        elif was_reserved and not now_reserved and car.status == CarStatus.RESERVED:
-            target, why = CarStatus.ACTIVE, "postdan «bron» olib tashlandi"
-        if target is not None:
-            await cars.set_status(car, target)
-            car.raw_text = text
-            await cars.session.commit()
-            icon = "🔵" if target == CarStatus.RESERVED else "🟢"
-            await send_car_card_to_admins(bot, car, header=f"{icon} <b>{STATUS_TITLES[target]}</b> — {why}.")
-            return
-    if reason:
-        if await cars.set_status(car, CarStatus.SOLD):
-            car.raw_text = text
-            await cars.session.commit()
-            await send_car_card_to_admins(
-                bot,
-                car,
-                header=f"🔴 <b>Sotildi deb belgilandi</b> — {reason}.\nXato bo'lsa: «↩️ Qayta sotuvga».",
-            )
-        return
+    key = str(message.message_id)
+    texts = dict(car.post_texts or {})
+    # Eski yozuvlarda xabar matnlari alohida saqlanmagan — butun matn (transkripsiyasiz) bilan solishtiramiz
+    old_text = texts[key] if key in texts else ("" if texts else _text_part(car.raw_text))
+    if text == old_text:
+        return  # matn o'zgarmagan (masalan faqat media almashtirildi)
+    if text:
+        texts[key] = text
+    else:
+        texts.pop(key, None)
+    car.post_texts = texts
+    car.raw_text = _rebuilt_raw_text(car) if texts else "\n".join(_speech_lines(car.raw_text))
 
-    parsed = await extract_car(text, ai=get_ai(), usd_rate_uzs=settings.usd_rate_uzs)
-    old_price = car.price_usd
+    target = _edit_status_target(car, old_text, text)
     was_active = car.status == CarStatus.ACTIVE
-    changes = await cars.apply_parsed(car, parsed, raw_text=text)
-    if not changes:
-        return
+    changes: dict = {}
+    if text:
+        parsed = await extract_car(text, ai=get_ai(), usd_rate_uzs=settings.usd_rate_uzs)
+        # Mashina bir nechta xabardan iborat bo'lsa izoh qo'shiladi; yagona post bo'lsa — almashtiriladi
+        several = len(texts) > 1 or bool(_speech_lines(car.raw_text))
+        changes = await cars.apply_parsed(
+            car, parsed, raw_text=car.raw_text, allow_activate=target is None, merge_notes=several
+        )
+    status_changed = False
+    if target is not None:
+        status_changed = await cars.set_status(car, target[0])
     await cars.session.commit()
-    if car.status == CarStatus.ACTIVE and (not was_active or (old_price is None and car.price_usd)):
-        # Tahrir mashinani sotuvga chiqardi yoki birinchi marta narx qo'ydi — «chiqsa xabar ber» egalariga
+    logger.info(
+        "Kanal posti %s tahrirlandi → mashina #%s: holat=%s, o'zgarishlar=%s",
+        message.message_id, car.id, target[0] if status_changed else "-", sorted(changes),
+    )
+
+    summary = _changes_summary(changes)
+    if status_changed:
+        icon = {CarStatus.SOLD: "🔴", CarStatus.RESERVED: "🔵", CarStatus.ACTIVE: "🟢"}[target[0]]
+        title = {CarStatus.SOLD: "Sotildi deb belgilandi", CarStatus.RESERVED: "Bron qilindi", CarStatus.ACTIVE: "Yana sotuvda"}[
+            target[0]
+        ]
+        header = f"{icon} <b>{title}</b> — {target[1]}."
+        if target[0] == CarStatus.SOLD:
+            header += "\nXato bo'lsa: «↩️ Qayta sotuvga»."
+    elif summary:
+        header = "✏️ <b>Kanaldagi post tahrirlandi</b>"
+    elif car.status == CarStatus.ACTIVE and not was_active:
+        header = "🟢 <b>Tahrirdan keyin sotuvga chiqdi</b>"
+    else:
+        return  # faqat matn/izoh o'zgardi — adminni bezovta qilmaymiz
+    if summary:
+        header += "\n" + summary
+    await send_car_card_to_admins(bot, car, header=header)
+    if car.status == CarStatus.ACTIVE and (not was_active or "price_usd" in changes):
+        # Sotuvga chiqdi yoki narx o'zgardi — «chiqsa xabar ber» egalariga (mos bo'lsa)
         await notify_wishlist_matches_car(bot, CrmRepository(cars.session), cars, car)
         await cars.session.commit()
-    if "price_usd" in changes and old_price:
-        await notify_admins_text(
-            bot,
-            f"💲 <b>{html.escape(car.title)}</b> <code>#{car.id}</code> narxi o'zgardi: "
-            f"${old_price:,} → ${car.price_usd:,}",
-        )

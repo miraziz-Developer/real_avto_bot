@@ -412,8 +412,14 @@ async def apply_listing_payment_unique_id_column(engine: AsyncEngine) -> None:
 
 
 async def apply_car_indexes(engine: AsyncEngine) -> None:
-    """Kanal tahriri/reply qaysi albom xabariga kelsa ham mashinani tez topish uchun GIN indeks."""
+    """Kanal tahriri/reply qaysi albom xabariga kelsa ham mashinani tez topish uchun GIN indeks.
+
+    Shuningdek har bir kanal xabarining matni (post_texts) — tahrirni aniq solishtirish uchun.
+    """
     async with engine.begin() as conn:
+        await conn.execute(
+            text("ALTER TABLE cars ADD COLUMN IF NOT EXISTS post_texts JSONB NOT NULL DEFAULT '{}'::jsonb")
+        )
         await conn.execute(
             text("CREATE INDEX IF NOT EXISTS ix_cars_channel_message_ids ON cars USING GIN (channel_message_ids)")
         )
