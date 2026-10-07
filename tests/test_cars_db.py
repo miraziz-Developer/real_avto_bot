@@ -1008,3 +1008,70 @@ async def test_reposted_video_and_description_merge_into_existing_car(session_fa
         assert rows[0].channel_message_ids == [1300, 1301, 1302] and rows[0].video_file_ids == ["vn:rep"]
         assert rows[0].transmission == "mexanika"  # facts heard in the repost video are kept
     assert any("Qayta joylangan mashina" in t for _, _, t in bot.sent)
+
+
+async def test_import_marks_posts_without_phone_as_sold(session_factory, watch, monkeypatch):
+    from aiogram.methods import ForwardMessage
+    from aiogram.exceptions import TelegramBadRequest
+    from aiogram.types import MessageOriginChannel
+
+    from bot.services import channel_import
+
+    monkeypatch.setattr(channel_import, "FORWARD_PAUSE_SECONDS", 0)
+    channel = Chat(id=CHANNEL_ID, type="channel", username="real_avto_test")
+    now = datetime.now(UTC)
+    models = ["Cobalt 2020", "Spark 2016", "Damas 2021", "Malibu 2019", "Lacetti 2014", "Matiz 2015"]
+    history = {
+        3000 + i: f"{m}, probeg {50 + i} 000 km, narxi {5000 + i}$" + ("" if i == 5 else "\n📞 +998 90 111 22 3" + str(i))
+        for i, m in enumerate(models)
+    }
+
+    class ImportBot(FakeBot):
+        async def forward_message(self, chat_id, from_chat_id, message_id, disable_notification=None, **kw):
+            if message_id not in history:
+                raise TelegramBadRequest(ForwardMessage(chat_id=chat_id, from_chat_id=from_chat_id, message_id=message_id), "not found")
+            return Message(
+                message_id=1, date=now, chat=Chat(id=chat_id, type="private"), text=history[message_id],
+                forward_origin=MessageOriginChannel(date=now - timedelta(days=3), chat=channel, message_id=message_id),
+            )
+
+        async def delete_message(self, chat_id, message_id, **kw):
+            pass
+
+    report = await channel_import.import_channel_history(
+        ImportBot(), channel=channel, last_id=3005, count=6, buffer_chat_id=ADMIN_ID
+    )
+    assert report.active == 5 and report.sold_no_phone == 1
+    async with session_factory() as s:
+        matiz = (await s.execute(select(Car).where(Car.model == "Matiz"))).scalar_one()
+        assert matiz.status == CarStatus.SOLD  # the team removes the phone once a car is sold
+
+
+async def test_admin_forwards_old_channel_post_to_bot(session_factory, watch, monkeypatch):
+    from aiogram.types import MessageOriginChannel, User
+
+    from bot.handlers import car_admin
+    from bot.services import channel_import
+
+    monkeypatch.setattr(car_admin, "is_admin", lambda uid: uid == ADMIN_ID)
+    channel = Chat(id=CHANNEL_ID, type="channel", username="real_avto_test")
+    fwd = Message(
+        message_id=77,
+        date=datetime.now(UTC),
+        chat=Chat(id=ADMIN_ID, type="private"),
+        from_user=User(id=ADMIN_ID, is_bot=False, first_name="Admin"),
+        text="Nexia 3 2019, probeg 60 000 km, narxi 8200$",
+        forward_origin=MessageOriginChannel(date=datetime.now(UTC) - timedelta(days=10), chat=channel, message_id=4000),
+    )
+    assert car_admin._admin_channel_forward(fwd)
+    foreign = MessageOriginChannel(date=datetime.now(UTC), chat=Chat(id=-100777, type="channel"), message_id=1)
+    assert not car_admin._admin_channel_forward(fwd.model_copy(update={"forward_origin": foreign}))
+
+    bot = FakeBot()
+    post = channel_import.channel_post_from_forward(fwd)
+    await channel_import.import_forwarded(bot, ADMIN_ID, [post])
+    async with session_factory() as s:
+        car = (await s.execute(select(Car))).scalar_one()
+        assert car.channel_message_ids == [4000] and car.model == "Nexia 3"
+    await channel_import.import_forwarded(bot, ADMIN_ID, [post])  # forwarded twice — no duplicate
+    assert "bazada bor" in bot.sent[-1][2]

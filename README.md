@@ -101,9 +101,12 @@ Pass the link of the **latest** post (⋮ → Copy link).
 - **Processing:** each post goes through the normal channel tracker. Videos and descriptions merge into one car, reposts are not duplicated, and "SOTILDI" posts become sold.
 - **During import:** no admin cards or customer notifications are sent; a single report arrives at the end.
 - **Archiving:** cars older than `archive_after_days` with an unknown status are archived, so the agent never offers stale cars.
+- **Sold detection:** deleted posts cannot be read, so they are skipped automatically. Posts saying "SOTILDI" become sold. When the channel's posts usually carry a phone number, a post whose phone was removed is treated as sold, because the team removes it after a sale.
 - **Re-running** is safe: known posts are skipped.
 - **Limitation:** a forwarded copy loses its reply link, so old "sotildi" replies are matched by model only.
 - **Cost:** each round video costs about $0.003 of Gemini time, so 300 posts with many videos may exceed the default $1 daily cap. Raise `AI_DAILY_BUDGET_USD` for the import day.
+
+**Choosing cars by hand:** an admin can forward any channel post (an album, a video and its description) to the bot. The bot adds that car to the database and sends its card; forwarding the same post again only says it is already there. This is useful on day one to add only the cars that are still for sale. New posts are then tracked automatically.
 
 **Text-only alternative** (Telegram Desktop export, no media):
 

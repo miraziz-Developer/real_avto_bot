@@ -304,6 +304,21 @@ async def cmd_import_channel(message: Message, command: CommandObject) -> None:
 
 _background_tasks: set[asyncio.Task] = set()
 
+
+def _admin_channel_forward(message: Message) -> bool:
+    return (
+        message.chat.type == "private"
+        and message.from_user is not None
+        and is_admin(message.from_user.id)
+        and channel_import.channel_post_from_forward(message) is not None
+    )
+
+
+@router.message(_admin_channel_forward)
+async def on_admin_channel_forward(message: Message) -> None:
+    """Admin kanaldagi postni botga forward qildi — shu mashina bazaga qo'shiladi (eski postlarni tanlab qo'shish)."""
+    channel_import.queue_forwarded(message.bot, message.chat.id, message)
+
 REANALYZE_MAX_VIDEOS = 4
 _SPEECH_PREFIXES = ("[Ovoz]", "[Videoda", "[Video]")
 

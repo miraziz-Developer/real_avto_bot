@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
-from aiogram.types import Chat, Message
+from aiogram.types import Chat, Message, MessageOriginChannel
 from sqlalchemy import func, select
 
 from bot.db.base import get_session_factory
@@ -33,6 +33,7 @@ from bot.db.cars_repo import CarRepository
 from bot.db.models import Car, CarStatus
 from bot.handlers import channel_watch
 from bot.services.car_cards import notifications_muted
+from bot.services.car_parser import has_phone
 import contextlib
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,9 @@ DEFAULT_ACTIVE_DAYS = 30
 FORWARD_PAUSE_SECONDS = 0.4  # bitta chatga sekundiga ~2 ta forward+o'chirish — Telegram cheklovidan past
 ALBUM_GAP_SECONDS = 3
 PROGRESS_EVERY = 50
+# «Telefonsiz post = sotilgan» qoidasi faqat kanalda telefon yozish odat bo'lsa ishlaydi
+PHONE_RULE_MIN_POSTS = 5
+PHONE_RULE_SHARE = 0.6
 
 _POST_ID_RE = re.compile(r"(\d+)\s*$")
 _running = False
@@ -57,6 +61,7 @@ class ImportReport:
     active: int = 0
     review: int = 0
     sold: int = 0
+    sold_no_phone: int = 0
     archived: int = 0
 
 
@@ -175,13 +180,21 @@ async def import_channel_history(
         async with get_session_factory()() as session:
             repo = CarRepository(session)
             rows = (await session.execute(select(Car).where(Car.id > max_before).order_by(Car.id))).scalars().all()
+            # Jamoa odati: sotilgach postdan telefon raqami o'chiriladi. Kanal postlarida odatda telefon bo'lsa,
+            # telefonsiz qolgan e'lon — sotilgan (aks holda import sotilgan mashinani sotuvga qo'shib qo'yardi)
+            texts_by_car = {c.id: [t for t in (c.post_texts or {}).values() if t] for c in rows}
+            with_text = [cid for cid, texts in texts_by_car.items() if texts]
+            with_phone = [cid for cid in with_text if any(has_phone(t) for t in texts_by_car[cid])]
+            phones_are_usual = len(with_text) >= PHONE_RULE_MIN_POSTS and len(with_phone) >= PHONE_RULE_SHARE * len(with_text)
             for car in rows:
-                if (
-                    car.status in (CarStatus.ACTIVE, CarStatus.REVIEW)
-                    and car.published_at is not None
-                    and car.published_at < cutoff
-                ):
+                if car.status not in (CarStatus.ACTIVE, CarStatus.REVIEW, CarStatus.RESERVED):
+                    continue
+                if car.published_at is not None and car.published_at < cutoff:
                     await repo.set_status(car, CarStatus.ARCHIVED)
+                elif phones_are_usual and car.id in with_text and car.id not in with_phone:
+                    await repo.set_status(car, CarStatus.SOLD)
+                    await repo.add_event(car, "import_sold_no_phone")
+                    report.sold_no_phone += 1
             await session.commit()
             for car in rows:
                 report.created += 1
@@ -233,6 +246,97 @@ async def run_import_for_admin(
         f"Yangi mashinalar: {report.created}\n"
         f"  🟢 sotuvda: {report.active}\n"
         f"  🟡 tekshiruv kerak: {report.review} — /tekshiruv\n"
-        f"  🔴 sotilgan: {report.sold}\n"
+        f"  🔴 sotilgan: {report.sold} (shundan telefon raqami o'chirilgani uchun: {report.sold_no_phone})\n"
         f"  🗄 arxiv ({active_days} kundan eski): {report.archived}"
     )
+
+
+# --- Admin postni botga forward qiladi → shu mashina bazaga qo'shiladi ------------------------------------
+# Birinchi ulashda qaysi eski mashinalar hali sotuvda ekanini jamoa o'zi tanlaydi: postni botga forward qiladi.
+
+FORWARD_ALBUM_WAIT_SECONDS = 2.0
+_forward_albums: dict[str, list[Message]] = {}
+_forward_tasks: dict[str, asyncio.Task] = {}
+
+
+def channel_post_from_forward(m: Message) -> Message | None:
+    """Asosiy kanaldan forward qilingan xabar → kanal posti ko'rinishida (asl ID va sana bilan)."""
+    origin = m.forward_origin
+    if not isinstance(origin, MessageOriginChannel) or not channel_watch.is_main_channel(origin.chat):
+        return None
+    chat = Chat(id=origin.chat.id, type="channel", title=origin.chat.title, username=origin.chat.username)
+    return m.model_copy(
+        update={
+            "chat": chat,
+            "message_id": origin.message_id,
+            "date": origin.date,
+            "forward_origin": None,
+            "reply_to_message": None,
+        }
+    )
+
+
+async def _answer(bot: Bot, chat_id: int, text: str) -> None:
+    with contextlib.suppress(TelegramBadRequest, TelegramForbiddenError):
+        await bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
+
+
+async def import_forwarded(bot: Bot, admin_chat_id: int, posts: list[Message]) -> None:
+    """Forward qilingan kanal postini (albomni) bazaga qo'shish va adminga natijani aytish."""
+    posts = sorted(posts, key=lambda m: m.message_id)
+    channel_id = posts[0].chat.id
+    async with get_session_factory()() as session:
+        known = await CarRepository(session).find_by_channel_message(channel_id, posts[0].message_id)
+    if known is not None:
+        await _answer(
+            bot, admin_chat_id,
+            f"ℹ️ Bu post bazada bor: <b>{html.escape(known.title)}</b> <code>#{known.id}</code> — /mashina {known.id}",
+        )
+        return
+    for p in posts:
+        channel_watch.remember_post_content(p)
+    await channel_watch.process_channel_post(bot, posts)
+    async with get_session_factory()() as session:
+        car = await CarRepository(session).find_by_channel_message(channel_id, posts[0].message_id)
+    if car is None:
+        if any(p.video_note or p.video or p.photo for p in posts) and not any(p.caption or p.text for p in posts):
+            await _answer(bot, admin_chat_id, "🎥 Media qabul qilindi — endi shu mashinaning tavsif postini ham forward qiling.")
+        else:
+            await _answer(bot, admin_chat_id, "⚠️ Bu postdan mashina aniqlanmadi (e'lon emas).")
+        return
+    logger.info("Admin forward qildi: kanal posti %s → mashina #%s", posts[0].message_id, car.id)
+
+
+def queue_forwarded(bot: Bot, admin_chat_id: int, message: Message) -> bool:
+    """Albom qismlarini yig'ib, bitta e'lon qilib qo'shadi. False — bu kanal posti emas."""
+    post = channel_post_from_forward(message)
+    if post is None:
+        return False
+    if not message.media_group_id:
+        task = asyncio.create_task(_safe_import(bot, admin_chat_id, [post]))
+        _forward_tasks[f"single:{id(task)}"] = task
+        task.add_done_callback(lambda t: _forward_tasks.pop(f"single:{id(t)}", None))
+        return True
+    key = f"{admin_chat_id}:{message.media_group_id}"
+    _forward_albums.setdefault(key, []).append(post)
+    if key not in _forward_tasks:
+        _forward_tasks[key] = asyncio.create_task(_flush_forward_album(bot, admin_chat_id, key))
+    return True
+
+
+async def _flush_forward_album(bot: Bot, admin_chat_id: int, key: str) -> None:
+    try:
+        await asyncio.sleep(FORWARD_ALBUM_WAIT_SECONDS)
+        posts = _forward_albums.pop(key, [])
+        if posts:
+            await _safe_import(bot, admin_chat_id, posts)
+    finally:
+        _forward_tasks.pop(key, None)
+
+
+async def _safe_import(bot: Bot, admin_chat_id: int, posts: list[Message]) -> None:
+    try:
+        await import_forwarded(bot, admin_chat_id, posts)
+    except Exception:
+        logger.exception("Forward qilingan postni qo'shib bo'lmadi")
+        await _answer(bot, admin_chat_id, "❌ Postni qo'shishda xato — logni tekshiring.")
