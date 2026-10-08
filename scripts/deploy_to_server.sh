@@ -46,4 +46,6 @@ if [ -f backend/.env ] && ! "${SSH[@]}" "$TARGET" "test -f '$REMOTE_DIR/backend/
 fi
 
 echo "==> Serverda o'rnatish"
-"${SSH[@]}" -t "$TARGET" "cd '$REMOTE_DIR' && bash scripts/server_setup.sh"
+TTY=(-t)
+[ -t 1 ] || TTY=()  # CI: no terminal
+"${SSH[@]}" "${TTY[@]}" "$TARGET" "cd '$REMOTE_DIR' && SETUP_QUIET_SECRETS='${SETUP_QUIET_SECRETS:-0}' bash scripts/server_setup.sh"

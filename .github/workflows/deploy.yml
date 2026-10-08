@@ -1,0 +1,57 @@
+name: Deploy
+
+# Deploys the stack to the server over SSH (scripts/deploy_to_server.sh → scripts/server_setup.sh).
+# Runs on demand, or on a push whose commit message contains "[deploy]".
+# One-time setup — repository Settings → Secrets and variables → Actions:
+#   secret DEPLOY_SSH_KEY  — the private SSH key for the server user
+#   secret DEPLOY_ENV      — contents of the bot's .env (used only on the first deploy; the server keeps its own)
+#   variable DEPLOY_HOST / DEPLOY_USER / DEPLOY_DIR — optional overrides of the defaults below
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, claude/lucid-pascal-2zqc9d]
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[deploy]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST || '172.198.138.146' }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER || 'bozorliii' }}
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '/opt/real_avto_bot' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check secrets
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          ENV_FILE: ${{ secrets.DEPLOY_ENV }}
+        run: |
+          [ -n "$KEY" ] || { echo "::error::Secret DEPLOY_SSH_KEY is missing"; exit 1; }
+          [ -n "$ENV_FILE" ] || { echo "::error::Secret DEPLOY_ENV is missing"; exit 1; }
+
+      - name: Prepare key and .env
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          ENV_FILE: ${{ secrets.DEPLOY_ENV }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$ENV_FILE" > .env
+          chmod 600 .env
+
+      - name: Deploy
+        env:
+          # Never print generated passwords into the Actions log — admins get them in Telegram instead
+          SETUP_QUIET_SECRETS: "1"
+        run: bash scripts/deploy_to_server.sh "$DEPLOY_USER@$DEPLOY_HOST" ~/.ssh/deploy_key "$DEPLOY_DIR"
+
+      - name: Clean up
+        if: always()
+        run: rm -f ~/.ssh/deploy_key .env

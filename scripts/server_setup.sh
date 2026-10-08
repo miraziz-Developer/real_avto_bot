@@ -173,7 +173,22 @@ sudo systemctl enable real-avto-stack.service > /dev/null 2>&1 && echo "systemd:
 say "Tayyor"
 echo "CRM:      http://${IP}:${CRM_PORT}   (login: ${CRM_USER})"
 if [ -n "$NEW_CRM_PASSWORD" ]; then
-    echo "          parol: ${NEW_CRM_PASSWORD}   ← saqlab qo'ying (backend/.env da ham bor)"
+    # Admins get the new CRM password in their private chat with the bot
+    BOT_TOKEN_VALUE="$(get_env .env BOT_TOKEN)"
+    for id in $(get_env .env ADMIN_TELEGRAM_IDS | tr ',' ' '); do
+        curl -s -m 15 "https://api.telegram.org/bot${BOT_TOKEN_VALUE}/sendMessage" \
+            --data-urlencode "chat_id=${id}" \
+            --data-urlencode "text=🛠 Real Avto serverga o'rnatildi.
+CRM: http://${IP}:${CRM_PORT}
+Login: ${CRM_USER}
+Parol: ${NEW_CRM_PASSWORD}
+(Bu xabarni saqlab, keyin o'chirib qo'ying)" > /dev/null || true
+    done
+    if [ "${SETUP_QUIET_SECRETS:-0}" = "1" ]; then
+        echo "          parol adminlarga Telegram'da yuborildi (serverda: backend/.env)"
+    else
+        echo "          parol: ${NEW_CRM_PASSWORD}   ← saqlab qo'ying (backend/.env da ham bor)"
+    fi
 fi
 echo "Katalog:  http://${IP}:${CATALOG_PORT}"
 echo "Bot logi: docker compose logs -f bot"
