@@ -2,6 +2,11 @@
 #   docker compose build bot --no-cache && docker compose up -d bot
 #
 # Start on boot: install scripts/real-avto-stack.service as a systemd unit.
+# Host ports come from the root .env (CRM_PORT, CATALOG_PORT, BACKEND_PORT, IG_WEBHOOK_HOST_PORT), so the stack can
+# share a server with other Docker projects. scripts/server_setup.sh picks free ones.
+
+# Fixed project name: containers, network and volumes stay separate from other projects on the same server
+name: real_avto
 
 x-logging: &default-logging
   driver: json-file
@@ -78,7 +83,7 @@ services:
       start_period: 25s
     # Local only (reached through the CRM/catalog nginx or a host reverse proxy). Never exposed directly.
     ports:
-      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:${BACKEND_PORT:-3001}:3001"
     restart: unless-stopped
     stop_grace_period: 25s
     logging: *default-logging
@@ -95,7 +100,7 @@ services:
       retries: 3
       start_period: 15s
     ports:
-      - "3000:80"
+      - "${CRM_BIND:-0.0.0.0}:${CRM_PORT:-3000}:80"
     restart: unless-stopped
     stop_grace_period: 15s
     logging: *default-logging
@@ -113,7 +118,7 @@ services:
       retries: 3
       start_period: 15s
     ports:
-      - "3002:80"
+      - "${CATALOG_BIND:-0.0.0.0}:${CATALOG_PORT:-3002}:80"
     restart: unless-stopped
     stop_grace_period: 15s
     logging: *default-logging
@@ -124,7 +129,7 @@ services:
       - .env
     # Instagram webhook (when INSTAGRAM_ENABLED=true). Expose through an HTTPS reverse proxy
     ports:
-      - "127.0.0.1:8081:8081"
+      - "127.0.0.1:${IG_WEBHOOK_HOST_PORT:-8081}:8081"
     environment:
       REDIS_URL: redis://redis:6379/0
     init: true

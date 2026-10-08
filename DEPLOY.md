@@ -17,6 +17,30 @@ This guide brings up the whole stack on a single server:
   - `NODE_ENV=production`;
   - `CORS_ORIGIN` if the CRM is served from its own domain.
 
+## 0. Quick deploy (one command from your computer)
+
+Works on a fresh server and on a server already running other Docker projects. The stack uses its own project name (`real_avto`), so containers, network and volumes are separate. It also picks free host ports.
+
+```bash
+# on your computer, in the project folder, with a filled-in .env
+bash scripts/deploy_to_server.sh user@SERVER_IP ~/.ssh/your_key        # installs into /opt/real_avto_bot
+```
+
+The script:
+1. copies the code with rsync;
+2. sends your `.env` on the **first** deploy only. Later deploys keep the server's `.env`, which holds the generated passwords and ports;
+3. runs `scripts/server_setup.sh` on the server:
+   - fills in missing secrets (Postgres password, JWT secret, CRM password);
+   - points both `DATABASE_URL`s at the `db` container;
+   - chooses free ports (`CRM_PORT`, `CATALOG_PORT`, `BACKEND_PORT`, `IG_WEBHOOK_HOST_PORT` in `.env`);
+   - builds and starts the stack and waits for health;
+   - installs the backup and watchdog cron jobs and the systemd unit;
+   - prints the CRM address and login.
+
+Re-run the same command after each code update. Stop any other bot process that uses the same token first.
+
+The rest of this guide describes the same steps manually.
+
 ## 1. Server requirements
 
 | | Minimum |
@@ -125,10 +149,10 @@ Clean rebuild (when troubleshooting): `BOOTSTRAP_NO_CACHE=1 bash scripts/server_
 
 | Service | Host port |
 |---|---|
-| CRM web app | **3000** → container 80 (proxies `/api/` to the backend) |
-| Catalog | **3002** → container 80 |
-| CRM API | **127.0.0.1:3001** (local only; expose through a reverse proxy) |
-| Bot (Instagram webhook) | **127.0.0.1:8081** |
+| CRM web app | **3000** (`CRM_PORT`) → container 80 (proxies `/api/` to the backend) |
+| Catalog | **3002** (`CATALOG_PORT`) → container 80 |
+| CRM API | **127.0.0.1:3001** (`BACKEND_PORT`; local only; expose through a reverse proxy) |
+| Bot (Instagram webhook) | **127.0.0.1:8081** (`IG_WEBHOOK_HOST_PORT`) |
 | PostgreSQL / Redis | internal Docker network only |
 
 Expose only what is needed (443 for HTTPS). Never expose 5432 or 3001 to the internet.
