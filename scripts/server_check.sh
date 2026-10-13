@@ -125,21 +125,20 @@ head_ "Mini App"
 [ -n "$(env_value .env BOT_USERNAME)" ] && ok "BOT_USERNAME: @$(env_value .env BOT_USERNAME)" || bad "BOT_USERNAME bo'sh — katalogdagi «Savol berish» tugmalari ishlamaydi"
 menu="$(curl -s -m 15 "$TG/getChatMenuButton" | json 'd["result"].get("web_app",{}).get("url","")')"
 [[ "$menu" == https://* ]] && ok "bot menyusi: 🚗 Katalog → $menu" || bad "bot menyu tugmasi Mini App emas (${menu:-yo'q})"
-ADMIN_ID="$(env_value .env ADMIN_TELEGRAM_IDS | tr ',;' '  ' | awk '{print $1}')"
+ADMIN_ID="$(env_value .env ADMIN_TELEGRAM_IDS | tr ',;' '  ' | awk '{print $1}' || true)"
 if [ -n "$ADMIN_ID" ]; then
     amenu="$(curl -s -m 15 "$TG/getChatMenuButton" --data-urlencode "chat_id=$ADMIN_ID" | json 'd["result"].get("web_app",{}).get("url","")')"
     [[ "$amenu" == https://* ]] && ok "admin menyusi: 🛠 Admin panel → $amenu" || note "admin menyusida CRM yo'q (${amenu:-—})"
     # Telegram imzolagan initData'ni taqlid qilamiz: admin CRM'ga parolsiz kira oladimi
-    init_data="$(BOT_TOKEN="$BOT_TOKEN" ADMIN_ID="$ADMIN_ID" python3 - <<'PY'
+    init_data="$(BOT_TOKEN="$BOT_TOKEN" CHECK_ADMIN="$ADMIN_ID" python3 -c '
 import hashlib, hmac, json, os, time, urllib.parse
-user = json.dumps({"id": int(os.environ["ADMIN_ID"]), "first_name": "Check"}, separators=(",", ":"))
+user = json.dumps({"id": int(os.environ["CHECK_ADMIN"]), "first_name": "Check"}, separators=(",", ":"))
 fields = {"auth_date": str(int(time.time())), "query_id": "check", "user": user}
-check = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+check = chr(10).join(f"{k}={v}" for k, v in sorted(fields.items()))
 secret = hmac.new(b"WebAppData", os.environ["BOT_TOKEN"].encode(), hashlib.sha256).digest()
 fields["hash"] = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
 print(urllib.parse.urlencode(fields))
-PY
-)"
+')"
     body="$(python3 -c 'import json,sys; print(json.dumps({"init_data": sys.argv[1]}))' "$init_data")"
     tok="$(curl -s -m 10 -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:${CRM_PORT}/api/auth/telegram" | json 'd.get("token","")')"
     [ -n "$tok" ] && ok "CRM Mini App: admin Telegram orqali parolsiz kiradi" || bad "CRM Mini App: Telegram orqali kirish ishlamadi"
