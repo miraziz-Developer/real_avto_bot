@@ -46,11 +46,45 @@ jobs:
           printf '%s\n' "$ENV_FILE" > .env
           chmod 600 .env
 
+      - name: Server status before deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "$DEPLOY_USER@$DEPLOY_HOST" '
+            echo "== memory"; free -h
+            echo "== disk"; df -h / | tail -n 1
+            echo "== containers"; docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          '
+
+      # Commit message "[stop-bozorliii]" (or repository variable STOP_BOZORLIII=true): stop the other project on the
+      # server to free memory. Only "docker compose stop": containers, volumes and files are kept, its .env is backed
+      # up; bring it back with: cd /opt/bozorliii && docker compose -f docker-compose.prod.yml start
+      - name: Stop bozorliii (temporary)
+        if: contains(github.event.head_commit.message, '[stop-bozorliii]') || vars.STOP_BOZORLIII == 'true'
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" '
+            set -e
+            cd /opt/bozorliii
+            backup="$HOME/bozorliii_env_backup_$(date +%Y%m%d_%H%M%S)"
+            cp -a .env "$backup" && chmod 600 "$backup" && echo ".env backup: $backup"
+            docker compose -f docker-compose.prod.yml stop
+            docker compose -f docker-compose.prod.yml ps
+            echo "== memory after stop"; free -h
+          '
+
       - name: Deploy
         env:
           # Never print generated passwords into the Actions log — admins get them in Telegram instead
           SETUP_QUIET_SECRETS: "1"
         run: bash scripts/deploy_to_server.sh "$DEPLOY_USER@$DEPLOY_HOST" ~/.ssh/deploy_key "$DEPLOY_DIR"
+
+      - name: Server status after deploy
+        if: always()
+        run: |
+          [ -f ~/.ssh/deploy_key ] || exit 0
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" "
+            cd '$DEPLOY_DIR' 2>/dev/null && docker compose ps
+            echo '== bot log (last 40 lines)'; docker compose logs --tail=40 bot 2>/dev/null
+            echo '== memory'; free -h
+          " || true
 
       - name: Clean up
         if: always()
