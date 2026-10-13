@@ -40,16 +40,18 @@ jobs:
       - name: Reachable from the internet
         if: always()
         run: |
+          host="${DEPLOY_HOST//./-}.sslip.io"
           fails=0
-          for port in 3000 3002 80 443; do
-            scheme=http; [ "$port" = 443 ] && scheme=https
-            code="$(curl -sk -o /dev/null -w '%{http_code}' -m 15 "$scheme://$DEPLOY_HOST:$port/" || true)"
-            echo "$scheme://$DEPLOY_HOST:$port → ${code:-timeout}"
-            case "$port:$code" in 3000:200|3002:200) ;; 3000:*|3002:*) fails=1 ;; esac
+          for url in "https://$host/" "https://crm.$host/" "https://$host/api/public/cars"; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' -m 20 "$url" || true)"
+            echo "$url → ${code:-timeout}"
+            [ "$code" = 200 ] || fails=1
           done
-          hook="https://${DEPLOY_HOST//./-}.sslip.io/manychat/instagram"
-          echo "$hook (no key, expect 401) → $(curl -s -o /dev/null -w '%{http_code}' -m 20 -X POST "$hook" || true)"
-          [ "$fails" = 0 ] || echo "::warning::Ports are not reachable from outside — open 3000/3002 in the cloud firewall (Azure: Network security group → Inbound rules)"
+          hook="https://$host/manychat/instagram"
+          code="$(curl -s -o /dev/null -w '%{http_code}' -m 20 -X POST "$hook" || true)"
+          echo "$hook (no key, expect 401) → $code"
+          [ "$code" = 401 ] || fails=1
+          [ "$fails" = 0 ] || { echo "::error::Public HTTPS is not fully reachable"; exit 1; }
 
       - name: Clean up
         if: always()
