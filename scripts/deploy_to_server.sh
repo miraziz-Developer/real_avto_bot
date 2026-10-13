@@ -13,7 +13,16 @@
 
 set -euo pipefail
 
-TARGET="${1:?Foydalanish: bash scripts/deploy_to_server.sh user@host ~/.ssh/kalit [/opt/real_avto_bot]}"
+STOP_OTHER=""   # --stop-bozorliii: the other project on this server is stopped first (only "stop", nothing is deleted)
+ARGS=()
+for a in "$@"; do
+    case "$a" in
+        --stop-bozorliii) STOP_OTHER="/opt/bozorliii" ;;
+        *) ARGS+=("$a") ;;
+    esac
+done
+set -- "${ARGS[@]}"
+TARGET="${1:?Foydalanish: bash scripts/deploy_to_server.sh user@host ~/.ssh/kalit [/opt/real_avto_bot] [--stop-bozorliii]}"
 KEY="${2:?SSH kalit fayli kerak, masalan ~/.ssh/bozorliii_student_key}"
 REMOTE_DIR="${3:-/opt/real_avto_bot}"
 
@@ -23,6 +32,14 @@ cd "$(dirname "$0")/.."
 command -v rsync > /dev/null || { echo "rsync o'rnatilmagan (Mac: bor; Ubuntu: sudo apt install rsync)"; exit 1; }
 
 SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=accept-new)
+
+echo "==> Server holati"
+"${SSH[@]}" "$TARGET" 'free -h; df -h / | tail -n 1; docker ps --format "table {{.Names}}\t{{.Status}}"'
+
+if [ -n "$STOP_OTHER" ]; then
+    echo "==> $STOP_OTHER vaqtincha to'xtatilmoqda (.env nusxalanadi, hech narsa o'chirilmaydi)"
+    "${SSH[@]}" "$TARGET" "set -e; cd '$STOP_OTHER'; b=\$HOME/bozorliii_env_backup_\$(date +%Y%m%d_%H%M%S); cp -a .env \$b && chmod 600 \$b && echo \".env nusxasi: \$b\"; docker compose -f docker-compose.prod.yml stop; free -h"
+fi
 
 echo "==> Server papkasi: $REMOTE_DIR"
 "${SSH[@]}" "$TARGET" "sudo mkdir -p '$REMOTE_DIR' && sudo chown \$(id -un):\$(id -gn) '$REMOTE_DIR'"
