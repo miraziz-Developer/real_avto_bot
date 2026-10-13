@@ -41,9 +41,11 @@ jobs:
         if: always()
         run: |
           fails=0
-          for port in 3000 3002; do
-            code="$(curl -s -o /dev/null -w '%{http_code}' -m 15 "http://$DEPLOY_HOST:$port/" || true)"
-            if [ "$code" = 200 ]; then echo "✔ http://$DEPLOY_HOST:$port → 200"; else echo "✘ http://$DEPLOY_HOST:$port → ${code:-timeout}"; fails=1; fi
+          for port in 3000 3002 80 443; do
+            scheme=http; [ "$port" = 443 ] && scheme=https
+            code="$(curl -sk -o /dev/null -w '%{http_code}' -m 15 "$scheme://$DEPLOY_HOST:$port/" || true)"
+            echo "$scheme://$DEPLOY_HOST:$port → ${code:-timeout}"
+            case "$port:$code" in 3000:200|3002:200) ;; 3000:*|3002:*) fails=1 ;; esac
           done
           [ "$fails" = 0 ] || echo "::warning::Ports are not reachable from outside — open 3000/3002 in the cloud firewall (Azure: Network security group → Inbound rules)"
 

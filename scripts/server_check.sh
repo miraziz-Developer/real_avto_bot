@@ -124,7 +124,8 @@ esac
 
 # --- Database ------------------------------------------------------------------------------
 head_ "Baza"
-psql() { docker compose exec -T db psql -U postgres -d real_avto_konkurs -At -c "$1" 2>/dev/null; }
+# Every "docker compose exec" gets </dev/null: when this script is piped ("bash -s") it would swallow the rest of it
+psql() { docker compose exec -T db psql -U postgres -d real_avto_konkurs -At -c "$1" 2>/dev/null < /dev/null; }
 cars="$(psql "select status, count(*) from cars group by status order by status" | tr '\n' ' ')"
 [ -n "$cars" ] && ok "mashinalar: ${cars}" || note "mashinalar jadvali bo'sh"
 ok "leadlar: $(psql 'select count(*) from leads' || echo '?'), foydalanuvchilar: $(psql 'select count(*) from users' || echo '?')"
@@ -141,7 +142,7 @@ crontab -l 2>/dev/null | grep -q real_avto_watchdog.log && ok "watchdog cron o'r
 systemctl is-enabled real-avto-stack.service > /dev/null 2>&1 && ok "systemd: avtomatik ishga tushish yoqilgan" \
     || bad "systemd unit yoqilmagan"
 if [ "${RUN_BACKUP:-0}" = 1 ]; then
-    bash scripts/server_backup.sh > /tmp/real_avto_check_backup.log 2>&1 && ok "backup qo'lda ishga tushirildi" \
+    bash scripts/server_backup.sh > /tmp/real_avto_check_backup.log 2>&1 < /dev/null && ok "backup qo'lda ishga tushirildi" \
         || bad "backup xatosi: $(tail -n 2 /tmp/real_avto_check_backup.log)"
 fi
 last_backup="$(ls -1t /opt/backups/real_avto/*.sql.gz 2>/dev/null | head -n 1)"
@@ -149,6 +150,17 @@ last_backup="$(ls -1t /opt/backups/real_avto/*.sql.gz 2>/dev/null | head -n 1)"
     || note "hali backup yo'q (har 6 soatda olinadi)"
 disk="$(df -P / | awk 'NR==2 {print $5}')"
 ok "disk: ${disk} band; xotira: $(free -h | awk '/Mem:/ {print $3 " / " $2}')"
+
+# --- Network (how the server is exposed) -------------------------------------------------------------
+head_ "Tarmoq"
+if command -v ufw > /dev/null; then note "ufw: $(sudo -n ufw status 2>/dev/null | head -n 1 || echo '?')"; fi
+note "80/443 ni tinglayotgan: $(sudo -n ss -ltnpH 2>/dev/null | awk '$4 ~ /:(80|443)$/ {print $4, $6}' | tr '\n' ' ' || true)"
+for d in /etc/nginx/sites-enabled /etc/nginx/conf.d; do
+    [ -d "$d" ] && note "nginx $d: $(grep -rhoE 'server_name[^;]+' "$d" 2>/dev/null | sort -u | tr '\n' ' ')"
+done
+command -v caddy > /dev/null && note "caddy o'rnatilgan"
+note "docker portlari: $(docker ps --format '{{.Names}} {{.Ports}}' | grep -E ':(80|443)->' | tr '\n' ' ')"
+[ -f /opt/bozorliii/docker-compose.prod.yml ] && note "bozorliii domenlari: $(grep -rhoE '[a-z0-9.-]+\.(uz|com|net|org|app|io|dev)' /opt/bozorliii/docker-compose.prod.yml /opt/bozorliii/nginx* /opt/bozorliii/*.conf /opt/bozorliii/Caddyfile 2>/dev/null | sort -u | head -n 10 | tr '\n' ' ')"
 
 head_ "Natija"
 if [ "$FAILS" = 0 ]; then ok "hammasi ishlayapti"; else bad "${FAILS} ta muammo"; fi
