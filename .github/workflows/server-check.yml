@@ -1,0 +1,52 @@
+name: Server check
+
+# End-to-end health check of the deployed stack (scripts/server_check.sh) plus reachability from the internet.
+# Runs on demand, or on a push whose commit message contains "[check]". Read-only; prints no secrets.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, claude/lucid-pascal-2zqc9d]
+
+jobs:
+  check:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[check]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST || '172.198.138.146' }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER || 'bozorliii' }}
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '/opt/real_avto_bot' }}
+      SSHPASS: ${{ secrets.DEPLOY_SSH_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare login
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          if [ -n "$KEY" ]; then
+            printf '%s\n' "$KEY" > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
+            echo "SSH_CMD=ssh -i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" >> "$GITHUB_ENV"
+          else
+            sudo apt-get install -y -qq sshpass > /dev/null
+            echo "SSH_CMD=sshpass -e ssh -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no" >> "$GITHUB_ENV"
+          fi
+
+      - name: Check on the server
+        run: $SSH_CMD "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_DIR' && RUN_BACKUP=1 bash -s" < scripts/server_check.sh
+
+      - name: Reachable from the internet
+        if: always()
+        run: |
+          fails=0
+          for port in 3000 3002; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' -m 15 "http://$DEPLOY_HOST:$port/" || true)"
+            if [ "$code" = 200 ]; then echo "✔ http://$DEPLOY_HOST:$port → 200"; else echo "✘ http://$DEPLOY_HOST:$port → ${code:-timeout}"; fails=1; fi
+          done
+          [ "$fails" = 0 ] || echo "::warning::Ports are not reachable from outside — open 3000/3002 in the cloud firewall (Azure: Network security group → Inbound rules)"
+
+      - name: Clean up
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
