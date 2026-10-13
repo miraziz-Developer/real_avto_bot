@@ -47,6 +47,8 @@ jobs:
             echo "$scheme://$DEPLOY_HOST:$port → ${code:-timeout}"
             case "$port:$code" in 3000:200|3002:200) ;; 3000:*|3002:*) fails=1 ;; esac
           done
+          hook="https://${DEPLOY_HOST//./-}.sslip.io/manychat/instagram"
+          echo "$hook (no key, expect 401) → $(curl -s -o /dev/null -w '%{http_code}' -m 20 -X POST "$hook" || true)"
           [ "$fails" = 0 ] || echo "::warning::Ports are not reachable from outside — open 3000/3002 in the cloud firewall (Azure: Network security group → Inbound rules)"
 
       - name: Clean up

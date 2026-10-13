@@ -120,6 +120,37 @@ class InstagramClient:
             logger.info("Instagram profilini olib bo'lmadi (%s): %s", igsid, e)
             return {}
 
+    async def get_media(self, media_id: str) -> dict:
+        """Post/reel matni va havolasi (o'z akkauntimiz posti)."""
+        return await self._request("GET", f"/{media_id}", params={"fields": "id,caption,permalink,timestamp"})
+
+    async def find_comment_media(self, username: str, text: str, *, recent_posts: int = 8) -> dict | None:
+        """Komment qaysi postga yozilganini topish (ManyChat post ID'sini bermaydi): oxirgi postlar kommentlaridan
+        shu foydalanuvchining shu matnli kommenti qidiriladi. Topilsa — post ma'lumoti (id, caption, permalink)."""
+        username = username.lstrip("@").lower()
+        want = " ".join(text.split()).lower()
+        if not (username and want):
+            return None
+        posts = await self._request(
+            "GET", "/me/media", params={"fields": "id,caption,permalink,timestamp", "limit": str(recent_posts)}
+        )
+
+        async def has_comment(media: dict) -> bool:
+            try:
+                data = await self._request(
+                    "GET", f"/{media['id']}/comments", params={"fields": "text,username", "limit": "50"}
+                )
+            except IGError:
+                return False
+            return any(
+                (c.get("username") or "").lower() == username and " ".join((c.get("text") or "").split()).lower() == want
+                for c in data.get("data") or []
+            )
+
+        items = [m for m in posts.get("data") or [] if m.get("id")]
+        found = await asyncio.gather(*(has_comment(m) for m in items))
+        return next((m for m, ok in zip(items, found, strict=True) if ok), None)
+
 
 _client: InstagramClient | None = None
 

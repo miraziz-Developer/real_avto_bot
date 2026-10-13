@@ -11,6 +11,7 @@ from bot.handlers import (
     channel_watch,
     lead_admin,
     contest,
+    instagram_admin,
     listing_chat,
     listing_sale_followup,
     profile_alias,
@@ -31,6 +32,7 @@ def register_handlers(dp: Dispatcher) -> None:
     # Admin reply → mijoz (relay) car_admin FSM'dan oldin; relay bo'lmasa SkipHandler bilan o'tkazib yuboradi
     dp.include_router(lead_admin.router)
     dp.include_router(car_admin.router)
+    dp.include_router(instagram_admin.router)
     # Faqat channel_post / edited_channel_post — boshqa routerlar bilan to'qnashmaydi
     dp.include_router(channel_watch.router)
     # Telegram Business (shaxsiy akkaunt chatlari) — faqat business_* hodisalar

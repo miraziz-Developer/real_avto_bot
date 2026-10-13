@@ -154,7 +154,8 @@ Clean rebuild (when troubleshooting): `BOOTSTRAP_NO_CACHE=1 bash scripts/server_
 | CRM web app | **3000** (`CRM_PORT`) → container 80 (proxies `/api/` to the backend) |
 | Catalog | **3002** (`CATALOG_PORT`) → container 80 |
 | CRM API | **127.0.0.1:3001** (`BACKEND_PORT`; local only; expose through a reverse proxy) |
-| Bot (Instagram webhook) | **127.0.0.1:8081** (`IG_WEBHOOK_HOST_PORT`) |
+| Bot (Instagram / ManyChat webhooks) | **127.0.0.1:8081** (`IG_WEBHOOK_HOST_PORT`) |
+| HTTPS proxy (Caddy, profile `proxy`) | **80, 443** — CRM, catalog, webhooks |
 | PostgreSQL / Redis | internal Docker network only |
 
 Expose only what is needed (443 for HTTPS). Never expose 5432 or 3001 to the internet.
@@ -285,7 +286,21 @@ On startup the bot creates the new tables (`cars`, `leads`, …) and columns.
 
 ### 12.5 HTTPS
 
-HTTPS is required for the catalog Mini App and the Instagram webhook. Example Caddy configuration (certificates are issued automatically):
+HTTPS is required for the catalog Mini App, the CRM Mini App button and the Instagram/ManyChat webhooks.
+
+**Built in:** `docker-compose.yml` has a Caddy service (`proxy`, config in `deploy/Caddyfile`). When ports 80/443 are free,
+`scripts/server_setup.sh` turns it on (`COMPOSE_PROFILES=proxy`) and sets:
+
+| `.env` | Default | Serves |
+|---|---|---|
+| `PUBLIC_HOST` | `<ip-with-dashes>.sslip.io` | catalog, `/webhooks/*`, `/manychat/*` |
+| `CRM_HOST` | `crm.<PUBLIC_HOST>` | CRM |
+
+`*.sslip.io` resolves to the IP inside the name, so certificates work without buying a domain. With your own domain, point
+two A records at the server, put the names into `PUBLIC_HOST` / `CRM_HOST`, update `CATALOG_URL` / `CRM_URL` and run
+`docker compose up -d proxy bot`.
+
+**A proxy you already run on the host** — example Caddy configuration (certificates are issued automatically):
 
 ```
 catalog.example.com {
@@ -300,6 +315,49 @@ hook.example.com {
 ```
 
 The CRM is an internal panel. You may keep it off the public internet (VPN or IP allow-list).
+
+### 12.5.1 Instagram through ManyChat
+
+Instagram comments and DMs can go through ManyChat instead of a Meta app (no App Review). The bot answers from the
+database, like in Telegram, and knows **which car a comment is about**.
+
+1. **Server:** `server_setup.sh` creates `MANYCHAT_SECRET` and sends admins the URL
+   (`https://PUBLIC_HOST/manychat/instagram`) and the header value in Telegram.
+2. **ManyChat** (Pro plan is needed for External Request): connect the Instagram account, then create two automations:
+   - *Comments* — trigger "User comments on your Post or Reel" (all posts);
+   - *DM* — "Default reply" (any message).
+
+   In both, add an **External Request** action: `POST` to the URL above, header `Authorization: Bearer <secret>`, JSON body:
+   ```json
+   {
+     "user_id": "{{user_id}}",
+     "event": "comment",
+     "text": "{{last_input_text}}",
+     "ig_username": "{{ig_username}}",
+     "name": "{{full_name}}",
+     "car": ""
+   }
+   ```
+   (`"event": "message"` in the DM automation; put the comment-text field ManyChat offers for comment triggers into
+   `text`.) Under **Response mapping** map `$.reply` to a custom field and send it as the message, or use the response as
+   a Dynamic Block (the response is ManyChat `version: v2` content, including car photos when the agent sends them).
+   Optional fields: `attachment_url` (voice/video — the AI listens), `post_url`, `media_id`, `caption`.
+3. **Optional `MANYCHAT_API_KEY`** (ManyChat → Settings → API): answers that take longer than ~8 s and managers'
+   replies from Telegram lead cards are delivered through the API.
+
+**How the car is found** (`bot/instagram/car_match.py`), first match wins:
+
+1. `car` in the request: a car number set in a per-post automation (most exact);
+2. a post already linked (`instagram_posts`; an admin's choice always wins);
+3. the post caption: a code (`ID: 17`) or model + year + mileage + price compared with the database. Two equally
+   good matches are never guessed;
+4. the model named in the comment, if only one such car is on sale.
+
+ManyChat does not pass the post ID. With `IG_ACCESS_TOKEN` (Instagram API with Instagram Login, own account) the bot
+finds the post by looking up the comment under the latest posts. Without it, or when nothing matches, admins get
+"📸 Instagram post qaysi mashina?" with car buttons once per post. `/ig` lists unlinked posts and
+`/ig LINK ID` links one by hand (`ID 0` marks it as not a car post). Sold cars are answered with "sold" and similar
+cars on sale.
 
 ### 12.6 Telegram
 

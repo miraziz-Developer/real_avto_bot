@@ -293,6 +293,25 @@ class CarRepository:
         stmt = select(Car).where(*conds).order_by(Car.status.asc(), Car.id.desc()).limit(limit)
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def find_post_candidates(self, parsed: ParsedCar, *, within_days: int = 365, limit: int = 10) -> list[Car]:
+        """Boshqa joydagi (Instagram) post qaysi mashinaniki bo'lishi mumkin: shu model, istalgan holat (sotilgani ham —
+        mijozga «sotildi» deyish uchun). Arxiv (e'lon emas) hisobga olinmaydi; yil aytilgan bo'lsa — yil ham mos."""
+        if not parsed.model:
+            return []
+        base = parsed.model.split()[0]
+        names = SAME_CAR_MODELS.get(base.lower(), (base,))
+        conds = [
+            Car.status != CarStatus.ARCHIVED,
+            or_(*[Car.model.ilike(f"%{n}%") for n in names]),
+            Car.created_at >= _now() - timedelta(days=within_days),
+        ]
+        if parsed.year:
+            conds.append(or_(Car.year.is_(None), Car.year == parsed.year))
+        if parsed.brand:
+            conds.append(or_(Car.brand.is_(None), func.lower(Car.brand) == parsed.brand.lower()))
+        stmt = select(Car).where(*conds).order_by(Car.id.desc()).limit(limit)
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def cars_with_live_posts(self, *, limit: int = 1000) -> list[Car]:
         """Kanal posti bor va hali sotuvdagi/bron/tekshiruvdagi mashinalar — post o'chirilganini tekshirish uchun."""
         stmt = (

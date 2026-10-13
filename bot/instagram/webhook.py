@@ -37,6 +37,7 @@ from bot.db.repositories import CrmRepository
 from bot.handlers.channel_comments import has_buy_intent, is_question
 from bot.handlers.sales_agent import forward_text_to_manager
 from bot.instagram.client import IGError, InstagramClient
+from bot.instagram.manychat import MANYCHAT_PATH, ManyChatBridge
 from bot.services.car_cards import notify_admins_text
 from bot.services.lead_cards import lead_score
 
@@ -258,28 +259,42 @@ class InstagramWebhook:
         task.add_done_callback(self._tasks.discard)
         return web.Response(text="EVENT_RECEIVED")
 
-    def app(self) -> web.Application:
-        application = web.Application(client_max_size=1024 * 1024)
+    def add_routes(self, application: web.Application) -> None:
         application.router.add_get(WEBHOOK_PATH, self.handle_verify)
         application.router.add_post(WEBHOOK_PATH, self.handle_event)
 
-        async def healthz(_request: web.Request) -> web.Response:
-            return web.Response(text="ok")
-
-        application.router.add_get("/healthz", healthz)
+    def app(self) -> web.Application:
+        application = web.Application(client_max_size=1024 * 1024)
+        self.add_routes(application)
         return application
+
+
+async def _healthz(_request: web.Request) -> web.Response:
+    return web.Response(text="ok")
 
 
 async def start_instagram_server(
     bot: Bot, session_factory: async_sessionmaker[AsyncSession], client: InstagramClient
 ) -> web.AppRunner | None:
-    if not settings.instagram_enabled:
+    """Bot ichidagi HTTP server (IG_WEBHOOK_PORT): Meta Instagram webhook va/yoki ManyChat so'rovlari."""
+    application = web.Application(client_max_size=1024 * 1024)
+    served: list[str] = []
+    if settings.instagram_enabled:
+        if client.enabled and settings.ig_app_secret and settings.ig_verify_token:
+            InstagramWebhook(bot, session_factory, client).add_routes(application)
+            served.append(WEBHOOK_PATH)
+        else:
+            logger.error("INSTAGRAM_ENABLED=true, lekin IG_ACCESS_TOKEN / IG_APP_SECRET / IG_VERIFY_TOKEN to'liq emas")
+    if settings.manychat_secret:
+        # IG token bo'lsa — komment qaysi postga yozilganini Graph API'dan aniqlash uchun ishlatiladi
+        bridge = ManyChatBridge(bot, session_factory, ig=client if client.enabled else None)
+        bridge.add_routes(application)
+        served.append(MANYCHAT_PATH)
+    if not served:
         return None
-    if not (client.enabled and settings.ig_app_secret and settings.ig_verify_token):
-        logger.error("INSTAGRAM_ENABLED=true, lekin IG_ACCESS_TOKEN / IG_APP_SECRET / IG_VERIFY_TOKEN to'liq emas")
-        return None
-    runner = web.AppRunner(InstagramWebhook(bot, session_factory, client).app())
+    application.router.add_get("/healthz", _healthz)
+    runner = web.AppRunner(application)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", settings.ig_webhook_port).start()
-    logger.info("Instagram webhook: :%s%s", settings.ig_webhook_port, WEBHOOK_PATH)
+    logger.info("Instagram HTTP server: :%s %s", settings.ig_webhook_port, " ".join(served))
     return runner

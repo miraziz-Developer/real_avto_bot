@@ -75,6 +75,22 @@ n="$(printf '%s' "$cars_json" | json 'd["total"]')"
 [ "$(curl -s -o /dev/null -w '%{http_code}' -m 10 "http://127.0.0.1:${CATALOG_PORT}/api/stats")" = 404 ] \
     && ok "CRM API katalog orqali yopiq" || bad "CRM API katalog orqali ochiq!"
 
+# --- HTTPS and webhooks -----------------------------------------------------------------
+head_ "HTTPS va webhooklar"
+IG_PORT="$(env_value .env IG_WEBHOOK_HOST_PORT)"; IG_PORT="${IG_PORT:-8081}"
+if [ -n "$(env_value .env MANYCHAT_SECRET)" ]; then
+    code="$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST "http://127.0.0.1:${IG_PORT}/manychat/instagram")"
+    [ "$code" = 401 ] && ok "ManyChat endpoint ishlayapti (kalitsiz so'rov rad etildi)" || bad "ManyChat endpoint: HTTP $code"
+else
+    note "MANYCHAT_SECRET yo'q — ManyChat endpoint o'chiq"
+fi
+for key in CATALOG_URL CRM_URL; do
+    url="$(env_value .env "$key")"
+    [ -n "$url" ] || { note "$key bo'sh"; continue; }
+    code="$(curl -s -o /dev/null -w '%{http_code}' -m 20 "$url/")"
+    [ "$code" = 200 ] && ok "$key $url" || bad "$key $url → HTTP $code"
+done
+
 # --- Telegram bot ------------------------------------------------------------------
 head_ "Telegram bot"
 me="$(curl -s -m 15 "$TG/getMe")"

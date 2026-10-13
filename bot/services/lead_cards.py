@@ -58,7 +58,7 @@ def lead_card_html(
         header = "🔥 <b>ISSIQ MIJOZ</b>" if score >= HOT_SCORE else "🔔 <b>Mijoz menejer bilan gaplashmoqchi</b>"
     lines = [header, ""]
     name = e(lead.name or "Mijoz")
-    if lead.channel == "instagram":
+    if lead.channel in ("instagram", "manychat"):
         # Instagram mijozi: telegram_id ustunida IGSID — Telegram havolasi emas, Instagram profili
         url = f"https://instagram.com/{lead.username}" if lead.username else None
         who = f'👤 <a href="{e(url)}">{name}</a> · Instagram' if url else f"👤 {name} · Instagram"

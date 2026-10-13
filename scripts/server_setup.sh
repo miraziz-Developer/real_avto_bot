@@ -162,6 +162,13 @@ if [[ ",$PROFILES," == *",proxy,"* ]]; then
     echo "Katalog: https://${PUBLIC_HOST}   CRM: https://${CRM_HOST}"
 fi
 
+# --- 3c. ManyChat (Instagram) shared secret ---------------------------------------------
+NEW_MANYCHAT_SECRET=""
+if [ -z "$(get_env .env MANYCHAT_SECRET)" ]; then
+    NEW_MANYCHAT_SECRET="$(openssl rand -hex 24)"
+    set_env .env MANYCHAT_SECRET "$NEW_MANYCHAT_SECRET"
+fi
+
 # --- 4. Build and start -------------------------------------------------------
 say "Build va ishga tushirish (birinchi marta 5–10 daqiqa)"
 docker compose build
@@ -204,21 +211,23 @@ sudo systemctl enable real-avto-stack.service > /dev/null 2>&1 && echo "systemd:
 
 # --- 7. Summary ----------------------------------------------------------------------
 say "Tayyor"
+BOT_TOKEN_VALUE="$(get_env .env BOT_TOKEN)"
+tell_admins() { # text — to every admin's private chat with the bot
+    for id in $(get_env .env ADMIN_TELEGRAM_IDS | tr ',' ' '); do
+        curl -s -m 15 "https://api.telegram.org/bot${BOT_TOKEN_VALUE}/sendMessage" \
+            --data-urlencode "chat_id=${id}" --data-urlencode "text=$1" > /dev/null || true
+    done
+}
 CRM_LINK="$(get_env .env CRM_URL)"; [[ "$CRM_LINK" == https://* ]] || CRM_LINK="http://${IP}:${CRM_PORT}"
 CATALOG_LINK="$(get_env .env CATALOG_URL)"; [[ "$CATALOG_LINK" == https://* ]] || CATALOG_LINK="http://${IP}:${CATALOG_PORT}"
 echo "CRM:      ${CRM_LINK}   (login: ${CRM_USER})"
 if [ -n "$NEW_CRM_PASSWORD" ]; then
     # Admins get the new CRM password in their private chat with the bot
-    BOT_TOKEN_VALUE="$(get_env .env BOT_TOKEN)"
-    for id in $(get_env .env ADMIN_TELEGRAM_IDS | tr ',' ' '); do
-        curl -s -m 15 "https://api.telegram.org/bot${BOT_TOKEN_VALUE}/sendMessage" \
-            --data-urlencode "chat_id=${id}" \
-            --data-urlencode "text=🛠 Real Avto serverga o'rnatildi.
+    tell_admins "🛠 Real Avto serverga o'rnatildi.
 CRM: ${CRM_LINK}
 Login: ${CRM_USER}
 Parol: ${NEW_CRM_PASSWORD}
-(Bu xabarni saqlab, keyin o'chirib qo'ying)" > /dev/null || true
-    done
+(Bu xabarni saqlab, keyin o'chirib qo'ying)"
     if [ "${SETUP_QUIET_SECRETS:-0}" = "1" ]; then
         echo "          parol adminlarga Telegram'da yuborildi (serverda: backend/.env)"
     else
@@ -226,6 +235,13 @@ Parol: ${NEW_CRM_PASSWORD}
     fi
 fi
 echo "Katalog:  ${CATALOG_LINK}"
+if [ -n "$NEW_MANYCHAT_SECRET" ] && [[ "$CATALOG_LINK" == https://* ]]; then
+    tell_admins "📸 ManyChat (Instagram) ulash uchun:
+URL: ${CATALOG_LINK}/manychat/instagram
+Header: Authorization = Bearer ${NEW_MANYCHAT_SECRET}
+(Bu kalitni faqat ManyChat'ga kiriting; xabarni keyin o'chirib qo'ying)"
+    echo "ManyChat: ${CATALOG_LINK}/manychat/instagram   (kalit adminlarga Telegram'da yuborildi)"
+fi
 echo "Bot logi: docker compose logs -f bot"
 echo
 echo "Eslatma: shu tokenli bot boshqa joyda (kompyuteringizda) ishlayotgan bo'lsa — uni to'xtating, aks holda to'qnashadi."

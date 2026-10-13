@@ -12,7 +12,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 
-from bot.config import is_admin
+from bot.config import is_admin, settings
 from bot.db.cars_repo import CarRepository
 from bot.db.leads_repo import LeadRepository
 from bot.db.models import Lead, LeadStatus
@@ -53,7 +53,7 @@ async def _refresh_card(cq: CallbackQuery, lead: Lead, leads: LeadRepository, ca
 
 
 async def _notify_customer(bot: Bot, lead: Lead, text: str) -> None:
-    if lead.business_connection_id or lead.channel == "instagram":
+    if lead.business_connection_id or lead.channel in ("instagram", "manychat"):
         return  # Business/Instagram chatda mijoz akkaunt bilan gaplashyapti deb biladi — tizim xabari kerak emas
     try:
         await bot.send_message(lead.telegram_id, text, parse_mode=None)
@@ -67,6 +67,14 @@ class UnsupportedRelay(Exception):
 
 async def send_admin_message_to_customer(bot: Bot, lead: Lead, message: Message) -> None:
     """Menejer javobini mijozga: oddiy chatda nusxa, Business chatda — egasi nomidan (copyMessage u yerda ishlamaydi)."""
+    if lead.channel == "manychat":
+        # Instagram (ManyChat orqali) — faqat matn, MANYCHAT_API_KEY bilan
+        if not message.text or not settings.manychat_api_key:
+            raise UnsupportedRelay()
+        from bot.instagram.manychat import ManyChatAPI, subscriber_of  # manychat → handlers (aylanma import)
+
+        await ManyChatAPI(settings.manychat_api_key).send_text(subscriber_of(lead), message.text)
+        return
     if lead.channel == "instagram":
         # Instagram Direct — faqat matn (rasm Graph API'ga ochiq URL bilan kerak)
         if not message.text:

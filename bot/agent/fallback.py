@@ -8,6 +8,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.agent.tools import AgentContext
 from bot.config import settings
+from bot.db.models import Car, CarStatus
 from bot.services.car_parser import normalize_text, parse_car_text
 from bot.utils.currency import fmt_price
 
@@ -60,11 +61,47 @@ def sell_reply() -> tuple[str, InlineKeyboardMarkup]:
     )
 
 
+# Aniq mashina haqidagi savol («narxi qancha?», «probegi?», «hali bormi?»)
+_ABOUT_CAR_RE = re.compile(
+    r"\?|narx|qancha|necha|probeg|yurgan|kraska|rang|holat|bormi|turibdimi|sotil|kredit|bo'lib|nasiya|"
+    r"цена|сколько|пробег|краск|продан|ещ[её]",
+    re.IGNORECASE,
+)
+
+
+def _car_line(c: Car) -> str:
+    km = f", {c.mileage_km:,} km".replace(",", " ") if c.mileage_km else ""
+    return f"{c.title} — {fmt_price(c.price_usd, empty=NO_PRICE)}{km}"
+
+
+async def _about_car(ctx: AgentContext, car: Car) -> str:
+    if car.status in (CarStatus.ACTIVE, CarStatus.RESERVED):
+        facts = [_car_line(car)]
+        extra = ", ".join(x for x in (car.color, car.transmission, car.fuel, car.paint_status) if x)
+        if extra:
+            facts.append(extra)
+        if car.status == CarStatus.RESERVED:
+            facts.append("Hozir bron qilingan — bron bekor bo'lsa xabar beramiz.")
+        facts.append("Ko'rishga kelish yoki savollar uchun menejer bilan bog'laning 👇")
+        return "\n".join(facts)
+    similar = await ctx.cars.similar_offerable(car, limit=3)
+    lines = [f"{car.title} afsuski sotilgan."]
+    if similar:
+        lines.append("Hozir sotuvda o'xshashlari bor:")
+        lines += [f"• {_car_line(c)}" for c in similar]
+    lines.append("Menejer boshqa variantlarni ham taklif qiladi 👇")
+    return "\n".join(lines)
+
+
 async def _fallback_reply(ctx: AgentContext, text: str) -> tuple[str, InlineKeyboardMarkup]:
     if is_sell_intent(text):
         return sell_reply()
     p = parse_car_text(text, usd_rate_uzs=settings.usd_rate_uzs)
     if not (p.brand or p.model or p.price_usd):
+        car = await ctx.current_car() if _ABOUT_CAR_RE.search(text) else None
+        if car is not None:
+            # Mijoz aniq mashina (post) haqida so'rayapti: «narxi qancha?», «probegi?»
+            return await _about_car(ctx, car), fallback_kb()
         return (
             "Qanday mashina qidiryapsiz? Model va byudjetni yozing, masalan: "
             "«Cobalt 2020, 10 000$ gacha». Yoki menejer bilan bog'laning 👇",

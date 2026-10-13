@@ -446,3 +446,23 @@ class ChannelThread(Base):
     __table_args__ = (
         UniqueConstraint("group_chat_id", "thread_message_id", name="uq_channel_threads_group_msg"),
     )
+
+
+class InstagramPost(Base):
+    """Instagram post/reel → qaysi mashina. Komment kelganda shu jadvaldan topiladi.
+
+    ref — media ID yoki havoladagi qisqa kod (instagram.com/p/<kod>). Bog'lanish avtomatik (post matnidan)
+    yoki admin tanlovi bilan qo'yiladi; admin tanlovi avtomatik natijadan ustun.
+    """
+
+    __tablename__ = "instagram_posts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ref: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    permalink: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    car_id: Mapped[int | None] = mapped_column(ForeignKey("cars.id", ondelete="SET NULL"), nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(20), default="auto", nullable=False)  # auto | admin
+    asked_admin_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

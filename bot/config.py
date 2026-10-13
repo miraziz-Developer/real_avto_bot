@@ -191,6 +191,9 @@ class Settings:
     ig_account_id: str
     ig_webhook_port: int
     ig_graph_version: str
+    manychat_secret: str
+    manychat_api_key: str
+    manychat_reply_timeout: float
     sale_followup_interval_hours: int
     sale_followup_interval_minutes: int | None
     parking_location_text: str
@@ -301,6 +304,12 @@ settings = Settings(
     ig_account_id=(os.getenv("IG_ACCOUNT_ID", "") or "").strip(),
     ig_webhook_port=_int("IG_WEBHOOK_PORT", 8081),
     ig_graph_version=(os.getenv("IG_GRAPH_VERSION", "") or "v21.0").strip(),
+    # ManyChat (Instagram komment va Direct'lar ManyChat orqali): External Request shu kalit bilan keladi
+    manychat_secret=(os.getenv("MANYCHAT_SECRET", "") or "").strip(),
+    # ManyChat API kaliti (ixtiyoriy): kech tayyor bo'lgan javob va menejer javoblarini mijozga yuborish uchun
+    manychat_api_key=(os.getenv("MANYCHAT_API_KEY", "") or "").strip(),
+    # ManyChat javobni ~10 soniya kutadi — shundan oldin javob qaytaramiz
+    manychat_reply_timeout=float(os.getenv("MANYCHAT_REPLY_TIMEOUT", "") or "8"),
     sale_followup_interval_hours=_int("SALE_FOLLOWUP_INTERVAL_HOURS", 24),
     sale_followup_interval_minutes=_optional_positive_int("SALE_FOLLOWUP_INTERVAL_MINUTES"),
     parking_location_text=_parking_location_text(),
