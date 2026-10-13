@@ -41,6 +41,7 @@ from bot.ai import close_ai, get_ai, get_budget
 from bot.services.car_cards import notify_admins_text
 from bot.instagram.client import get_ig
 from bot.instagram.webhook import start_instagram_server
+from bot.workers.ig_sync import ig_sync_loop
 from bot.workers.post_watch import post_watch_loop
 from bot.workers.sale_followup import sale_followup_loop
 from bot.workers.lead_reminder import lead_reminder_loop
@@ -356,6 +357,8 @@ async def _run() -> None:
     worker_freeze = asyncio.create_task(listing_freeze_loop(bot, session_factory))
     worker_posts = asyncio.create_task(post_watch_loop(bot, session_factory))
     ig_runner = await start_instagram_server(bot, session_factory, get_ig())
+    # Instagram postlari → mashinalar (token bo'lsa): komment kelganda mashina allaqachon ma'lum bo'ladi
+    worker_ig = asyncio.create_task(ig_sync_loop(bot, session_factory, get_ig())) if get_ig().enabled else None
     try:
         # channel_post / edited_channel_post ham kelishi uchun ishlatilayotgan update turlarini aniq so'raymiz
         await dp.start_polling(bot, handle_signals=True, allowed_updates=dp.resolve_used_update_types())
@@ -373,7 +376,9 @@ async def _run() -> None:
         #     await worker_lb
         # except asyncio.CancelledError:
         #     pass
-        for w in (worker_sale, worker_stale, worker_leads, worker_freeze, worker_posts):
+        if worker_ig is not None:
+            worker_ig.cancel()
+        for w in (worker_sale, worker_stale, worker_leads, worker_freeze, worker_posts, *([worker_ig] if worker_ig else [])):
             with contextlib.suppress(asyncio.CancelledError):
                 await w
         await close_ai()

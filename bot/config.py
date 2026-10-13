@@ -194,6 +194,7 @@ class Settings:
     manychat_secret: str
     manychat_api_key: str
     manychat_reply_timeout: float
+    ig_sync_minutes: int
     sale_followup_interval_hours: int
     sale_followup_interval_minutes: int | None
     parking_location_text: str
@@ -310,6 +311,8 @@ settings = Settings(
     manychat_api_key=(os.getenv("MANYCHAT_API_KEY", "") or "").strip(),
     # ManyChat javobni ~10 soniya kutadi — shundan oldin javob qaytaramiz
     manychat_reply_timeout=float(os.getenv("MANYCHAT_REPLY_TIMEOUT", "") or "8"),
+    # IG_ACCESS_TOKEN bo'lsa: yangi Instagram postlarini shuncha daqiqada bir ko'rib, mashinaga bog'lash
+    ig_sync_minutes=_int("IG_SYNC_MINUTES", 10),
     sale_followup_interval_hours=_int("SALE_FOLLOWUP_INTERVAL_HOURS", 24),
     sale_followup_interval_minutes=_optional_positive_int("SALE_FOLLOWUP_INTERVAL_MINUTES"),
     parking_location_text=_parking_location_text(),

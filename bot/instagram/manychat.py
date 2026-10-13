@@ -52,6 +52,8 @@ from bot.handlers.sales_agent import forward_text_to_manager
 from bot.instagram.car_match import CarMatch, post_ref, resolve_car
 from bot.instagram.client import IGError, InstagramClient, split_text
 from bot.services.car_cards import notify_admins_text
+from bot.services.car_parser import detect_brand_model, normalize_text
+from bot.services.comment_ai import CommentDecision, decide_comment_reply, public_post_text
 from bot.services.lead_cards import lead_score
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,8 @@ LEAD_ID_OFFSET = 10**13
 MAX_PHOTOS = 4
 MEDIA_MAX_BYTES = 19 * 1024 * 1024
 ADMIN_CAR_CHOICES = 8
+# Shu toifadagi kommentga batafsil javob Direct'da (savdo agenti) ham beriladi
+DM_CATEGORIES = frozenset({"question", "buy_intent", "sell_car"})
 PUBLIC_COMMENT_REPLY = "Assalomu alaykum! Javobni Direct'ga yubordik 📩"
 HOLD_REPLY = "Assalomu alaykum! Savolingizni oldik, bir daqiqada javob beramiz 🙏"
 LATE_FALLBACK_REPLY = "Assalomu alaykum! Savolingizni oldik — menejerimiz tez orada javob beradi 🙏"
@@ -126,6 +130,30 @@ def car_choice_kb(post: InstagramPost, cars: list[Car]) -> InlineKeyboardMarkup:
     ]
     rows.append([InlineKeyboardButton(text="🚫 Mashina posti emas", callback_data=f"igpost:{post.id}:0")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def ask_admins_about_post(
+    bot: Bot, post: InstagramPost, cars: list[Car], *, who: str | None = None, text: str | None = None
+) -> None:
+    """Adminlardan «bu Instagram post qaysi mashina?» deb so'rash (tugmalar bilan)."""
+    if not settings.admin_telegram_ids:
+        return
+    link = f'<a href="{html.escape(post.permalink)}">post</a>' if post.permalink else f"post <code>{html.escape(post.ref)}</code>"
+    lines = [f"📸 <b>Instagram {link} qaysi mashina?</b>"]
+    if who and text:
+        lines.append(f"👤 {html.escape(who)}: «{html.escape(text[:200])}»")
+    elif post.caption:
+        lines.append(f"«{html.escape(post.caption[:200])}»")
+    lines.append(
+        "Tanlang — kommentlarga shu mashina ma'lumoti bilan javob beriladi. "
+        f"Ro'yxatda bo'lmasa: <code>/ig {html.escape(post.ref)} ID</code>"
+    )
+    kb = car_choice_kb(post, cars)
+    for aid in settings.admin_telegram_ids:
+        try:
+            await bot.send_message(aid, "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=kb, disable_web_page_preview=True)
+        except (TelegramBadRequest, TelegramForbiddenError) as e:
+            logger.warning("Admin %s ga Instagram post so'rovi yuborilmadi: %s", aid, e)
 
 
 class ManyChatBridge:
@@ -228,8 +256,9 @@ class ManyChatBridge:
         result: dict[str, Any] = {"reply": "", "public_reply": "", "car_id": None, "images": []}
         if not text:
             return result
-        if is_comment and not (is_question(text) or has_buy_intent(text)):
-            return result  # «zo'r 🔥» — javob shart emas
+        ai_comments = is_comment and settings.comments_ai_enabled and get_ai().enabled
+        if is_comment and not ai_comments and not (is_question(text) or has_buy_intent(text)):
+            return result  # AI yo'q va savol emas («zo'r 🔥») — javob shart emas
         post_info = await self._find_post(payload, is_comment=is_comment, username=username, text=text)
         ref = post_ref(post_info["media_id"], post_info["permalink"])
         images: list[str] = []
@@ -241,20 +270,11 @@ class ManyChatBridge:
             images.extend(f"{settings.catalog_url}/api/public/photo/{car.id}/{i}" for i in range(n))
             return n
 
+        decision: CommentDecision | None = None
+        ask_post: InstagramPost | None = None
+        choices: list[Car] = []
         async with self._lock(sub), self.session_factory() as session:
             cars = CarRepository(session)
-            leads = LeadRepository(session)
-            key = lead_key(sub)
-            lead = await leads.get_open(key)
-            if lead is None:
-                lead, _ = await leads.get_or_create_open(
-                    key,
-                    name=name or (f"@{username}" if username else "Instagram mijoz"),
-                    username=username or None,
-                    channel="manychat",
-                )
-            elif username and not lead.username:
-                lead.username = username
             match = await resolve_car(
                 cars,
                 explicit=_field(payload, "car", "car_id", limit=20) or None,
@@ -263,44 +283,143 @@ class ManyChatBridge:
                 permalink=post_info["permalink"] or None,
                 text=text,
             )
-            if match.car is not None and (is_comment or match.how in ("explicit", "mapped", "caption")):
-                lead.car_id = match.car.id  # mijoz aynan shu post (mashina) haqida so'rayapti
-            await leads.add_message(lead, "user", self._history_text(text, match, is_comment=is_comment))
-            if leads.is_human(lead):
-                await forward_text_to_manager(self.bot, leads, lead, text, source=" · Instagram")
-                await session.commit()
-                return result
-            ctx = AgentContext(
-                bot=self.bot,
-                chat_id=lead.telegram_id,
-                lead=lead,
-                cars=cars,
-                leads=leads,
-                crm=CrmRepository(session),
-                buttons_supported=False,
-                photo_sender=photo_sender,
-            )
-            reply, _ = await generate_agent_reply(ctx, text)
-            await leads.add_message(lead, "assistant", reply)
-            lead.score = lead_score(lead)
-            ask_post = match.post if (match.car is None and match.post is not None and match.post.asked_admin_at is None) else None
-            if ask_post is not None:
+            if ai_comments:
+                decision = await self._decide(cars, match.car, text, author=name or username, sub=sub, caption=post_info["caption"])
+            if not is_comment:
+                wants_dm = True
+            elif decision is not None:
+                # Savol / xarid / sotish — batafsil javob Direct'ga; salbiy, maqtov, spam — faqat ochiq javob (yoki jim)
+                wants_dm = decision.category in DM_CATEGORIES or decision.buy_intent
+            else:
+                wants_dm = is_question(text) or has_buy_intent(text)
+            if wants_dm:
+                reply = await self._agent_reply(
+                    session, cars, sub, text, match, is_comment=is_comment, username=username, name=name,
+                    photo_sender=photo_sender,
+                )
+                result.update(reply=reply or "", images=images)
+            result["car_id"] = match.car.id if match.car else None
+            if match.car is None and match.post is not None and match.post.asked_admin_at is None and wants_dm:
+                ask_post = match.post
                 ask_post.asked_admin_at = datetime.now(UTC)
-            choices = await cars.search_offerable(limit=ADMIN_CAR_CHOICES) if ask_post is not None else []
+                choices = await cars.search_offerable(limit=ADMIN_CAR_CHOICES)
             await session.commit()
-            result.update(reply=reply, car_id=match.car.id if match.car else None, images=images)
         if is_comment:
-            result["public_reply"] = PUBLIC_COMMENT_REPLY
+            public = decision.reply if decision is not None and decision.should_reply else ""
+            if not public and result["reply"]:
+                public = PUBLIC_COMMENT_REPLY
+            result["public_reply"] = public
         who = f"@{username}" if username else (name or sub)
         if ask_post is not None:
-            await self._ask_admins_about_post(ask_post, choices, who=who, text=text)
-        if is_comment and has_buy_intent(text):
-            await notify_admins_text(
-                self.bot,
-                f"💬 <b>Instagram kommentida xarid niyati</b>\n👤 {html.escape(who)}\n«{html.escape(text[:300])}»",
-            )
-        logger.info("ManyChat %s: sub=%s car=%s (%s)", "komment" if is_comment else "xabar", sub, result["car_id"], match.how)
+            await ask_admins_about_post(self.bot, ask_post, choices, who=who, text=text)
+        if is_comment:
+            await self._notify_admins(decision, text, who=who, car=match.car, permalink=post_info["permalink"])
+        logger.info(
+            "ManyChat %s: sub=%s car=%s (%s) %s",
+            "komment" if is_comment else "xabar", sub, result["car_id"], match.how,
+            f"{decision.category}/{decision.action}" if decision else "",
+        )
         return result
+
+    async def _decide(
+        self, cars: CarRepository, car: Car | None, text: str, *, author: str, sub: str, caption: str
+    ) -> CommentDecision | None:
+        """Komment AI (Telegram kommentlari bilan bir xil «miya»): toifa va ochiq javob."""
+        if not await get_budget().allow_user(f"mc:{sub}"):
+            return None
+        other: list[Car] = []
+        general = False
+        if car is None or car.status not in (CarStatus.ACTIVE, CarStatus.RESERVED):
+            brand, model = detect_brand_model(normalize_text(text))
+            if brand or model:
+                other = await cars.search_offerable(brand=brand, model=model, limit=5)
+            elif car is None:
+                other = await cars.search_offerable(limit=6)
+                general = bool(other)
+        post_text = public_post_text(car.raw_text) if car is not None else (caption or None)
+        try:
+            return await decide_comment_reply(
+                get_ai(),
+                text=text,
+                author=author or None,
+                car=car,
+                other_cars=other,
+                post_text=post_text or None,
+                general_inventory=general,
+                platform="instagram",
+            )
+        except AIError as e:
+            logger.warning("Instagram komment AI ishlamadi: %s", e)
+            return None
+
+    async def _agent_reply(
+        self,
+        session: AsyncSession,
+        cars: CarRepository,
+        sub: str,
+        text: str,
+        match: CarMatch,
+        *,
+        is_comment: bool,
+        username: str,
+        name: str,
+        photo_sender,
+    ) -> str | None:
+        """Savdo agenti (Direct javobi). None — mijoz menejer qo'lida (AI jim)."""
+        leads = LeadRepository(session)
+        key = lead_key(sub)
+        lead = await leads.get_open(key)
+        if lead is None:
+            lead, _ = await leads.get_or_create_open(
+                key,
+                name=name or (f"@{username}" if username else "Instagram mijoz"),
+                username=username or None,
+                channel="manychat",
+            )
+        elif username and not lead.username:
+            lead.username = username
+        if match.car is not None and (is_comment or match.how in ("explicit", "mapped", "caption")):
+            lead.car_id = match.car.id  # mijoz aynan shu post (mashina) haqida so'rayapti
+        await leads.add_message(lead, "user", self._history_text(text, match, is_comment=is_comment))
+        if leads.is_human(lead):
+            await forward_text_to_manager(self.bot, leads, lead, text, source=" · Instagram")
+            return None
+        ctx = AgentContext(
+            bot=self.bot,
+            chat_id=lead.telegram_id,
+            lead=lead,
+            cars=cars,
+            leads=leads,
+            crm=CrmRepository(session),
+            buttons_supported=False,
+            photo_sender=photo_sender,
+        )
+        reply, _ = await generate_agent_reply(ctx, text)
+        await leads.add_message(lead, "assistant", reply)
+        lead.score = lead_score(lead)
+        return reply
+
+    async def _notify_admins(
+        self, decision: CommentDecision | None, text: str, *, who: str, car: Car | None, permalink: str
+    ) -> None:
+        buy = decision.buy_intent if decision is not None else has_buy_intent(text)
+        if decision is not None and decision.category == "toxic":
+            title = "⚠️ <b>Instagram kommentida haqorat / provokatsiya</b>"
+        elif decision is not None and (decision.category == "negative" or (decision.notify_admin and not buy)):
+            title = "😟 <b>Instagram kommentida salbiy fikr</b>"
+        elif buy:
+            title = "💬 <b>Instagram kommentida xarid niyati</b>"
+        else:
+            return
+        lines = [title, f"👤 {html.escape(who)}"]
+        if car is not None:
+            lines.append(f"🚗 #{car.id} {html.escape(car.title)}")
+        if permalink:
+            lines.append(f'🔗 <a href="{html.escape(permalink)}">post</a>')
+        lines.append(f"«{html.escape(text[:300])}»")
+        if decision is not None and decision.admin_note:
+            lines.append(f"📝 {html.escape(decision.admin_note)}")
+        await notify_admins_text(self.bot, "\n".join(lines))
 
     @staticmethod
     def _history_text(text: str, match: CarMatch, *, is_comment: bool) -> str:
@@ -312,23 +431,6 @@ class ManyChatBridge:
         )
         where = "posti ostidagi komment" if is_comment else "posti haqida xabar"
         return f"[Instagram: #{car.id} {car.title}{status} {where}] {text}"
-
-    async def _ask_admins_about_post(self, post: InstagramPost, cars: list[Car], *, who: str, text: str) -> None:
-        if not settings.admin_telegram_ids:
-            return
-        link = f'<a href="{html.escape(post.permalink)}">post</a>' if post.permalink else f"post <code>{html.escape(post.ref)}</code>"
-        body = (
-            f"📸 <b>Instagram {link} qaysi mashina?</b>\n"
-            f"👤 {html.escape(who)}: «{html.escape(text[:200])}»\n"
-            "Tanlang — keyingi kommentlarga shu mashina ma'lumoti bilan javob beriladi. "
-            f"Ro'yxatda bo'lmasa: <code>/ig {html.escape(post.ref)} ID</code>"
-        )
-        kb = car_choice_kb(post, cars)
-        for aid in settings.admin_telegram_ids:
-            try:
-                await self.bot.send_message(aid, body, parse_mode=ParseMode.HTML, reply_markup=kb, disable_web_page_preview=True)
-            except (TelegramBadRequest, TelegramForbiddenError) as e:
-                logger.warning("Admin %s ga Instagram post so'rovi yuborilmadi: %s", aid, e)
 
     # --- HTTP ---------------------------------------------------------------------------------------
 

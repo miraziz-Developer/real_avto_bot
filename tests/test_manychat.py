@@ -203,3 +203,120 @@ async def test_slow_answer_returns_in_time(mc_settings):
         assert body["reply"] == manychat.LATE_FALLBACK_REPLY
     finally:
         object.__setattr__(config.settings, "manychat_reply_timeout", 8.0)
+
+
+class FakeCommentAI:
+    """Komment AI: matnga qarab toifa qaytaradi, kelgan payload va promptni eslab qoladi."""
+
+    enabled = True
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def chat_json(self, system, user, **kw):
+        import json as _json
+
+        payload = _json.loads(user)
+        self.calls.append((system, payload))
+        t = payload["xabar"]
+        if "aldov" in t:
+            return {"action": "reply", "category": "negative", "reply": "Uzr, menejerimiz aniqlab beradi.", "admin_note": "narxdan norozi"}
+        if "ahmoq" in t:
+            return {"action": "reply", "category": "toxic", "reply": "x"}
+        if "zo'r" in t:
+            return {"action": "reply", "category": "praise", "reply": "Rahmat! 🙏"}
+        return {"action": "reply", "category": "question", "reply": "Narxi $8 500, batafsil Direct'da.", "buy_intent": False}
+
+
+class AllowAll:
+    async def allow_user(self, key):
+        return True
+
+
+async def test_comment_ai_categories(factory, monkeypatch):
+    ai = FakeCommentAI()
+    monkeypatch.setattr(manychat, "get_ai", lambda: ai)
+    monkeypatch.setattr(manychat, "get_budget", lambda: AllowAll())
+    bot = FakeBot()
+    caption = "Cobalt 2019 yil, 120 ming km, 8500$"
+    async with TestClient(TestServer(app_for(ManyChatBridge(bot, factory)))) as client:
+
+        async def send(text_: str, user: str) -> dict:
+            body = comment(text_, media_id="1790001", caption=caption, user_id=user)
+            return await (await client.post(MANYCHAT_PATH, json=body, headers=AUTH)).json()
+
+        q = await send("narxi qancha?", "1")
+        assert q["public_reply"] == "Narxi $8 500, batafsil Direct'da." and q["car_id"] == 2
+        assert "Cobalt 2019" in q["reply"]  # Direct: savdo agenti (AI'siz — bazadan) javobi
+        system, payload = ai.calls[0]
+        assert "INSTAGRAM" in system and payload["shu_post_mashinasi"]["id"] == 2
+
+        neg = await send("juda qimmat, aldov", "2")
+        assert neg["public_reply"] == "Uzr, menejerimiz aniqlab beradi." and neg["reply"] == ""
+        praise = await send("zo'r mashina", "3")
+        assert praise["public_reply"] == "Rahmat! 🙏" and praise["reply"] == ""
+        toxic = await send("ahmoq", "4")
+        assert toxic["public_reply"] == "" and toxic["reply"] == ""
+    alerts = [t for _, t, _ in bot.sent]
+    assert any("salbiy fikr" in t and "#2" in t and "narxdan norozi" in t for t in alerts)
+    assert any("haqorat" in t for t in alerts)
+    async with factory() as s:  # faqat Direct yozilganlar lead bo'ladi
+        assert len((await s.execute(select(Lead))).scalars().all()) == 1
+
+
+class FakeIGMedia:
+    enabled = True
+
+    def __init__(self, media: list[dict]) -> None:
+        self.media = media
+        self.downloads: list[str] = []
+
+    async def list_media(self, limit=15):
+        return self.media
+
+    async def download(self, url, *, max_bytes):
+        self.downloads.append(url)
+        return b"video-bytes", "video/mp4"
+
+
+class FakeVideoAI:
+    enabled = True
+    supports_video = True
+
+    async def transcribe(self, data, *, filename, mime_type):
+        return "Assalomu alaykum, Gentra 2022 yil, 40 ming km yurgan, oq rang"
+
+    async def chat_json(self, system, user, **kw):
+        return {}
+
+
+async def test_ig_sync_links_new_posts_by_caption_and_video(factory, monkeypatch):
+    from bot.workers import ig_sync
+
+    monkeypatch.setattr(ig_sync, "get_ai", lambda: FakeVideoAI())
+    monkeypatch.setattr(ig_sync, "get_budget", lambda: AllowAll())
+    now = "2099-01-01T10:00:00+0000"
+    ig = FakeIGMedia(
+        [
+            {"id": "1791", "caption": "Cobalt 2019 yil 120 ming km 8500$", "media_type": "REELS", "media_url": "https://cdn/1", "timestamp": now},
+            {"id": "1792", "caption": "Yangi kelgan mashina 🔥", "media_type": "REELS", "media_url": "https://cdn/2", "timestamp": now,
+             "permalink": "https://instagram.com/reel/m2code/"},
+            {"id": "1793", "caption": "Bayramingiz bilan!", "media_type": "IMAGE", "timestamp": now},
+        ]
+    )
+    bot = FakeBot()
+    assert await ig_sync.sync_once(bot, factory, ig) == 2
+    assert ig.downloads == ["https://cdn/2"]  # matndan topilgani uchun 1-videoni ko'rmaydi
+    async with factory() as s:
+        posts = {p.ref: p for p in (await s.execute(select(InstagramPost))).scalars()}
+    assert posts["1791"].car_id == 2 and posts["1792"].car_id == 4 and posts["1793"].car_id is None
+    assert "[Video]: Assalomu alaykum, Gentra" in posts["1792"].caption
+    texts = [t for _, t, _ in bot.sent]
+    assert any("#4" in t and "video bo'yicha" in t for t in texts)
+    assert sum("qaysi mashina" in t for t in texts) == 1  # faqat 1793 so'raladi
+    # Qayta ishga tushganda — hech narsa takrorlanmaydi
+    assert await ig_sync.sync_once(bot, factory, ig) == 0 and len(ig.downloads) == 1
+    # Komment shu reel ostiga keldi — mashina allaqachon ma'lum
+    async with TestClient(TestServer(app_for(ManyChatBridge(FakeBot(), factory)))) as client:
+        body = await (await client.post(MANYCHAT_PATH, json=comment("narxi qancha?", media_id="1792"), headers=AUTH)).json()
+    assert body["car_id"] == 4

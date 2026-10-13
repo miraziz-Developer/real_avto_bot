@@ -353,6 +353,22 @@ database, like in Telegram, and knows **which car a comment is about**.
    good matches are never guessed;
 4. the model named in the comment, if only one such car is on sale.
 
+**Instagram token (strongly recommended).** ManyChat does not pass the post ID. Put a token of your own account into
+`IG_ACCESS_TOKEN` (Meta developer app → *Instagram API with Instagram Login* → add the account as an Instagram tester →
+generate a long-lived token; App Review is not needed for your own account). Then:
+
+- every `IG_SYNC_MINUTES` (10) the bot looks at new posts/reels and links each to a car: by the caption, or — when the
+  caption says little — the AI watches and listens to the video and matches model, year, mileage, price and colour
+  against the cars published in Telegram. Admins get "📸 Instagram post → #17 …" (wrong? `/ig <ref> ID`) or, for new
+  posts nothing matched, a question with car buttons;
+- a comment is matched to its post by looking it up under the latest posts;
+- the token is refreshed weekly and kept in the database (`app_meta`).
+
+Comments get the same "brain" as Telegram comments (`comment_ai`, Instagram variant): questions about the car are
+answered publicly in 1–2 sentences from the database and in detail in Direct by the sales agent; negative feedback gets a
+calm public reply and an admin alert; praise gets a short thanks; insults and spam are ignored (insults alert admins).
+The response field `public_reply` is for "Reply to comment", `reply` for the DM.
+
 ManyChat does not pass the post ID. With `IG_ACCESS_TOKEN` (Instagram API with Instagram Login, own account) the bot
 finds the post by looking up the comment under the latest posts. Without it, or when nothing matches, admins get
 "📸 Instagram post qaysi mashina?" with car buttons once per post. `/ig` lists unlinked posts and

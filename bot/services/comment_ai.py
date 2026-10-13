@@ -124,7 +124,24 @@ def public_post_text(raw_text: str | None) -> str:
     return "\n".join(lines).strip()
 
 
-def build_system_prompt(now: datetime | None = None, *, bot_username: str | None = None) -> str:
+# Instagram kommentlari: bir xil qoidalar, platformaga moslangan farqlar
+INSTAGRAM_OVERRIDES = """
+
+PLATFORMA: INSTAGRAM (post/reel kommentlari). Yuqoridagi qoidalar o'z kuchida, farqlari:
+- Sen Instagram sahifasi kommentlariga javob beryapsan. "botda" o'rniga "Direct'da (shaxsiy xabarda) batafsil yozdik"
+  de — batafsil javob mijozga Direct'da alohida boradi. Telegram bot havolasini berma.
+- shu_post_mashinasi — mijoz aynan shu reklama videosi/posti ostida yozgan mashina. Savol shu mashina haqida deb hisobla.
+- O'z mashinasini sotmoqchi (sell_car) → "Direct'ga mashina ma'lumoti va rasmlarini yuboring" de.
+- Maqtov ("zo'r", "🔥", "omad") → qisqa minnatdorchilik (action=reply, 1 gap).
+- Javob 1–2 qisqa gap, hashtag yo'q."""
+
+
+def build_system_prompt(now: datetime | None = None, *, bot_username: str | None = None, platform: str = "telegram") -> str:
+    prompt = _build_system_prompt(now, bot_username=bot_username)
+    return prompt + INSTAGRAM_OVERRIDES if platform == "instagram" else prompt
+
+
+def _build_system_prompt(now: datetime | None = None, *, bot_username: str | None = None) -> str:
     return COMMENT_SYSTEM_PROMPT.format(
         services=services_block(bot_username),
         business=settings.business_name,
@@ -221,10 +238,11 @@ async def decide_comment_reply(
     replied_text: str | None = None,
     general_inventory: bool = False,
     bot_username: str | None = None,
+    platform: str = "telegram",
 ) -> CommentDecision:
     """AI qarori. AIError (kalit yo'q, chegara tugagan, tarmoq) — chaqiruvchiga o'tadi."""
     data = await ai.chat_json(
-        build_system_prompt(bot_username=bot_username),
+        build_system_prompt(bot_username=bot_username, platform=platform),
         build_user_payload(
             text=text,
             author=author,

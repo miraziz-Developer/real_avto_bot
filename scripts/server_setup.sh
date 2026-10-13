@@ -162,6 +162,12 @@ if [[ ",$PROFILES," == *",proxy,"* ]]; then
     echo "Katalog: https://${PUBLIC_HOST}   CRM: https://${CRM_HOST}"
 fi
 
+# Catalog "Ask about this car" buttons open the bot: its username comes from Telegram
+if [ -z "$(get_env .env BOT_USERNAME)" ]; then
+    BOT_NAME="$(curl -s -m 15 "https://api.telegram.org/bot$(get_env .env BOT_TOKEN)/getMe" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["username"])' 2>/dev/null || true)"
+    [ -n "$BOT_NAME" ] && set_env .env BOT_USERNAME "$BOT_NAME" && echo "BOT_USERNAME=$BOT_NAME"
+fi
+
 # --- 3c. ManyChat (Instagram) shared secret ---------------------------------------------
 NEW_MANYCHAT_SECRET=""
 if [ -z "$(get_env .env MANYCHAT_SECRET)" ]; then

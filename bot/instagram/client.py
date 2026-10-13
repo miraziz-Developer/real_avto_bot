@@ -124,6 +124,42 @@ class InstagramClient:
         """Post/reel matni va havolasi (o'z akkauntimiz posti)."""
         return await self._request("GET", f"/{media_id}", params={"fields": "id,caption,permalink,timestamp"})
 
+    def set_token(self, token: str) -> None:
+        self._token = token
+        if self._session is not None and not self._session.closed:
+            self._session.headers["Authorization"] = f"Bearer {token}"
+
+    async def list_media(self, limit: int = 15) -> list[dict]:
+        data = await self._request(
+            "GET",
+            "/me/media",
+            params={"fields": "id,caption,permalink,media_type,media_url,timestamp", "limit": str(limit)},
+        )
+        return [m for m in data.get("data") or [] if m.get("id")]
+
+    async def download(self, url: str, *, max_bytes: int) -> tuple[bytes, str]:
+        """Post videosi (CDN havolasi, token kerak emas). Juda katta bo'lsa — bo'sh."""
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as http, http.get(url) as resp:
+            if resp.status != 200 or (resp.content_length or 0) > max_bytes:
+                return b"", ""
+            data = await resp.content.read(max_bytes + 1)
+            mime = (resp.headers.get("Content-Type") or "video/mp4").split(";")[0].strip()
+        return (b"", "") if len(data) > max_bytes else (data, mime)
+
+    async def refresh_token(self) -> str | None:
+        """Uzoq muddatli token (60 kun) muddatini yangilash — yangi token qaytadi."""
+        async with aiohttp.ClientSession(timeout=_TIMEOUT) as http, http.get(
+            "https://graph.instagram.com/refresh_access_token",
+            params={"grant_type": "ig_refresh_token", "access_token": self._token},
+        ) as resp:
+            data = await resp.json(content_type=None)
+            if resp.status != 200:
+                raise IGError(f"token yangilanmadi: HTTP {resp.status}: {str(data)[:200]}")
+        token = (data or {}).get("access_token")
+        if token:
+            self.set_token(token)
+        return token
+
     async def find_comment_media(self, username: str, text: str, *, recent_posts: int = 8) -> dict | None:
         """Komment qaysi postga yozilganini topish (ManyChat post ID'sini bermaydi): oxirgi postlar kommentlaridan
         shu foydalanuvchining shu matnli kommenti qidiriladi. Topilsa — post ma'lumoti (id, caption, permalink)."""

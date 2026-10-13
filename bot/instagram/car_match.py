@@ -84,7 +84,11 @@ async def match_caption(cars: CarRepository, caption: str | None) -> Car | None:
         car = await cars.get(int(code.group(1)))
         if car is not None:
             return car
-    parsed = parse_car_text(caption, usd_rate_uzs=settings.usd_rate_uzs)
+    return await match_parsed(cars, parse_car_text(caption, usd_rate_uzs=settings.usd_rate_uzs))
+
+
+async def match_parsed(cars: CarRepository, parsed: ParsedCar) -> Car | None:
+    """Post/video'dan olingan ma'lumot (model, yil, probeg, narx, rang) bo'yicha bazadagi yagona mos mashina."""
     candidates = await cars.find_post_candidates(parsed)
     if not candidates:
         return None

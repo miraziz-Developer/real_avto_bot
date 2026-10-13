@@ -120,6 +120,33 @@ conflicts="$(docker compose logs --since 30m bot 2>/dev/null | grep -c 'Telegram
 [ "${conflicts:-0}" = 0 ] && ok "boshqa joyda shu token bilan bot ishlamayapti" \
     || bad "to'qnashuv: shu token bilan boshqa bot ham ishlayapti (${conflicts} ta xabar, 30 daqiqa) — kompyuterdagisini to'xtating"
 
+# --- Telegram Mini App -------------------------------------------------------------------
+head_ "Mini App"
+[ -n "$(env_value .env BOT_USERNAME)" ] && ok "BOT_USERNAME: @$(env_value .env BOT_USERNAME)" || bad "BOT_USERNAME bo'sh — katalogdagi «Savol berish» tugmalari ishlamaydi"
+menu="$(curl -s -m 15 "$TG/getChatMenuButton" | json 'd["result"].get("web_app",{}).get("url","")')"
+[[ "$menu" == https://* ]] && ok "bot menyusi: 🚗 Katalog → $menu" || bad "bot menyu tugmasi Mini App emas (${menu:-yo'q})"
+ADMIN_ID="$(env_value .env ADMIN_TELEGRAM_IDS | tr ',;' '  ' | awk '{print $1}')"
+if [ -n "$ADMIN_ID" ]; then
+    amenu="$(curl -s -m 15 "$TG/getChatMenuButton" --data-urlencode "chat_id=$ADMIN_ID" | json 'd["result"].get("web_app",{}).get("url","")')"
+    [[ "$amenu" == https://* ]] && ok "admin menyusi: 🛠 Admin panel → $amenu" || note "admin menyusida CRM yo'q (${amenu:-—})"
+    # Telegram imzolagan initData'ni taqlid qilamiz: admin CRM'ga parolsiz kira oladimi
+    init_data="$(BOT_TOKEN="$BOT_TOKEN" ADMIN_ID="$ADMIN_ID" python3 - <<'PY'
+import hashlib, hmac, json, os, time, urllib.parse
+user = json.dumps({"id": int(os.environ["ADMIN_ID"]), "first_name": "Check"}, separators=(",", ":"))
+fields = {"auth_date": str(int(time.time())), "query_id": "check", "user": user}
+check = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+secret = hmac.new(b"WebAppData", os.environ["BOT_TOKEN"].encode(), hashlib.sha256).digest()
+fields["hash"] = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+print(urllib.parse.urlencode(fields))
+PY
+)"
+    body="$(python3 -c 'import json,sys; print(json.dumps({"init_data": sys.argv[1]}))' "$init_data")"
+    tok="$(curl -s -m 10 -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:${CRM_PORT}/api/auth/telegram" | json 'd.get("token","")')"
+    [ -n "$tok" ] && ok "CRM Mini App: admin Telegram orqali parolsiz kiradi" || bad "CRM Mini App: Telegram orqali kirish ishlamadi"
+fi
+code="$(curl -s -o /dev/null -w '%{http_code}' -m 10 -H 'Content-Type: application/json' -d '{"brand":"Chevrolet"}' "http://127.0.0.1:${CATALOG_PORT}/api/public/alerts")"
+[ "$code" = 401 ] && ok "katalog «Xabar bering»: Telegram imzosisiz rad etiladi" || bad "katalog /alerts: HTTP $code"
+
 # --- AI ---------------------------------------------------------------------------------
 head_ "AI"
 ai_out="$(docker compose exec -T bot python - <<'PY' 2>&1 | tail -n 3
