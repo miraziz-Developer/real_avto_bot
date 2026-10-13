@@ -162,6 +162,12 @@ command -v caddy > /dev/null && note "caddy o'rnatilgan"
 note "docker portlari: $(docker ps --format '{{.Names}} {{.Ports}}' | grep -E ':(80|443)->' | tr '\n' ' ')"
 [ -f /opt/bozorliii/docker-compose.prod.yml ] && note "bozorliii domenlari: $(grep -rhoE '[a-z0-9.-]+\.(uz|com|net|org|app|io|dev)' /opt/bozorliii/docker-compose.prod.yml /opt/bozorliii/nginx* /opt/bozorliii/*.conf /opt/bozorliii/Caddyfile 2>/dev/null | sort -u | head -n 10 | tr '\n' ' ')"
 
+if [ -f /opt/bozorliii/docker-compose.prod.yml ]; then
+    note "bozorliii portlari: $(grep -E '^\s+- "?[0-9.:]*[0-9]+:[0-9]+' /opt/bozorliii/docker-compose.prod.yml | tr -d ' "' | tr '\n' ' ')"
+    note "bozorliii xizmatlari: $(docker compose -f /opt/bozorliii/docker-compose.prod.yml config --services 2>/dev/null < /dev/null | tr '\n' ' ')"
+fi
+note "ufw qoidalari: $(sudo -n ufw status 2>/dev/null | awk 'NR>4 && /ALLOW/ {print $1}' | sort -u | tr '\n' ' ')"
+
 head_ "Natija"
 if [ "$FAILS" = 0 ]; then ok "hammasi ishlayapti"; else bad "${FAILS} ta muammo"; fi
 exit "$FAILS"
