@@ -124,7 +124,7 @@ conflicts="$(docker compose logs --since 30m bot 2>/dev/null | grep -c 'Telegram
 head_ "Mini App"
 [ -n "$(env_value .env BOT_USERNAME)" ] && ok "BOT_USERNAME: @$(env_value .env BOT_USERNAME)" || bad "BOT_USERNAME bo'sh — katalogdagi «Savol berish» tugmalari ishlamaydi"
 menu="$(curl -s -m 15 "$TG/getChatMenuButton" | json 'd["result"].get("web_app",{}).get("url","")')"
-[[ "$menu" == https://* ]] && ok "bot menyusi: 🚗 Katalog → $menu" || bad "bot menyu tugmasi Mini App emas (${menu:-yo'q})"
+[[ "$menu" == https://* ]] && ok "bot menyusi: 🚗 Katalog → $menu" || bad "bot menyu tugmasi Mini App emas (${menu:-yo‘q})"
 ADMIN_ID="$(env_value .env ADMIN_TELEGRAM_IDS | tr ',;' '  ' | awk '{print $1}' || true)"
 if [ -n "$ADMIN_ID" ]; then
     amenu="$(curl -s -m 15 "$TG/getChatMenuButton" --data-urlencode "chat_id=$ADMIN_ID" | json 'd["result"].get("web_app",{}).get("url","")')"
