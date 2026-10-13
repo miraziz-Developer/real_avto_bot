@@ -37,7 +37,9 @@ The script:
    - installs the backup and watchdog cron jobs and the systemd unit;
    - prints the CRM address and login.
 
-Re-run the same command after each code update. Stop any other bot process that uses the same token first.
+Re-run the same command after each code update.
+
+**From GitHub Actions** (no local terminal needed): add the repository secrets `DEPLOY_ENV` (contents of `.env`) and `DEPLOY_SSH_KEY` or `DEPLOY_SSH_PASSWORD`. Then push a commit whose message contains `[deploy]`, or run the *Deploy* workflow by hand. Adding `[stop-bozorliii]` stops the other project on the shared server first: it runs `docker compose stop` only and backs up its `.env`. Stop any other bot process that uses the same token first.
 
 The rest of this guide describes the same steps manually.
 
