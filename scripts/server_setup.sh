@@ -123,10 +123,43 @@ for spec in "CRM_PORT 3000" "CATALOG_PORT 3002" "BACKEND_PORT 3001" "IG_WEBHOOK_
 done
 CRM_PORT="$(get_env .env CRM_PORT)"
 CATALOG_PORT="$(get_env .env CATALOG_PORT)"
-IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+IP="$(curl -s -m 10 https://api.ipify.org 2>/dev/null || true)"
+[[ "$IP" =~ ^[0-9.]+$ ]] || IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 # The CRM calls its API through its own nginx (same origin); this only silences the production warning
 if [ -z "$(get_env backend/.env CORS_ORIGIN)" ] && [ -n "$IP" ]; then
     set_env backend/.env CORS_ORIGIN "http://${IP}:${CRM_PORT},http://${IP}:${CATALOG_PORT}"
+fi
+
+# --- 3b. Public HTTPS (Caddy on 80/443, profile "proxy") ---------------------------------
+say "HTTPS"
+PROXY_RUNNING="$(docker compose --profile proxy ps -q proxy 2>/dev/null || true)"
+PROFILES="$(get_env .env COMPOSE_PROFILES)"
+if [[ ",$PROFILES," != *",proxy,"* ]]; then
+    if [ -z "$PROXY_RUNNING" ] && { port_in_use 80 || port_in_use 443; }; then
+        warn "80/443 band (boshqa dastur) — HTTPS proksi yoqilmadi. CRM: http://${IP}:${CRM_PORT}"
+    else
+        set_env .env COMPOSE_PROFILES "${PROFILES:+$PROFILES,}proxy"
+        PROFILES="$(get_env .env COMPOSE_PROFILES)"
+    fi
+fi
+if [[ ",$PROFILES," == *",proxy,"* ]]; then
+    PUBLIC_HOST="$(get_env .env PUBLIC_HOST)"
+    # No domain yet: <ip-with-dashes>.sslip.io resolves to the server IP, so Let's Encrypt can issue a certificate
+    [ -n "$PUBLIC_HOST" ] || { PUBLIC_HOST="${IP//./-}.sslip.io"; set_env .env PUBLIC_HOST "$PUBLIC_HOST"; }
+    CRM_HOST="$(get_env .env CRM_HOST)"
+    [ -n "$CRM_HOST" ] || { CRM_HOST="crm.${PUBLIC_HOST}"; set_env .env CRM_HOST "$CRM_HOST"; }
+    [[ "$(get_env .env CATALOG_URL)" == https://* ]] || set_env .env CATALOG_URL "https://${PUBLIC_HOST}"
+    [[ "$(get_env .env CRM_URL)" == https://* ]] || set_env .env CRM_URL "https://${CRM_HOST}"
+    CORS="$(get_env backend/.env CORS_ORIGIN)"
+    for origin in "https://${CRM_HOST}" "https://${PUBLIC_HOST}"; do
+        [[ ",$CORS," == *",$origin,"* ]] || CORS="${CORS:+$CORS,}$origin"
+    done
+    set_env backend/.env CORS_ORIGIN "$CORS"
+    if command -v ufw > /dev/null && sudo -n ufw status 2>/dev/null | grep -q "Status: active"; then
+        sudo -n ufw allow 80/tcp > /dev/null 2>&1 || true
+        sudo -n ufw allow 443/tcp > /dev/null 2>&1 || true
+    fi
+    echo "Katalog: https://${PUBLIC_HOST}   CRM: https://${CRM_HOST}"
 fi
 
 # --- 4. Build and start -------------------------------------------------------
@@ -171,7 +204,9 @@ sudo systemctl enable real-avto-stack.service > /dev/null 2>&1 && echo "systemd:
 
 # --- 7. Summary ----------------------------------------------------------------------
 say "Tayyor"
-echo "CRM:      http://${IP}:${CRM_PORT}   (login: ${CRM_USER})"
+CRM_LINK="$(get_env .env CRM_URL)"; [[ "$CRM_LINK" == https://* ]] || CRM_LINK="http://${IP}:${CRM_PORT}"
+CATALOG_LINK="$(get_env .env CATALOG_URL)"; [[ "$CATALOG_LINK" == https://* ]] || CATALOG_LINK="http://${IP}:${CATALOG_PORT}"
+echo "CRM:      ${CRM_LINK}   (login: ${CRM_USER})"
 if [ -n "$NEW_CRM_PASSWORD" ]; then
     # Admins get the new CRM password in their private chat with the bot
     BOT_TOKEN_VALUE="$(get_env .env BOT_TOKEN)"
@@ -179,7 +214,7 @@ if [ -n "$NEW_CRM_PASSWORD" ]; then
         curl -s -m 15 "https://api.telegram.org/bot${BOT_TOKEN_VALUE}/sendMessage" \
             --data-urlencode "chat_id=${id}" \
             --data-urlencode "text=🛠 Real Avto serverga o'rnatildi.
-CRM: http://${IP}:${CRM_PORT}
+CRM: ${CRM_LINK}
 Login: ${CRM_USER}
 Parol: ${NEW_CRM_PASSWORD}
 (Bu xabarni saqlab, keyin o'chirib qo'ying)" > /dev/null || true
@@ -190,7 +225,7 @@ Parol: ${NEW_CRM_PASSWORD}
         echo "          parol: ${NEW_CRM_PASSWORD}   ← saqlab qo'ying (backend/.env da ham bor)"
     fi
 fi
-echo "Katalog:  http://${IP}:${CATALOG_PORT}"
+echo "Katalog:  ${CATALOG_LINK}"
 echo "Bot logi: docker compose logs -f bot"
 echo
 echo "Eslatma: shu tokenli bot boshqa joyda (kompyuteringizda) ishlayotgan bo'lsa — uni to'xtating, aks holda to'qnashadi."

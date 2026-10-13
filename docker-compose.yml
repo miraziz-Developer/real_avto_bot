@@ -154,6 +154,30 @@ services:
     stop_grace_period: 35s
     logging: *default-logging
 
+  # Public HTTPS (CRM, catalog, webhooks) on ports 80/443. Enabled by COMPOSE_PROFILES=proxy in the root .env
+  # (scripts/server_setup.sh sets it when 80/443 are free). Hosts: PUBLIC_HOST, CRM_HOST — see deploy/Caddyfile.
+  proxy:
+    image: caddy:2.8.4-alpine
+    profiles: ["proxy"]
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
+      CRM_HOST: ${CRM_HOST:-crm.localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - catalog
+      - bot
+    restart: unless-stopped
+    logging: *default-logging
+
 volumes:
   pg_data:
   redis_data:
+  caddy_data:
+  caddy_config:
