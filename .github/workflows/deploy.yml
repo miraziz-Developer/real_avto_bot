@@ -3,7 +3,7 @@ name: Deploy
 # Deploys the stack to the server over SSH (scripts/deploy_to_server.sh → scripts/server_setup.sh).
 # Runs on demand, or on a push whose commit message contains "[deploy]".
 # One-time setup — repository Settings → Secrets and variables → Actions:
-#   secret DEPLOY_SSH_KEY  — the private SSH key for the server user
+#   secret DEPLOY_SSH_KEY  — the private SSH key for the server user (or DEPLOY_SSH_PASSWORD — the user's password)
 #   secret DEPLOY_ENV      — contents of the bot's .env (used only on the first deploy; the server keeps its own)
 #   variable DEPLOY_HOST / DEPLOY_USER / DEPLOY_DIR — optional overrides of the defaults below
 on:
@@ -24,6 +24,7 @@ jobs:
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST || '172.198.138.146' }}
       DEPLOY_USER: ${{ vars.DEPLOY_USER || 'bozorliii' }}
       DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '/opt/real_avto_bot' }}
+      SSHPASS: ${{ secrets.DEPLOY_SSH_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,23 +33,31 @@ jobs:
           KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           ENV_FILE: ${{ secrets.DEPLOY_ENV }}
         run: |
-          [ -n "$KEY" ] || { echo "::error::Secret DEPLOY_SSH_KEY is missing"; exit 1; }
+          [ -n "$KEY" ] || [ -n "$SSHPASS" ] || { echo "::error::Add secret DEPLOY_SSH_KEY or DEPLOY_SSH_PASSWORD"; exit 1; }
           [ -n "$ENV_FILE" ] || { echo "::error::Secret DEPLOY_ENV is missing"; exit 1; }
 
-      - name: Prepare key and .env
+      - name: Prepare login and .env
         env:
           KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           ENV_FILE: ${{ secrets.DEPLOY_ENV }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          if [ -n "$KEY" ]; then
+            printf '%s\n' "$KEY" > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
+            echo "DEPLOY_LOGIN=$HOME/.ssh/deploy_key" >> "$GITHUB_ENV"
+            echo "SSH_CMD=ssh -i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" >> "$GITHUB_ENV"
+          else
+            sudo apt-get install -y -qq sshpass > /dev/null
+            echo "DEPLOY_LOGIN=password" >> "$GITHUB_ENV"
+            echo "SSH_CMD=sshpass -e ssh -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no" >> "$GITHUB_ENV"
+          fi
           printf '%s\n' "$ENV_FILE" > .env
           chmod 600 .env
 
       - name: Server status before deploy
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "$DEPLOY_USER@$DEPLOY_HOST" '
+          $SSH_CMD "$DEPLOY_USER@$DEPLOY_HOST" '
             echo "== memory"; free -h
             echo "== disk"; df -h / | tail -n 1
             echo "== containers"; docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
@@ -60,7 +69,7 @@ jobs:
       - name: Stop bozorliii (temporary)
         if: contains(github.event.head_commit.message, '[stop-bozorliii]') || vars.STOP_BOZORLIII == 'true'
         run: |
-          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" '
+          $SSH_CMD "$DEPLOY_USER@$DEPLOY_HOST" '
             set -e
             cd /opt/bozorliii
             backup="$HOME/bozorliii_env_backup_$(date +%Y%m%d_%H%M%S)"
@@ -74,13 +83,13 @@ jobs:
         env:
           # Never print generated passwords into the Actions log — admins get them in Telegram instead
           SETUP_QUIET_SECRETS: "1"
-        run: bash scripts/deploy_to_server.sh "$DEPLOY_USER@$DEPLOY_HOST" ~/.ssh/deploy_key "$DEPLOY_DIR"
+        run: bash scripts/deploy_to_server.sh "$DEPLOY_USER@$DEPLOY_HOST" "$DEPLOY_LOGIN" "$DEPLOY_DIR"
 
       - name: Server status after deploy
         if: always()
         run: |
-          [ -f ~/.ssh/deploy_key ] || exit 0
-          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" "
+          [ -n "${SSH_CMD:-}" ] || exit 0
+          $SSH_CMD "$DEPLOY_USER@$DEPLOY_HOST" "
             cd '$DEPLOY_DIR' 2>/dev/null && docker compose ps
             echo '== bot log (last 40 lines)'; docker compose logs --tail=40 bot 2>/dev/null
             echo '== memory'; free -h

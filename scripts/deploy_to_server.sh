@@ -27,11 +27,28 @@ KEY="${2:?SSH kalit fayli kerak, masalan ~/.ssh/bozorliii_student_key}"
 REMOTE_DIR="${3:-/opt/real_avto_bot}"
 
 cd "$(dirname "$0")/.."
-[ -f "$KEY" ] || { echo "SSH kalit topilmadi: $KEY"; exit 1; }
+# KEY="password": log in with the password from $SSHPASS (sshpass) instead of a key file
+USE_PASSWORD=""
+if [ "$KEY" = "password" ]; then
+    [ -n "${SSHPASS:-}" ] || { echo "SSHPASS (server paroli) berilmagan"; exit 1; }
+    command -v sshpass > /dev/null || { echo "sshpass o'rnatilmagan"; exit 1; }
+    USE_PASSWORD=1
+elif [ ! -f "$KEY" ]; then
+    echo "SSH kalit topilmadi: $KEY"; exit 1
+fi
 [ -f .env ] || { echo ".env topilmadi — avval .env.example dan .env yarating va to'ldiring"; exit 1; }
 command -v rsync > /dev/null || { echo "rsync o'rnatilmagan (Mac: bor; Ubuntu: sudo apt install rsync)"; exit 1; }
 
-SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=accept-new)
+if [ -n "$USE_PASSWORD" ]; then
+    SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no)
+    SSH=(sshpass -e ssh "${SSH_OPTS[@]}")
+    SCP=(sshpass -e scp "${SSH_OPTS[@]}")
+    RSYNC_SSH="sshpass -e ssh ${SSH_OPTS[*]}"
+else
+    SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=accept-new)
+    SCP=(scp -i "$KEY")
+    RSYNC_SSH="ssh -i $KEY"
+fi
 
 echo "==> Server holati"
 "${SSH[@]}" "$TARGET" 'free -h; df -h / | tail -n 1; docker ps --format "table {{.Names}}\t{{.Status}}"'
@@ -49,17 +66,17 @@ rsync -az --human-readable \
     --exclude .git --exclude node_modules --exclude '**/dist' --exclude .venv --exclude venv \
     --exclude '__pycache__' --exclude '*.pyc' --exclude .pytest_cache --exclude .ruff_cache \
     --exclude .env --exclude backend/.env --exclude frontend/.env --exclude catalog/.env \
-    -e "ssh -i $KEY" ./ "$TARGET:$REMOTE_DIR/"
+    -e "$RSYNC_SSH" ./ "$TARGET:$REMOTE_DIR/"
 
 echo "==> .env (faqat birinchi marta)"
 if "${SSH[@]}" "$TARGET" "test -f '$REMOTE_DIR/.env'"; then
     echo "serverda .env bor — o'zgartirilmadi"
 else
-    scp -i "$KEY" .env "$TARGET:$REMOTE_DIR/.env"
+    "${SCP[@]}" .env "$TARGET:$REMOTE_DIR/.env"
     echo ".env yuborildi"
 fi
 if [ -f backend/.env ] && ! "${SSH[@]}" "$TARGET" "test -f '$REMOTE_DIR/backend/.env'"; then
-    scp -i "$KEY" backend/.env "$TARGET:$REMOTE_DIR/backend/.env"
+    "${SCP[@]}" backend/.env "$TARGET:$REMOTE_DIR/backend/.env"
 fi
 
 echo "==> Serverda o'rnatish"
