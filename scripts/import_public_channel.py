@@ -57,6 +57,8 @@ class Listing:
     stale: bool = False
     message_ids: list[int] = field(default_factory=list)
     texts: dict[str, str] = field(default_factory=dict)
+    # «SPARK BARAKA BO'LDI» kabi postlar shu mashinaga tegishli bo'lishi mumkin — admin tasdiqlaydi
+    doubts: list[str] = field(default_factory=list)
 
 
 def fetch_posts(username: str) -> list[Post]:
@@ -163,6 +165,8 @@ def analyse(posts: list[Post]) -> tuple[list[Listing], list[str]]:
             cands[0].reason = f"«{p.text.splitlines()[0][:30]}» posti ({p.id})"
             cands[0].message_ids.append(p.id)
         elif len(cands) > 1:
+            for c in cands:
+                c.doubts.append(f"«{p.text.splitlines()[0][:40]}» (t.me/{{username}}/{p.id})")
             names = ", ".join(f"{c.post.id}" for c in cands)
             notes.append(f"• {p.id}: «{p.text.splitlines()[0][:30]}» — {len(cands)} ta mos e'lon ({names}), aniq emas")
     for x in unique:
@@ -181,6 +185,49 @@ def title(x: Listing) -> str:
     p = x.parsed
     km = f", {p.mileage_km:,} km".replace(",", " ") if p.mileage_km else ""
     return f"{p.model or p.brand} {p.year or ''}{km}".strip()
+
+
+async def ask_admins(username: str, doubtful: list, *, added: int, active: int, sold: int, stale: int) -> None:
+    """Adminlarga: import xulosasi + har noaniq mashina uchun «Sotildimi?» kartasi (💰 Sotildi / ✅ Sotuvda)."""
+    from aiogram import Bot
+    from aiogram.enums import ParseMode
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from bot.services.car_cards import car_card_html
+
+    if not settings.admin_telegram_ids:
+        return
+    bot = Bot(settings.bot_token)
+    try:
+        summary = (
+            f"📥 <b>Kanal tarixi import qilindi</b> (@{username}, AI'siz)\n"
+            f"✅ Sotuvda: {active} · 🔴 Sotilgan: {sold} · 🗄 Eski e'lon (arxiv): {stale}\n"
+            f"Bazaga yangi yozildi: {added} ta."
+        )
+        if doubtful:
+            summary += (
+                f"\n\n❓ <b>{len(doubtful)} ta mashina aniq emas</b>: kanalda «… BARAKA BO'LDI» / «… SOTILDI» posti bor, "
+                "lekin qaysi mashina ekani yozilmagan. Har biri uchun pastdagi tugmani bosing."
+            )
+        for aid in settings.admin_telegram_ids:
+            await bot.send_message(aid, summary, parse_mode=ParseMode.HTML)
+        for x, car in doubtful:
+            doubts = "\n".join("• " + d.replace("{username}", username) for d in x.doubts[:3])
+            header = f"❓ <b>Shu mashina sotildimi?</b>\nKanaldagi postlar:\n{html.escape(doubts)}"
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[[
+                    InlineKeyboardButton(text="💰 Sotildi", callback_data=f"car:sold:{car.id}"),
+                    InlineKeyboardButton(text="✅ Sotuvda", callback_data=f"car:keep:{car.id}"),
+                ]]
+            )
+            for aid in settings.admin_telegram_ids:
+                await bot.send_message(
+                    aid, car_card_html(car, header=header), parse_mode=ParseMode.HTML, reply_markup=kb,
+                    disable_web_page_preview=True,
+                )
+                await asyncio.sleep(0.4)
+    finally:
+        await bot.session.close()
 
 
 async def main() -> None:
@@ -210,6 +257,7 @@ async def main() -> None:
     added = skipped = 0
     async with db_base.get_session_factory()() as session:
         cars = CarRepository(session)
+        created: dict[int, object] = {}
         for x in unique:
             if any([await cars.find_by_channel_message(chat_id, mid) for mid in x.message_ids]):
                 skipped += 1
@@ -224,12 +272,15 @@ async def main() -> None:
                 published_at=x.post.date,
             )
             car.post_texts = x.texts
+            created[x.post.id] = car
             reason = x.reason or (f"{FRESH_DAYS} kundan eski e'lon" if x.stale else "")
             await cars.add_event(car, "imported", {"from": "public_web", "reason": reason})
             added += 1
         await session.commit()
+        doubtful = [(x, created[x.post.id]) for x in active if x.doubts and x.post.id in created]
     await db_base.dispose_engine()
     print(f"\nBazaga yozildi: {added} ta yangi, {skipped} ta oldin bor edi.")
+    await ask_admins(username, doubtful, added=added, active=len(active), sold=len(sold), stale=len(stale))
 
 
 asyncio.run(main())
