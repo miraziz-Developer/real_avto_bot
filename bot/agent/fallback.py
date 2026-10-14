@@ -62,7 +62,7 @@ def sell_reply() -> tuple[str, InlineKeyboardMarkup]:
 
 
 # Aniq mashina haqidagi savol («narxi qancha?», «probegi?», «hali bormi?»)
-_ABOUT_CAR_RE = re.compile(
+ABOUT_CAR_RE = re.compile(
     r"\?|narx|qancha|necha|probeg|yurgan|kraska|rang|holat|bormi|turibdimi|sotil|kredit|bo'lib|nasiya|"
     r"цена|сколько|пробег|краск|продан|ещ[её]",
     re.IGNORECASE,
@@ -98,7 +98,7 @@ async def _fallback_reply(ctx: AgentContext, text: str) -> tuple[str, InlineKeyb
         return sell_reply()
     p = parse_car_text(text, usd_rate_uzs=settings.usd_rate_uzs)
     if not (p.brand or p.model or p.price_usd):
-        car = await ctx.current_car() if _ABOUT_CAR_RE.search(text) else None
+        car = await ctx.current_car() if ABOUT_CAR_RE.search(text) else None
         if car is not None:
             # Mijoz aniq mashina (post) haqida so'rayapti: «narxi qancha?», «probegi?»
             return await _about_car(ctx, car), fallback_kb()

@@ -38,6 +38,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiohttp import web
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from bot.agent.fallback import ABOUT_CAR_RE, is_sell_intent
 from bot.agent.service import generate_agent_reply
 from bot.agent.tools import AgentContext
 from bot.ai import get_ai, get_budget
@@ -55,6 +56,7 @@ from bot.services.car_cards import notify_admins_text
 from bot.services.car_parser import detect_brand_model, normalize_text
 from bot.services.comment_ai import CommentDecision, decide_comment_reply, public_post_text
 from bot.services.lead_cards import lead_score
+from bot.utils.currency import fmt_price
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,26 @@ def _field(payload: dict, *names: str, limit: int = 2000) -> str:
         if value and not _PLACEHOLDER_RE.match(value):
             return value[:limit]
     return ""
+
+
+def needs_car_choice(text: str, *, car_known: bool) -> bool:
+    """Aniq bir mashina haqidagi savol, lekin mashina noma'lum va matnda model ham yo'q."""
+    if car_known or not ABOUT_CAR_RE.search(text):
+        return False
+    brand, model = detect_brand_model(normalize_text(text))
+    return not (brand or model) and not is_sell_intent(text)
+
+
+async def clarify_reply(cars: CarRepository) -> str:
+    recent = await cars.search_offerable(limit=5)
+    if not recent:
+        return "Qaysi mashina haqida so'rayapsiz? Model nomini yozing — menejerimiz ham tez orada javob beradi."
+    lines = ["Qaysi mashina haqida so'rayapsiz? Raqamini yozing:"]
+    for c in recent:
+        price = fmt_price(c.price_usd, empty="narx so'rang")
+        lines.append(f"{c.id} — {c.title}, {price}")
+    lines.append("Yoki model nomini yozing (masalan: Cobalt).")
+    return "\n".join(lines)
 
 
 def dynamic_block(texts: list[str], image_urls: list[str] | None = None) -> dict:
@@ -378,12 +400,17 @@ class ManyChatBridge:
             )
         elif username and not lead.username:
             lead.username = username
-        if match.car is not None and (is_comment or match.how in ("explicit", "mapped", "caption")):
+        if match.car is not None and (is_comment or match.how in ("explicit", "mapped", "caption", "code")):
             lead.car_id = match.car.id  # mijoz aynan shu post (mashina) haqida so'rayapti
         await leads.add_message(lead, "user", self._history_text(text, match, is_comment=is_comment))
         if leads.is_human(lead):
             await forward_text_to_manager(self.bot, leads, lead, text, source=" · Instagram")
             return None
+        if needs_car_choice(text, car_known=match.car is not None or (not is_comment and lead.car_id is not None)):
+            # «Narxi qancha?» — lekin qaysi mashina ekani noma'lum (ManyChat post ID'sini bermaydi): taxmin qilmaymiz
+            reply = await clarify_reply(cars)
+            await leads.add_message(lead, "assistant", reply)
+            return reply
         ctx = AgentContext(
             bot=self.bot,
             chat_id=lead.telegram_id,

@@ -320,3 +320,22 @@ async def test_ig_sync_links_new_posts_by_caption_and_video(factory, monkeypatch
     async with TestClient(TestServer(app_for(ManyChatBridge(FakeBot(), factory)))) as client:
         body = await (await client.post(MANYCHAT_PATH, json=comment("narxi qancha?", media_id="1792"), headers=AUTH)).json()
     assert body["car_id"] == 4
+
+
+async def test_without_post_info_asks_which_car_then_uses_code(factory):
+    async with TestClient(TestServer(app_for(ManyChatBridge(FakeBot(), factory)))) as client:
+        # ManyChat post ID'sini bermadi — taxmin qilmaymiz, ro'yxat bilan so'raymiz
+        body = await (await client.post(MANYCHAT_PATH, json=comment("narxi qancha?"), headers=AUTH)).json()
+        assert body["car_id"] is None and "Raqamini yozing" in body["reply"] and "2 — Chevrolet Cobalt 2019" in body["reply"]
+        assert "Spark" not in body["reply"]  # sotilgani ro'yxatda yo'q
+        # Mijoz Direct'da raqamni yozdi
+        dm = {"user_id": "555", "event": "message", "text": "2"}
+        body = await (await client.post(MANYCHAT_PATH, json=dm, headers=AUTH)).json()
+        assert body["car_id"] == 2
+        # Keyingi savol — o'sha mashina haqida
+        dm["text"] = "probegi qancha?"
+        body = await (await client.post(MANYCHAT_PATH, json=dm, headers=AUTH)).json()
+        assert "Cobalt 2019" in body["reply"] and "120 000" in body["reply"]
+        # Reel matnidagi kodni kommentga yozsa ham bo'ladi
+        body = await (await client.post(MANYCHAT_PATH, json=comment("kod 4 narxi qancha?", user_id="9"), headers=AUTH)).json()
+        assert body["car_id"] == 4 and "Gentra" in body["reply"]

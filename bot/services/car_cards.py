@@ -87,6 +87,9 @@ def car_card_html(car: Car, *, header: str | None = None) -> str:
     url = channel_post_url(car)
     if url:
         lines.append(f'🔗 <a href="{e(url)}">Kanaldagi post</a>')
+    if car.status in (CarStatus.ACTIVE, CarStatus.RESERVED, CarStatus.REVIEW):
+        # Instagram kommentlari shu kod bilan aynan shu mashinaga bog'lanadi
+        lines.append(f"📸 Instagram reel matniga: <code>Kod: {car.id}</code>")
     return "\n".join(lines)
 
 

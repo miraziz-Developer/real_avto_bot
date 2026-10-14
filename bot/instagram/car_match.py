@@ -4,7 +4,8 @@ Tartib (birinchi topilgani):
   1. aniq ko'rsatma: ManyChat avtomatizatsiyasida berilgan mashina raqami («17», «#17»);
   2. shu post oldin bog'langan (instagram_posts: admin tanlovi yoki avvalgi avtomatik natija);
   3. post matni (caption) — kod («ID: 17») yoki model/yil/probeg/narx bo'yicha bazadagi mashina;
-  4. komment matnidagi model — sotuvdagilar orasida bittagina mos bo'lsa.
+  4. mijoz yozgan mashina raqami («17», «kod 17») — reel matnida «Kod: 17» deb yozib qo'yilsa qulay;
+  5. komment matnidagi model — sotuvdagilar orasida bittagina mos bo'lsa.
 Topilmasa — None; post ma'lum bo'lsa adminlardan «bu post qaysi mashina?» deb so'raladi (chaqiruvchi).
 """
 
@@ -17,13 +18,16 @@ from sqlalchemy import select
 
 from bot.config import settings
 from bot.db.cars_repo import CarRepository, same_car_model
-from bot.db.models import Car, InstagramPost
+from bot.db.models import Car, CarStatus, InstagramPost
 from bot.services.car_parser import ParsedCar, parse_car_text
 
 _SHORTCODE_RE = re.compile(r"instagram\.com/(?:[\w.]+/)?(?:p|reels?|tv)/([\w-]{5,})", re.IGNORECASE)
 _EXPLICIT_RE = re.compile(r"^\s*#?\s*(\d{1,7})\s*$")
 # Postga qo'yilgan kod: «ID: 17», «kod 17», «#ra17»
 _CAPTION_CODE_RE = re.compile(r"(?:\bID|\bkod|\bкод|#ra)\s*[:№#-]?\s*(\d{1,7})\b", re.IGNORECASE)
+# Mijoz kommentda/Direct'da mashina raqamini yozdi: «17», «#17», «kod 17», «ID: 17»
+_TEXT_CODE_ONLY_RE = re.compile(r"^\s*(?:#|№|kod|код|id)?\s*[:-]?\s*(\d{1,5})\s*[.!?)]*\s*$", re.IGNORECASE)
+_TEXT_CODE_RE = re.compile(r"(?:#|№|\bkod|\bкод|\bID)\s*[:-]?\s*(\d{1,5})\b", re.IGNORECASE)
 # Narx «bir xil» deyiladigan farq (post va bazada yaxlitlash farqi)
 _PRICE_TOLERANCE = 0.03
 MIN_CAPTION_SCORE = 3
@@ -104,6 +108,19 @@ async def match_parsed(cars: CarRepository, parsed: ParsedCar) -> Car | None:
     return None
 
 
+def text_car_code(text: str | None) -> int | None:
+    m = _TEXT_CODE_ONLY_RE.match(text or "") or _TEXT_CODE_RE.search(text or "")
+    return int(m.group(1)) if m else None
+
+
+async def match_code(cars: CarRepository, text: str | None) -> Car | None:
+    code = text_car_code(text)
+    if code is None:
+        return None
+    car = await cars.get(code)
+    return car if car is not None and car.status != CarStatus.ARCHIVED else None
+
+
 async def match_text(cars: CarRepository, text: str | None) -> Car | None:
     """Komment matnida model aytilgan («Cobalt narxi?») va sotuvda shunday bittagina mashina bo'lsa."""
     parsed = parse_car_text(text or "", usd_rate_uzs=settings.usd_rate_uzs)
@@ -173,5 +190,8 @@ async def resolve_car(
         return CarMatch(car, "caption", post)
     if ref:
         post = await remember_post(cars, ref, car=None, caption=caption, permalink=permalink)
+    car = await match_code(cars, text)
+    if car is not None:
+        return CarMatch(car, "code", post)
     car = await match_text(cars, text)
     return CarMatch(car, "text" if car else "none", post)
