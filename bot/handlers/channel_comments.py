@@ -339,9 +339,9 @@ async def _ai_handle(
 
     if _from_admin(message):
         return True  # admin o'zi sinab ko'ryapti — adminlarga signal shart emas
-    if decision.category == "toxic":
-        await _notify_admins_about(bot, message, car, "⚠️ <b>Guruhda haqorat / provokatsiya</b>", text, decision.admin_note)
-    elif decision.category == "negative" or (decision.notify_admin and not decision.buy_intent):
+    if decision.category in ("toxic", "spam"):
+        return True  # haqorat/spam — jim, adminlarni ham bezovta qilmaymiz
+    if decision.category == "negative" or (decision.notify_admin and not decision.buy_intent):
         await _notify_admins_about(bot, message, car, "😟 <b>Guruhda salbiy fikr</b>", text, decision.admin_note)
     if decision.buy_intent:
         await _notify_admins_about(bot, message, car, "💬 <b>Kommentda xarid niyati</b>", text, decision.admin_note)
@@ -374,10 +374,7 @@ async def _handle_group_text(message: Message, bot: Bot, cars: CarRepository, bo
         logger.info("Guruh %s bizning muhokama guruhimiz emas — xabar o'tkazildi", message.chat.id)
         return  # bot boshqa guruhga qo'shilgan bo'lsa — aralashmaymiz
     if has_profanity(text):
-        # So'kinishga ochiq guruhda javob yozilmaydi (AI'siz ham) — adminlar ko'radi, kerak bo'lsa o'chiradi
-        car = await cars.find_by_channel_message(*post) if post else None
-        await _notify_admins_about(bot, message, car, "⚠️ <b>Kommentda haqorat / so'kinish</b>", text, "javob yozilmadi")
-        return
+        return  # so'kinishga javob yozilmaydi (AI'siz ham), adminlarga ham xabar yuborilmaydi
     if worth_reading(text) and await _ai_handle(message, bot, cars, bot_username, text, post=post):
         return
     await _template_handle(message, bot, cars, bot_username, text, post)

@@ -332,11 +332,7 @@ class ManyChatBridge:
         if is_comment and comment_id and not await self._claim_comment(comment_id, _field(payload, "media_id", limit=64)):
             return result  # bu kommentga allaqachon javob berilgan (webhook va davriy tekshiruv ikkalasi ham olib keladi)
         if is_comment and has_profanity(text):
-            # So'kinish — ochiq javob yo'q (AI ishlamasa ham), adminlarga xabar
-            toxic = CommentDecision(action="ignore", category="toxic", notify_admin=True, admin_note="javob yozilmadi")
-            await self._notify_admins(toxic, text, who=f"@{username}" if username else (name or sub), car=None,
-                                      permalink=_field(payload, "post_url", "permalink", limit=300))
-            return result
+            return result  # so'kinish — javob yo'q (AI ishlamasa ham), adminlarga ham xabar yuborilmaydi
         if is_comment and is_emoji_only(text):
             return await self._emoji_answer(payload, sub, text, username, result)
         # Make.com: Direct yuborilmaydi ("dm": false) — javob to'liq komment ostida bo'ladi
@@ -572,9 +568,9 @@ class ManyChatBridge:
         self, decision: CommentDecision | None, text: str, *, who: str, car: Car | None, permalink: str
     ) -> None:
         buy = decision.buy_intent if decision is not None else has_buy_intent(text)
-        if decision is not None and decision.category == "toxic":
-            title = "⚠️ <b>Instagram kommentida haqorat / provokatsiya</b>"
-        elif decision is not None and (decision.category == "negative" or (decision.notify_admin and not buy)):
+        if decision is not None and decision.category in ("toxic", "spam"):
+            return  # haqorat/spam — adminlarni bezovta qilmaymiz
+        if decision is not None and (decision.category == "negative" or (decision.notify_admin and not buy)):
             title = "😟 <b>Instagram kommentida salbiy fikr</b>"
         elif buy:
             title = "💬 <b>Instagram kommentida xarid niyati</b>"

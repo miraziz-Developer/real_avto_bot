@@ -111,4 +111,11 @@ def test_profanity_is_never_answered_publicly():
             raise AssertionError("AI chaqirilmasligi kerak")
 
     d = asyncio.run(decide_comment_reply(NoAI(), text="buncha qimmat blee gandon", author=None, car=None, other_cars=[]))
-    assert d.action == "ignore" and d.category == "toxic" and d.notify_admin
+    assert d.action == "ignore" and d.category == "toxic" and not d.notify_admin
+
+
+def test_price_complaint_prompt_says_owner_sets_the_price():
+    from bot.services.comment_ai import build_system_prompt
+
+    p = build_system_prompt()
+    assert "MASHINA EGASI" in p and "Bu narxni mashina egasi" in p and "bozorga qarab qo'ydik" in p

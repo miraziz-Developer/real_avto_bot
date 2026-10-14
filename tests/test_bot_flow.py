@@ -854,7 +854,7 @@ async def test_comment_ai_never_replies_to_toxic(env, comment_ai):
     _, thread = await _comment_setup(factory, dp, bot)
     await dp.feed_update(bot, _group_msg(9103, "hammang firibgarsan", thread=thread))
     assert session.sent(SendMessage, GROUP_ID) == []
-    assert "haqorat" in session.sent(SendMessage, ADMIN_ID)[-1].text
+    assert not any("haqorat" in m.text for m in session.sent(SendMessage, ADMIN_ID))  # adminlar bezovta qilinmaydi
 
 
 async def test_comment_ai_unverified_car_hides_numbers(env, comment_ai):

@@ -60,9 +60,11 @@ VAZIYATLAR:
 - Xarid niyati ("olaman", "ko'rsam bo'ladimi", "kredit bormi", raqam so'rash) → qisqa javob + menejer bog'lanishini ayt; buy_intent=true.
 - Salbiy fikr (qimmat, aldov, yomon xizmat, mashina nuqsoni haqida) → himoyalanma, bahslashma, ayblama, nasihat qilma.
   1–2 gap, xotirjam va hurmat bilan: faktni (bo'lsa) tinch tushuntir, muammoni menejer bilan hal qilishni taklif qil.
-  notify_admin=true. Masalan "qimmat-ku" → "Narx mashina holati va bozorga qarab qo'yilgan. Ko'rib chiqing — narx bo'yicha
-  menejerimiz bilan gaplashsangiz bo'ladi: <telefon>". Chegirma va'da qilma, raqibni yomonlama.
-- Haqorat, so'kinish, provokatsiya (toxic) yoki reklama/spam → JAVOB BERMA (action=ignore). toxic bo'lsa notify_admin=true.
+  notify_admin=true. Chegirma va'da qilma, raqibni yomonlama.
+- NARX HAQIDA: kanaldagi mashinalar narxini MASHINA EGASI qo'yadi — salon egasi bilan kelishib e'lonni chiqaradi, narxni
+  salon belgilamaydi. "Narxni biz qo'ydik / bozorga qarab qo'ydik" DEMA. "qimmat-ku" → masalan: "Bu narxni mashina egasi
+  qo'ygan. Ko'rib, egasi bilan menejerimiz orqali gaplashib ko'rishingiz mumkin: <telefon>".
+- Haqorat, so'kinish, provokatsiya (toxic) yoki reklama/spam → JAVOB BERMA (action=ignore), notify_admin=false.
 - Maqtov ("zo'r", "👍", "omad") → odatda ignore (guruhni to'ldirmaslik uchun).
 - Mavzudan tashqari oddiy suhbat (salon/mashinalarga aloqasi yo'q) → ignore.
 
@@ -270,7 +272,7 @@ def parse_decision(data: dict) -> CommentDecision:
         category=category,
         reply=_clean_reply(str(data.get("reply") or "")),
         buy_intent=bool(data.get("buy_intent")) or category == "buy_intent",
-        notify_admin=bool(data.get("notify_admin")) or category in ("negative", "toxic"),
+        notify_admin=(bool(data.get("notify_admin")) or category == "negative") and category not in ("toxic", "spam"),
         admin_note=str(data.get("admin_note") or "")[:300],
         raw=data,
     )
@@ -297,7 +299,7 @@ async def decide_comment_reply(
     if has_profanity(text):
         # Ochiq joyda so'kinishga javob yozilmaydi (trollni qizdirmaslik) — adminlar ko'radi, kerak bo'lsa o'chiradi
         return CommentDecision(
-            action="ignore", category="toxic", notify_admin=True, admin_note="So'kinish/haqorat — javob yozilmadi"
+            action="ignore", category="toxic", notify_admin=False
         )
     data = await ai.chat_json(
         build_system_prompt(bot_username=bot_username, platform=platform),
