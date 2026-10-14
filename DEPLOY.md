@@ -345,6 +345,15 @@ database, like in Telegram, and knows **which car a comment is about**.
 3. **Optional `MANYCHAT_API_KEY`** (ManyChat → Settings → API): answers that take longer than ~8 s and managers'
    replies from Telegram lead cards are delivered through the API.
 
+**Make.com instead of ManyChat** (free tier; Make passes the post ID, no Meta developer app): scenario
+*Instagram for Business → Watch Comments* → *Get a Media* (optional: caption, permalink, `media_url`) →
+*HTTP → Make a request* `POST https://PUBLIC_HOST/webhooks/make`, header `Authorization: Bearer <secret>`, body type
+*application/x-www-form-urlencoded* with fields `user_id`, `event=comment`, `dm=false`, `text`, `ig_username`,
+`media_id`, `caption`, `post_url`, `media_url`; parse response → filter `public_reply` not empty →
+*Instagram for Business → Create a Reply* with `public_reply`. With `dm=false` the whole answer goes under the comment;
+our own comments (`INSTAGRAM_USERNAME`) are ignored; with `media_url` the AI watches the reel when the caption does not
+identify the car.
+
 **How the car is found** (`bot/instagram/car_match.py`), first match wins:
 
 1. `car` in the request: a car number set in a per-post automation (most exact);
