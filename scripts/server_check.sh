@@ -176,6 +176,8 @@ ok "leadlar: $(psql 'select count(*) from leads' || echo '?'), foydalanuvchilar:
 head_ "Bot logi (oxirgi 1 soat)"
 errors="$(docker compose logs --since 1h bot 2>/dev/null | grep -E ' ERROR |Traceback|CRITICAL' | grep -v 'TelegramConflictError' | tail -n 10)"
 [ -z "$errors" ] && ok "xato yo'q" || { bad "xatolar bor:"; printf '%s\n' "$errors" | cut -c1-240; }
+sync="$(docker compose logs --since 6h bot 2>/dev/null | grep -E 'Kanal sinxronizatsiyasi|Kunlik hisobot|arxivlan' | tail -n 6)"
+[ -n "$sync" ] && { ok "avtomatik kanal kuzatuvi:"; printf '%s\n' "$sync" | cut -c1-240; } || note "kanal sinxronizatsiyasi logi yo'q"
 
 # --- Ops -------------------------------------------------------------------------------------------
 head_ "Backup, cron, resurslar"
