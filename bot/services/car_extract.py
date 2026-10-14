@@ -16,6 +16,8 @@ Post o'zbek (lotin/kirill), rus yoki aralash tilda, slang bilan yozilgan bo'lish
 
 Faqat postda YOZILGAN ma'lumotni ol. Topilmagan maydon uchun null qo'y. Hech narsani o'ylab topma.
 "[Ovoz]:" bilan boshlangan qism — videodagi gapning avtomatik transkripsiyasi, unda xatolar bo'lishi mumkin.
+"[Videoda ko'rinadi]:" — AI videodan taxmin qilgan ko'rinish (kechasi, garajda, dumaloq videoda ko'pincha xato).
+RANG (color) va kraska holatini FAQAT post matni yoki aytilgan gapdan ol; faqat videodagi ko'rinishda bo'lsa — null.
 
 NARX bilan ehtiyot bo'l: price_amount — faqat mashinaning TO'LIQ narxi.
 Nasiya / bo'lib to'lash uchun boshlang'ich to'lov ("500 dollar pul bo'lsa nasiyaga beramiz", "oldindan 30%",

@@ -206,38 +206,74 @@ def _media_filename(m: Message) -> str:
 _transcript_cache: dict[tuple[int, int], str] = {}
 
 
-async def _transcribe_media(bot: Bot, messages: list[Message]) -> list[str]:
+async def _transcribe_one(bot: Bot, m: Message) -> str | None:
+    """Bitta video/ovoz → matn. None — tinglab bo'lmadi (xato); "" — nutq yo'q."""
+    media = m.video_note or m.voice or m.audio or m.video
+    if media is None:
+        return None
+    key = (m.chat.id, m.message_id)
+    if key in _transcript_cache:
+        return _transcript_cache[key]
+    if (getattr(media, "file_size", 0) or 0) > _MAX_TRANSCRIBE_BYTES:
+        logger.warning("Video juda katta, tinglanmadi (msg %s, %s bayt)", m.message_id, media.file_size)
+        return None
     ai = get_ai()
-    if not ai.enabled:
-        return []
-    out: list[str] = []
-    for m in messages:
-        media = m.video_note or m.voice or m.audio or m.video
-        if media is None:
-            continue
-        key = (m.chat.id, m.message_id)
-        if key in _transcript_cache:
-            if _transcript_cache[key]:
-                out.append(_transcript_cache[key])
-            continue
-        if (getattr(media, "file_size", 0) or 0) > _MAX_TRANSCRIBE_BYTES:
-            continue
+    for attempt in (1, 2):  # tarmoq/AI vaqtinchalik xatosida bir marta qayta urinamiz
         try:
             f = await bot.get_file(media.file_id)
             buf = await bot.download_file(f.file_path)
             if buf is None:
-                continue
+                return None
             text = await ai.transcribe(buf.read(), filename=_media_filename(m), mime_type=_media_mime(m))
             if len(_transcript_cache) > 2000:
                 _transcript_cache.clear()
             _transcript_cache[key] = text
-            if text:
-                out.append(text)
+            return text
         except AIError as e:
-            logger.warning("Ovozni matnga aylantirib bo'lmadi (msg %s): %s", m.message_id, e)
+            logger.warning("Ovozni matnga aylantirib bo'lmadi (msg %s, %s-urinish): %s", m.message_id, attempt, e)
         except Exception:
-            logger.exception("Media yuklab olish/transkripsiya xatosi (msg %s)", m.message_id)
+            logger.exception("Media yuklab olish/transkripsiya xatosi (msg %s, %s-urinish)", m.message_id, attempt)
+        if attempt == 1:
+            await asyncio.sleep(3)
+    return None
+
+
+# Oxirgi tinglash natijalari: (chat_id, message_id) → «eshitildi / nutq yo'q / tinglab bo'lmadi» (admin kartasi uchun)
+_listen_status: dict[tuple[int, int], str] = {}
+
+
+async def _transcribe_media(bot: Bot, messages: list[Message]) -> list[str]:
+    """Har bir video/ovoz alohida tinglanadi (hammasi — bitta mashina e'lonining qismlari)."""
+    if not get_ai().enabled:
+        return []
+    out: list[str] = []
+    for m in messages:
+        if not _has_av(m):
+            continue
+        text = await _transcribe_one(bot, m)
+        if len(_listen_status) > 2000:
+            _listen_status.clear()
+        _listen_status[(m.chat.id, m.message_id)] = "ok" if text else ("empty" if text == "" else "failed")
+        if text:
+            out.append(text)
     return out
+
+
+def _listen_summary(messages: list[Message]) -> str:
+    """Admin kartasi uchun: «2 ta videodan 1 tasi tinglandi; 1-video: ovoz yo'q»."""
+    av = [m for m in messages if _has_av(m)]
+    if len(av) < 2:
+        return ""
+    parts = []
+    for i, m in enumerate(av, 1):
+        st = _listen_status.get((m.chat.id, m.message_id))
+        if st == "empty":
+            parts.append(f"{i}-video: nutq yo'q")
+        elif st == "failed":
+            parts.append(f"{i}-video: tinglab bo'lmadi")
+    ok = sum(1 for m in av if _listen_status.get((m.chat.id, m.message_id)) == "ok")
+    line = f"\n🎬 {len(av)} ta videodan {ok} tasi tinglandi"
+    return line + (" (" + "; ".join(parts) + ")" if parts else "")
 
 
 # Dumaloq video file_id lari shu prefiks bilan saqlanadi — mijozga send_video_note bilan qayta yuborish uchun
@@ -307,13 +343,20 @@ async def _apply_reply_to_car(
     await cars.session.commit()
     if changes or photos or videos:
         if transcripts and not text:
-            heard = html.escape(" ".join(transcripts)[:300])
-            header += f"\n🎙 Eshitilgani ({_stt_name()}): <i>«{heard}»</i>"
+            header += f"\n🎙 Eshitilgani ({_stt_name()}): {_heard_html(transcripts)}"
+        header += _listen_summary(messages)
         # Shu mashinaning yaqindagi kartasi yangilanadi — har video/tavsif uchun alohida karta emas
         await send_car_card_to_admins(bot, car, header=header, update_recent=True)
     if not was_active and car.status == CarStatus.ACTIVE:
         await notify_wishlist_matches_car(bot, CrmRepository(cars.session), cars, car)
         await cars.session.commit()
+
+
+def _heard_html(transcripts: list[str]) -> str:
+    """Har bir video matni alohida (birinchisi bilan cheklanib qolmasin)."""
+    if len(transcripts) == 1:
+        return f"<i>«{html.escape(transcripts[0][:400])}»</i>"
+    return "".join(f"\n{i}) <i>«{html.escape(t[:250])}»</i>" for i, t in enumerate(transcripts[:4], 1))
 
 
 def _has_av(m: Message) -> bool:
@@ -698,10 +741,9 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
         else:
             _recent_media_car.pop(chat_id, None)
         if car.status == CarStatus.REVIEW and audio_unverified:
-            heard = html.escape(" ".join(transcripts)[:300])
             header = (
                 "🎙 <b>Ma'lumot videodagi ovozdan olindi</b> — to'g'riligini tekshirib tasdiqlang.\n"
-                f"Eshitilgani ({_stt_name()}): <i>«{heard}»</i>"
+                f"Eshitilgani ({_stt_name()}): {_heard_html(transcripts)}"
             )
         elif car.status == CarStatus.REVIEW:
             header = "🆕 <b>Kanalda yangi post</b> — ma'lumot to'liq emas, tekshirib bering"
@@ -709,6 +751,7 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             header = "✏️ <b>Eski post tahrirlandi</b> — mashina bazaga qo'shildi"
         else:
             header = "🆕 <b>Kanalda yangi mashina</b>"
+        header += _listen_summary(messages)
         await send_car_card_to_admins(bot, car, header=header)
         logger.info("Kanal posti → mashina #%s (%s, %s)", car.id, car.title, car.status)
         # «Chiqsa xabar ber» qidiruvini saqlagan mijozlarga
