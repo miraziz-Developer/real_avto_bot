@@ -206,3 +206,22 @@ async def test_daily_report(factory):
         report = await build_report(s, datetime.now(UTC))
     assert "Kunlik hisobot" in report and "Sotuvda: <b>1</b>" in report
     assert f"#{sold}" in report
+
+
+async def test_review_walks_open_cars_in_order(factory):
+    from bot.handlers.car_review import _next_car, review_kb, review_text
+
+    f, _ = factory
+    a = await _car(f, ids=[1])
+    await _car(f, ids=[2], status=CarStatus.SOLD, model="Cobalt", year=2020)
+    c = await _car(f, ids=[3], status=CarStatus.REVIEW, model="Gentra", year=2019)
+    async with f() as s:
+        cars = CarRepository(s)
+        car, left = await _next_car(cars, 0)
+        assert car.id == a and left == 2
+        car, left = await _next_car(cars, a)
+        assert car.id == c and left == 1
+        assert await _next_car(cars, c) == (None, 0)
+        text_ = review_text(car, 0)
+        assert "Aniqlash" in text_ and "sotildimi" in text_
+        assert {b.callback_data for row in review_kb(car).inline_keyboard for b in row} >= {f"rv:sold:{c}", f"rv:keep:{c}"}

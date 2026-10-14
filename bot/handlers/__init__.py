@@ -7,6 +7,7 @@ from bot.handlers import (
     buyout,
     callbacks,
     car_admin,
+    car_review,
     channel_comments,
     channel_watch,
     lead_admin,
@@ -31,6 +32,7 @@ def register_handlers(dp: Dispatcher) -> None:
     dp.include_router(buyout.router)
     # Admin reply → mijoz (relay) car_admin FSM'dan oldin; relay bo'lmasa SkipHandler bilan o'tkazib yuboradi
     dp.include_router(lead_admin.router)
+    dp.include_router(car_review.router)
     dp.include_router(car_admin.router)
     dp.include_router(instagram_admin.router)
     # Faqat channel_post / edited_channel_post — boshqa routerlar bilan to'qnashmaydi
