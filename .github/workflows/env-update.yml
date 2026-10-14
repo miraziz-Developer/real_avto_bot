@@ -1,0 +1,56 @@
+name: Update settings
+
+# Changes public settings (channel, discussion group, business info) in the server .env and restarts the bot.
+# Run from the Actions tab: "Run workflow" → e.g. "CHANNEL_ID=-1001234567890 CHANNEL_USERNAME=realavto".
+on:
+  workflow_dispatch:
+    inputs:
+      settings:
+        description: "KEY=VALUE pairs separated by spaces (allowed keys: see scripts/env_update.sh)"
+        required: true
+      archive_old_channel:
+        description: "Archive cars on sale from the previous CHANNEL_ID (test channel)"
+        type: boolean
+        default: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST || '172.198.138.146' }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER || 'bozorliii' }}
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '/opt/real_avto_bot' }}
+      SSHPASS: ${{ secrets.DEPLOY_SSH_PASSWORD }}
+      SETTINGS: ${{ inputs.settings }}
+      ARCHIVE: ${{ inputs.archive_old_channel }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare login
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          if [ -n "$KEY" ]; then
+            printf '%s\n' "$KEY" > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
+            echo "SSH_CMD=ssh -i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" >> "$GITHUB_ENV"
+          else
+            sudo apt-get install -y -qq sshpass > /dev/null
+            echo "SSH_CMD=sshpass -e ssh -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no" >> "$GITHUB_ENV"
+          fi
+
+      - name: Update and restart
+        run: |
+          args=()
+          for pair in $SETTINGS; do
+            [[ "$pair" =~ ^[A-Z_]+=[A-Za-z0-9@_.:/+-]*$ ]] || { echo "::error::Bad pair: $pair"; exit 1; }
+            args+=("$pair")
+          done
+          [ "$ARCHIVE" = "true" ] && args+=("--archive-old-channel")
+          $SSH_CMD "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_DIR' && bash -s -- ${args[*]}" < scripts/env_update.sh
+
+      - name: Clean up
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
