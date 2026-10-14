@@ -77,6 +77,15 @@ LATE_FALLBACK_REPLY = "Assalomu alaykum! Savolingizni oldik — menejerimiz tez 
 _PLACEHOLDER_RE = re.compile(r"^\s*\{\{.*\}\}\s*$")
 
 
+def make_secret() -> str:
+    """Make.com kaliti: MAKE_SECRET yoki bot tokenidan hosil qilinadi (serverdan kalitni chiqarib berish shart emas)."""
+    if settings.make_secret:
+        return settings.make_secret
+    if not settings.bot_token:
+        return ""
+    return hmac.new(settings.bot_token.encode(), b"real-avto-make-webhook", "sha256").hexdigest()[:40]
+
+
 def lead_key(subscriber_id: str | int) -> int:
     return -(LEAD_ID_OFFSET + int(subscriber_id))
 
@@ -504,12 +513,12 @@ class ManyChatBridge:
     # --- HTTP ---------------------------------------------------------------------------------------
 
     def _authorized(self, request: web.Request) -> bool:
-        secret = settings.manychat_secret
-        if not secret:
-            return False
         auth = request.headers.get("Authorization", "")
-        given = auth[7:] if auth.lower().startswith("bearer ") else request.headers.get("X-Api-Key", "")
-        return bool(given) and hmac.compare_digest(given.strip(), secret)
+        given = (auth[7:] if auth.lower().startswith("bearer ") else request.headers.get("X-Api-Key", "")).strip()
+        if not given:
+            return False
+        secrets = [s for s in (settings.manychat_secret, make_secret()) if s]
+        return any(hmac.compare_digest(given, s) for s in secrets)
 
     async def _deliver_late(self, task: asyncio.Task, sub: int) -> None:
         try:

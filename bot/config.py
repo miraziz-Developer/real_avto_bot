@@ -193,6 +193,7 @@ class Settings:
     ig_graph_version: str
     manychat_secret: str
     manychat_api_key: str
+    make_secret: str
     manychat_reply_timeout: float
     ig_sync_minutes: int
     sale_followup_interval_hours: int
@@ -309,6 +310,8 @@ settings = Settings(
     manychat_secret=(os.getenv("MANYCHAT_SECRET", "") or "").strip(),
     # ManyChat API kaliti (ixtiyoriy): kech tayyor bo'lgan javob va menejer javoblarini mijozga yuborish uchun
     manychat_api_key=(os.getenv("MANYCHAT_API_KEY", "") or "").strip(),
+    # Make.com kaliti (bo'sh — bot tokenidan hosil qilinadi)
+    make_secret=(os.getenv("MAKE_SECRET", "") or "").strip(),
     # ManyChat javobni ~10 soniya kutadi — shundan oldin javob qaytaramiz
     manychat_reply_timeout=float(os.getenv("MANYCHAT_REPLY_TIMEOUT", "") or "8"),
     # IG_ACCESS_TOKEN bo'lsa: yangi Instagram postlarini shuncha daqiqada bir ko'rib, mashinaga bog'lash

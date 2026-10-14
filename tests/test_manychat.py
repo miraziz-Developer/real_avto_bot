@@ -377,3 +377,16 @@ async def test_form_fields_are_accepted(factory):
         form = {"user_id": "12345", "event": "comment", "dm": "false", "text": 'gentra "narxi" qancha?'}
         body = await (await client.post("/webhooks/make", data=form, headers=AUTH)).json()
     assert body["car_id"] == 4 and "Gentra" in body["public_reply"] and body["reply"] == ""
+
+
+async def test_make_secret_derived_from_bot_token(factory):
+    from bot.instagram.manychat import make_secret
+
+    key = make_secret()
+    assert len(key) == 40 and key != SECRET
+    async with TestClient(TestServer(app_for(ManyChatBridge(FakeBot(), factory)))) as client:
+        form = {"user_id": "12345", "event": "comment", "dm": "false", "text": "gentra narxi?"}
+        ok = await client.post("/webhooks/make", data=form, headers={"Authorization": f"Bearer {key}"})
+        assert ok.status == 200
+        bad = await client.post("/webhooks/make", data=form, headers={"Authorization": f"Bearer {key[:-1]}x"})
+        assert bad.status == 401
