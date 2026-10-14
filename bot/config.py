@@ -94,8 +94,13 @@ def _parking_location_text() -> str:
 
 
 def _reviews_channel_id() -> str:
-    """Sharhlar kanali; bo‘sh qoldirilsa — @real_avto_otzivlar (bot kanalda admin bo‘lishi kerak)."""
+    """Sharhlar kanali; bo‘sh qoldirilsa — @real_avto_otzivlar (bot kanalda admin bo‘lishi kerak).
+
+    «admins» — alohida sharhlar kanali yo'q: sharhlar adminlarga shaxsiy xabar bo'lib boradi.
+    """
     v = (os.getenv("REVIEWS_CHANNEL_ID") or "").strip()
+    if v.lower() in ("admins", "admin", "off"):
+        return "admins"
     if v:
         return _normalize_chat_id(v)
     return _normalize_chat_id("@real_avto_otzivlar")

@@ -180,6 +180,8 @@ async def _verify_leaderboard_channel(bot: Bot) -> None:
 
 
 async def _verify_reviews_channel(bot: Bot) -> None:
+    if settings.reviews_channel_id == "admins":
+        return  # sharhlar adminlarga boradi
     await _verify_bot_chat(
         bot,
         env_var="REVIEWS_CHANNEL_ID",

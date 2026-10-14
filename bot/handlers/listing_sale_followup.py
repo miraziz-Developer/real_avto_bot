@@ -60,7 +60,19 @@ async def _append_sold_to_channel_caption(bot, sub) -> None:
 
 
 async def _forward_review_to_channel(bot, *, from_chat_id: int, message: Message, listing_id: int) -> None:
-    ch = settings.reviews_channel_id
+    if settings.reviews_channel_id == "admins":
+        for aid in settings.admin_telegram_ids:
+            try:
+                await _forward_review_to(bot, aid, from_chat_id=from_chat_id, message=message, listing_id=listing_id)
+            except Exception as e:  # admin botni bloklagan bo'lishi mumkin — qolganlarga yuboramiz
+                logger.warning("Sharh adminga (%s) yuborilmadi: %s", aid, e)
+        return
+    await _forward_review_to(
+        bot, settings.reviews_channel_id, from_chat_id=from_chat_id, message=message, listing_id=listing_id
+    )
+
+
+async def _forward_review_to(bot, ch, *, from_chat_id: int, message: Message, listing_id: int) -> None:
     try:
         await bot.send_message(
             ch,
