@@ -171,6 +171,8 @@ psql() { docker compose exec -T db psql -U postgres -d real_avto_konkurs -At -c 
 cars="$(psql "select status, count(*) from cars group by status order by status" | tr '\n' ' ')"
 [ -n "$cars" ] && ok "mashinalar: ${cars}" || note "mashinalar jadvali bo'sh"
 ok "leadlar: $(psql 'select count(*) from leads' || echo '?'), foydalanuvchilar: $(psql 'select count(*) from users' || echo '?')"
+ig="$(psql "select coalesce((select left(value::json->>'since', 16) || ' · postlar: ' || (select count(*) from json_object_keys(value::json->'counts')) || ' · kutilmoqda: ' || json_array_length(value::json->'pending') from app_meta where key = 'ig_poll_state'), 'yo''q')")"
+ok "Instagram tekshiruvi: holat ${ig:-?} · javob berilgan kommentlar: $(psql 'select count(*) from instagram_comments' || echo 0)"
 
 # --- Bot log ----------------------------------------------------------------------------------
 head_ "Bot logi (oxirgi 1 soat)"
