@@ -175,10 +175,18 @@ class MakePoller:
         if not self.bridge._authorized(request):
             return web.json_response({"error": "unauthorized"}, status=401)
         try:
-            payload = {k: str(v) for k, v in (await request.post()).items()}
+            if request.content_type == "application/json":
+                payload = {k: str(v) for k, v in (await request.json()).items()}
+            else:
+                payload = {k: str(v) for k, v in (await request.post()).items()}
         except ValueError:
             return web.json_response({"error": "form kerak"}, status=400)
         stage = payload.get("stage", "")
+        if stage not in ("media", "comments"):
+            logger.info(
+                "IG poll: noma'lum so'rov (content-type=%s, encoding=%s, maydonlar=%s)",
+                request.content_type, request.headers.get("Content-Encoding", ""), sorted(payload)[:10],
+            )
         try:
             if stage == "media":
                 return web.json_response(await self.media(payload))
