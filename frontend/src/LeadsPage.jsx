@@ -51,8 +51,8 @@ function StatusBadge({ status }) {
   return <span className={`badge ${s.cls}`}>{s.label}</span>;
 }
 
-export default function LeadsPage({ api, canEdit, query }) {
-  const [filter, setFilter] = useState("open");
+export default function LeadsPage({ api, canEdit, query, initialFilter }) {
+  const [filter, setFilter] = useState(initialFilter ?? "open");
   const [page, setPage] = useState(1);
   const [list, setList] = useState({ items: [], total: 0, limit: 50 });
   const [stats, setStats] = useState(null);

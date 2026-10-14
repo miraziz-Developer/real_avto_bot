@@ -16,6 +16,40 @@ const TABS = [
   { id: "contest", label: "Konkurs", ic: "★" },
 ];
 
+// Telefon (Telegram Mini App): pastki menyu — eng ko'p ishlatiladigan bo'limlar, qolgani «Ko'proq» ichida
+const MOBILE_NAV = [
+  { id: "dashboard", label: "Bosh", ic: "🏠" },
+  { id: "cars", label: "Mashinalar", ic: "🚗" },
+  { id: "leads", label: "Mijozlar", ic: "💬" },
+  { id: "wishlists", label: "Qidiruv", ic: "🔔" },
+  { id: "more", label: "Ko'proq", ic: "☰" },
+];
+const MORE_TABS = ["clients", "listings", "contest"];
+
+const tg = typeof window !== "undefined" ? window.Telegram?.WebApp : undefined;
+
+function haptic(kind = "light") {
+  try {
+    tg?.HapticFeedback?.impactOccurred(kind);
+  } catch {
+    /* Telegram'dan tashqarida — e'tiborsiz */
+  }
+}
+
+// Telefonda jadval qatorlari kartochka bo'lib ko'rinadi: har katakka ustun nomi (data-label) yoziladi
+function labelTables(root) {
+  root.querySelectorAll("table.data").forEach((t) => {
+    const heads = [...t.querySelectorAll("thead th")].map((th) => th.textContent.trim());
+    if (!heads.length) return;
+    t.querySelectorAll("tbody tr").forEach((tr) => {
+      [...tr.children].forEach((td, i) => {
+        const label = td.colSpan > 1 ? "" : heads[i] ?? "";
+        if (td.getAttribute("data-label") !== label) td.setAttribute("data-label", label);
+      });
+    });
+  });
+}
+
 const BUYOUT_LABELS = {
   offered: "taklif yuborildi",
   accepted: "sotuvchi rozi",
@@ -62,7 +96,10 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [listingFilter, setListingFilter] = useState("");
 
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  // Bosh sahifadagi kartochkadan bo'limga o'tish: qaysi filtr bilan ochilsin
+  const [jump, setJump] = useState({ cars: "active", leads: "open" });
 
   // pagination state per tab
   const [pages, setPages] = useState({
@@ -107,39 +144,42 @@ export default function App() {
 
   const load = useCallback(async () => {
     if (!token) return;
-    try {
-      const [stats, contests] = await Promise.all([
-        api.get("/stats"),
-        api.get("/contest/history"),
-      ]);
-
-      const [clientsData, listingsData, wishlistsData, participantsData] = await Promise.all([
-        loadPaginated("clients", "/clients", { page: pages.clients.page, limit: pages.clients.limit }),
-        loadPaginated("listings", "/listings", { page: pages.listings.page, limit: pages.listings.limit, filterKey: "status", filterValue: listingFilter }),
-        loadPaginated("wishlists", "/wishlists", { page: pages.wishlists.page, limit: pages.wishlists.limit }),
-        loadPaginated("participants", "/contest-participants", { page: pages.participants.page, limit: pages.participants.limit }),
-      ]);
-
-      setState({ stats: stats.data, contests: contests.data });
-      setPages((prev) => ({
-        clients: { ...prev.clients, items: clientsData.items || [], total: clientsData.total ?? 0 },
-        listings: { ...prev.listings, items: listingsData.items || [], total: listingsData.total ?? 0 },
-        wishlists: { ...prev.wishlists, items: wishlistsData.items || [], total: wishlistsData.total ?? 0 },
-        participants: { ...prev.participants, items: participantsData.items || [], total: participantsData.total ?? 0 },
-      }));
-      setError("");
-    } catch (e) {
-      const status = e?.response?.status;
-      if (status === 401) {
-        localStorage.removeItem("crm_token");
-        localStorage.removeItem("crm_user");
-        setToken("");
-        setUser(null);
-        setError("Sessiya tugadi — qayta kiring.");
-        return;
-      }
-      setError(e?.message || "Server xatosi.");
+    const calls = [
+      api.get("/stats"),
+      api.get("/contest/history"),
+      loadPaginated("clients", "/clients", { page: pages.clients.page, limit: pages.clients.limit }),
+      loadPaginated("listings", "/listings", { page: pages.listings.page, limit: pages.listings.limit, filterKey: "status", filterValue: listingFilter }),
+      loadPaginated("wishlists", "/wishlists", { page: pages.wishlists.page, limit: pages.wishlists.limit }),
+      loadPaginated("participants", "/contest-participants", { page: pages.participants.page, limit: pages.participants.limit }),
+    ];
+    // Bitta so'rov xato bersa ham qolganlari ko'rinadi (avval butun sahifa yangilanmay qolardi)
+    const res = await Promise.allSettled(calls);
+    const unauthorized = res.some((r) => r.status === "rejected" && r.reason?.response?.status === 401);
+    if (unauthorized) {
+      localStorage.removeItem("crm_token");
+      localStorage.removeItem("crm_user");
+      setToken("");
+      setUser(null);
+      setError("Sessiya tugadi — qayta kiring.");
+      return;
     }
+    const val = (i, fallback) => (res[i].status === "fulfilled" ? res[i].value : fallback);
+    const stats = val(0, null);
+    const contests = val(1, null);
+    setState((prev) => ({
+      stats: stats ? stats.data : prev.stats,
+      contests: contests ? contests.data : prev.contests,
+    }));
+    setPages((prev) => {
+      const next = { ...prev };
+      ["clients", "listings", "wishlists", "participants"].forEach((key, j) => {
+        const d = val(j + 2, null);
+        if (d) next[key] = { ...prev[key], items: d.items || [], total: d.total ?? 0 };
+      });
+      return next;
+    });
+    const failed = res.filter((r) => r.status === "rejected").length;
+    setError(failed === res.length ? "Server bilan aloqa yo'q — internetni tekshiring." : "");
   }, [token, api, loadPaginated, pages.clients.page, pages.listings.page, pages.wishlists.page, pages.participants.page, pages.clients.limit, pages.listings.limit, pages.wishlists.limit, pages.participants.limit, listingFilter]);
 
   useEffect(() => {
@@ -175,6 +215,61 @@ export default function App() {
   const setPage = useCallback((key, page) => {
     setPages((prev) => ({ ...prev, [key]: { ...prev[key], page } }));
   }, []);
+
+  // Telegram Mini App: mavzu ranglari, «orqaga» tugmasi ochiq oynani yopadi
+  useEffect(() => {
+    if (!tg?.initData) return;
+    try {
+      tg.setHeaderColor?.("#0c1222");
+      tg.setBackgroundColor?.("#0c1222");
+      tg.disableVerticalSwipes?.();
+    } catch {
+      /* eski Telegram versiyasi */
+    }
+    const onBack = () => {
+      const sheets = document.querySelectorAll(".sheetBackdrop");
+      const last = sheets[sheets.length - 1];
+      if (last) last.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    };
+    tg.BackButton?.onClick(onBack);
+    const obs = new MutationObserver(() => {
+      if (document.querySelector(".sheetBackdrop")) tg.BackButton?.show();
+      else tg.BackButton?.hide();
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    return () => {
+      obs.disconnect();
+      tg.BackButton?.offClick(onBack);
+    };
+  }, []);
+
+  useEffect(() => {
+    const root = document.getElementById("root");
+    if (!root) return undefined;
+    labelTables(root);
+    const obs = new MutationObserver(() => labelTables(root));
+    obs.observe(root, { childList: true, subtree: true });
+    return () => obs.disconnect();
+  }, []);
+
+  function goTo(id, filters) {
+    haptic();
+    if (id === "more") {
+      setMoreOpen(true);
+      return;
+    }
+    if (filters) setJump((j) => ({ ...j, ...filters }));
+    setTab(id);
+    setMoreOpen(false);
+    window.scrollTo({ top: 0 });
+  }
+
+  function logout() {
+    localStorage.removeItem("crm_token");
+    localStorage.removeItem("crm_user");
+    setToken("");
+    setUser(null);
+  }
 
   // Telegram Mini App ichida ochilgan bo'lsa — admin parolsiz kiradi (initData imzosi backendda tekshiriladi)
   useEffect(() => {
@@ -278,23 +373,17 @@ export default function App() {
     );
   }
 
+  const activeNav = MORE_TABS.includes(tab) ? "more" : tab;
+
   return (
     <div className="layout">
-      <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
+      <aside className="sidebar">
         <div className="brand">
           <div className="logo">RA</div>
           <div>
             <strong>Real Avto</strong>
-            <span>CRM · Premium</span>
+            <span>CRM</span>
           </div>
-          <button
-            type="button"
-            className="hamburger ghost"
-            aria-label="Menyu"
-            onClick={() => setMobileOpen((v) => !v)}
-          >
-            ☰
-          </button>
         </div>
         <nav>
           {TABS.map((t) => (
@@ -302,57 +391,55 @@ export default function App() {
               key={t.id}
               type="button"
               className={`navBtn ${tab === t.id ? "active" : ""}`}
-              onClick={() => {
-                setTab(t.id);
-                setMobileOpen(false);
-              }}
+              onClick={() => goTo(t.id)}
             >
               <span className="ic">{t.ic}</span>
               {t.label}
             </button>
           ))}
         </nav>
+        <button type="button" className="ghost logoutBtn" onClick={logout}>Chiqish</button>
       </aside>
 
       <main className="content">
         <header className="topbar">
-          <div>
+          <div className="titleBlock">
             <h2>{TABS.find((t) => t.id === tab)?.label}</h2>
             <p className="role">
-              Rol: <b>{user?.role}</b> · {user?.username}
+              {user?.role === "admin" ? "Admin" : user?.role} · {user?.username}
             </p>
           </div>
           <div className="topActions">
-            <input
-              className="searchInput"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && load()}
-              placeholder="Qidiruv: ism, telefon, marka, status… (Enter)"
-            />
-            <button type="button" className="ghost" onClick={load}>
-              Yangilash
-            </button>
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => {
-                localStorage.removeItem("crm_token");
-                localStorage.removeItem("crm_user");
-                setToken("");
-                setUser(null);
-              }}
-            >
-              Chiqish
+            {tab !== "dashboard" && (
+              <input
+                className={`searchInput ${searchOpen ? "open" : ""}`}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && load()}
+                placeholder="Qidiruv: ism, telefon, marka… (Enter)"
+                type="search"
+              />
+            )}
+            {tab !== "dashboard" && (
+              <button type="button" className="ghost iconBtn mobileOnly" aria-label="Qidiruv" onClick={() => setSearchOpen((v) => !v)}>
+                🔍
+              </button>
+            )}
+            <button type="button" className="ghost iconBtn" aria-label="Yangilash" onClick={() => { haptic(); load(); }}>
+              ↻<span className="desktopOnly"> Yangilash</span>
             </button>
           </div>
         </header>
 
         {tab === "dashboard" && (
-          <Dashboard stats={state.stats} wishlists={pages.wishlists.items} listings={pages.listings.items} />
+          <Dashboard api={api} stats={state.stats} wishlists={pages.wishlists.items} onGo={goTo} />
         )}
-        {tab === "leads" && <LeadsPage api={api} canEdit={canEdit} query={query} />}
-        {tab === "cars" && <CarsPage api={api} canEdit={canEdit} query={query} />}
+        {tab === "leads" && (
+          <LeadsPage key={`leads-${jump.leads}`} api={api} canEdit={canEdit} query={query} initialFilter={jump.leads} />
+        )}
+        {tab === "cars" && (
+          <CarsPage key={`cars-${jump.cars}`} api={api} canEdit={canEdit} query={query} initialFilter={jump.cars} />
+        )}
         {tab === "clients" && (
           <PaginatedTable
             title="Mijozlar"
@@ -420,6 +507,46 @@ export default function App() {
         {error && <p className="error">{error}</p>}
       </main>
 
+      <nav className="bottomNav" aria-label="Bo'limlar">
+        {MOBILE_NAV.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className={`bottomBtn ${activeNav === t.id ? "active" : ""}`}
+            onClick={() => goTo(t.id)}
+          >
+            <span className="bIc">{t.ic}</span>
+            <span className="bLbl">{t.label}</span>
+          </button>
+        ))}
+      </nav>
+
+      {moreOpen && (
+        <div className="sheetBackdrop" role="presentation" onClick={(e) => e.target === e.currentTarget && setMoreOpen(false)}>
+          <div className="sheet moreSheet" role="dialog" aria-modal="true">
+            <div className="sheetTop">
+              <h2 style={{ margin: 0, fontSize: "1.15rem" }}>Boshqa bo'limlar</h2>
+              <button type="button" className="ghost" onClick={() => setMoreOpen(false)}>Yopish</button>
+            </div>
+            <div className="sheetBody moreList">
+              {TABS.filter((t) => MORE_TABS.includes(t.id)).map((t) => (
+                <button key={t.id} type="button" className="moreItem" onClick={() => goTo(t.id)}>
+                  <span className="ic">{t.ic}</span>
+                  <span>{t.label}</span>
+                  <span className="chev">›</span>
+                </button>
+              ))}
+              <button type="button" className="moreItem danger" onClick={logout}>
+                <span className="ic">⎋</span>
+                <span>Chiqish</span>
+                <span className="chev">›</span>
+              </button>
+              <p className="role" style={{ marginTop: 14 }}>{user?.username}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {clientSheetId !== null && (
         <ClientSheet
           id={clientSheetId}
@@ -437,55 +564,127 @@ export default function App() {
   );
 }
 
-function Dashboard({ stats, wishlists, listings }) {
-  const cards = [
-    { k: "Mijozlar", v: stats?.clients, c: "c0" },
-    { k: "E'lon: moderatsiya", v: stats?.listingsPending, c: "c0" },
-    { k: "E'lon: kanalda", v: stats?.listingsApproved, c: "c2" },
-    { k: "E'lon: rad", v: stats?.listingsRejected, c: "c4" },
-    { k: "Faol qidiruv (wishlist)", v: stats?.wishlistsActive, c: "c1" },
-    { k: "Savol iplari (anonim chat)", v: stats?.listingThreads, c: "c3" },
-    { k: "Konkurs ishtirok", v: stats?.contestParticipants, c: "c3" },
-    { k: "Telegram foyd.", v: stats?.usersTg, c: "c0" },
+function Dashboard({ api, stats, wishlists, onGo }) {
+  const [cars, setCars] = useState(null);
+  const [leads, setLeads] = useState(null);
+  const [recent, setRecent] = useState([]);
+  const [waiting, setWaiting] = useState([]);
+
+  useEffect(() => {
+    let alive = true;
+    const pull = async () => {
+      const r = await Promise.allSettled([
+        api.get("/cars/stats"),
+        api.get("/leads/stats"),
+        api.get("/cars", { params: { status: "active", page: 1, limit: 6 } }),
+        api.get("/leads", { params: { status: "handed_off", page: 1, limit: 5 } }),
+      ]);
+      if (!alive) return;
+      if (r[0].status === "fulfilled") setCars(r[0].value.data);
+      if (r[1].status === "fulfilled") setLeads(r[1].value.data);
+      if (r[2].status === "fulfilled") setRecent(r[2].value.data.items || []);
+      if (r[3].status === "fulfilled") setWaiting(r[3].value.data.items || []);
+    };
+    pull();
+    const t = setInterval(pull, 30000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [api]);
+
+  // Statistikada 0 ta holat kaliti bo'lmaydi — yuklangan bo'lsa 0, yuklanmagan bo'lsa «—»
+  const by = cars ? { active: 0, reserved: 0, review: 0, sold: 0, ...cars.byStatus } : {};
+  const lb = leads?.byStatus || {};
+  const kpis = [
+    { k: "Sotuvda", v: by.active ?? "—", c: "c2", go: () => onGo("cars", { cars: "active" }) },
+    { k: "Bron", v: by.reserved ?? "—", c: "c3", go: () => onGo("cars", { cars: "reserved" }) },
+    { k: `Sotilgan (${cars?.days ?? 30} kun)`, v: cars?.soldCount ?? "—", c: "c4", go: () => onGo("cars", { cars: "sold" }) },
+    { k: "Tekshiruv kutmoqda", v: by.review ?? "—", c: "c0", go: () => onGo("cars", { cars: "review" }), alert: (by.review || 0) > 0 },
+    { k: "Menejer kutmoqda", v: leads?.waitingForManager ?? "—", c: "c3", go: () => onGo("leads", { leads: "handed_off" }), alert: (leads?.waitingForManager || 0) > 0 },
+    { k: "Ochiq mijozlar", v: leads ? (lb.active || 0) + (lb.handed_off || 0) + (lb.in_progress || 0) : "—", c: "c0", go: () => onGo("leads", { leads: "open" }) },
+    { k: "Konversiya", v: leads?.conversionPct == null ? "—" : `${leads.conversionPct}%`, c: "c2", go: () => onGo("leads", { leads: "won" }) },
+    { k: "Faol qidiruvlar", v: stats?.wishlistsActive ?? "—", c: "c1", go: () => onGo("wishlists") },
   ];
-  const recentWishlists = [...wishlists].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 8);
-  const recentListings = [...listings].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 8);
+  const recentWishlists = [...wishlists].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
+
   return (
-    <div>
-      <div className="gridStats">
-        {cards.map((x) => (
-          <div key={x.k} className={`statCard ${x.c}`}>
+    <div className="dash">
+      <div className="gridStats kpis">
+        {kpis.map((x) => (
+          <button key={x.k} type="button" className={`statCard ${x.c} ${x.alert ? "alert" : ""}`} onClick={x.go}>
             <div className="label">{x.k}</div>
-            <div className="val">{x.v ?? "—"}</div>
-          </div>
+            <div className="val">{x.v}</div>
+          </button>
         ))}
       </div>
+
       <div className="split2">
         <div className="panel">
-          <div className="panelHead"><h3>So‘nggi qidiruvlar (bot)</h3></div>
-          <MiniTable
-            headers={["ID", "Mijoz", "Mashina", "Byudjet", "Faol"]}
-            rows={recentWishlists.map((r) => [
-              r.id,
-              r.client_name || "—",
-              `${r.brand || ""} ${r.model || ""}`.trim() || "—",
-              `${r.budget_min != null ? formatUsd(r.budget_min) : "—"} … ${formatUsd(r.budget_max)}`,
-              r.is_active ? "ha" : "yo‘q",
-            ])}
-          />
+          <div className="panelHead">
+            <h3>🔥 Menejer kutayotgan mijozlar</h3>
+            <button type="button" className="linkBtn" onClick={() => onGo("leads", { leads: "handed_off" })}>Hammasi ›</button>
+          </div>
+          {waiting.length === 0 ? (
+            <p className="empty">Hozir hech kim kutmayapti 👌</p>
+          ) : (
+            <div className="list">
+              {waiting.map((l) => (
+                <button key={l.id} type="button" className="listItem" onClick={() => onGo("leads", { leads: "handed_off" })}>
+                  <div className="liMain">
+                    <strong>{l.name || "Mijoz"}</strong>
+                    <span>{l.car_model ? [l.car_brand, l.car_model, l.car_year].filter(Boolean).join(" ") : l.wants || "—"}</span>
+                  </div>
+                  <span className="liSide">{l.phone || (l.username ? `@${l.username}` : "")}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+
         <div className="panel">
-          <div className="panelHead"><h3>So‘nggi e’lonlar (Telegram)</h3></div>
-          <MiniTable
-            headers={["ID", "Mashina", "Narx", "Holat"]}
-            rows={recentListings.map((r) => [
-              r.id,
-              `${r.brand || ""} ${r.model || ""}`.trim() || "—",
-              formatUsd(r.price_ask_usd),
-              statusBadge(r.status),
-            ])}
-          />
+          <div className="panelHead">
+            <h3>🚗 Oxirgi qo'shilgan mashinalar</h3>
+            <button type="button" className="linkBtn" onClick={() => onGo("cars", { cars: "active" })}>Hammasi ›</button>
+          </div>
+          {recent.length === 0 ? (
+            <p className="empty">Sotuvda mashina yo'q</p>
+          ) : (
+            <div className="list">
+              {recent.map((c) => (
+                <button key={c.id} type="button" className="listItem" onClick={() => onGo("cars", { cars: "active" })}>
+                  <div className="liMain">
+                    <strong>{[c.brand, c.model, c.year].filter(Boolean).join(" ") || `#${c.id}`}</strong>
+                    <span>{c.mileage_km != null ? `${Number(c.mileage_km).toLocaleString("ru-RU")} km` : "probeg —"}</span>
+                  </div>
+                  <span className="liSide mono">{formatUsd(c.price_usd)}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+      </div>
+
+      <div className="panel">
+        <div className="panelHead">
+          <h3>🔔 So'nggi qidiruvlar (mijoz kutayotgan mashinalar)</h3>
+          <button type="button" className="linkBtn" onClick={() => onGo("wishlists")}>Hammasi ›</button>
+        </div>
+        {recentWishlists.length === 0 ? (
+          <p className="empty">Qidiruv yo'q</p>
+        ) : (
+          <div className="list">
+            {recentWishlists.map((r) => (
+              <div key={r.id} className="listItem static">
+                <div className="liMain">
+                  <strong>{`${r.brand || ""} ${r.model || ""}`.trim() || "—"}</strong>
+                  <span>{r.client_name || "—"}</span>
+                </div>
+                <span className="liSide mono">≤ {formatUsd(r.budget_max)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -75,8 +75,8 @@ function eventText(e) {
   return keys.length ? keys.join(", ") : "";
 }
 
-export default function CarsPage({ api, canEdit, query }) {
-  const [filter, setFilter] = useState("active");
+export default function CarsPage({ api, canEdit, query, initialFilter }) {
+  const [filter, setFilter] = useState(initialFilter ?? "active");
   const [page, setPage] = useState(1);
   const [list, setList] = useState({ items: [], total: 0, limit: 50 });
   const [stats, setStats] = useState(null);
