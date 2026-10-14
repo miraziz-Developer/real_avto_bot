@@ -56,6 +56,7 @@ from bot.instagram.client import IGError, InstagramClient, split_text
 from bot.services.car_cards import notify_admins_text
 from bot.services.car_parser import detect_brand_model, normalize_text
 from bot.services.comment_ai import CommentDecision, decide_comment_reply, public_post_text
+from bot.services.emoji_reply import emoji_reply, is_emoji_only
 from bot.services.lead_cards import lead_score
 from bot.utils.currency import fmt_price
 
@@ -217,6 +218,8 @@ class ManyChatBridge:
         self.api = api or ManyChatAPI(settings.manychat_api_key)
         self._locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task] = set()
+        # Emoji-kommentga bitta odamga bitta postda bir marta javob (spam bo'lmasin)
+        self._emoji_answered: set[tuple[str, str]] = set()
 
     def _lock(self, key: str) -> asyncio.Lock:
         if len(self._locks) > 5000:
@@ -305,6 +308,8 @@ class ManyChatBridge:
         own = (settings.instagram_username or "").lstrip("@").lower()
         if own and username.lower() == own:
             return result  # o'zimizning javobimiz (Make kommentlarni, o'zimiznikini ham, qayta yuboradi)
+        if is_comment and is_emoji_only(text):
+            return await self._emoji_answer(payload, sub, text, username, result)
         # Make.com: Direct yuborilmaydi ("dm": false) — javob to'liq komment ostida bo'ladi
         dm_ok = _field(payload, "dm", limit=10).lower() not in ("false", "0", "no")
         media_url = _field(payload, "media_url", limit=2000)
@@ -381,6 +386,26 @@ class ManyChatBridge:
             "komment" if is_comment else "xabar", sub, result["car_id"], match.how,
             f"{decision.category}/{decision.action}" if decision else "",
         )
+        return result
+
+    async def _emoji_answer(self, payload: dict, sub: str, text: str, username: str, result: dict) -> dict:
+        """«❤️», «🔥», «😂», «👎» — reaksiyaga mos qisqa ochiq javob (AI'siz, adminlarga xabarsiz)."""
+        post_info = await self._find_post(payload, is_comment=True, username=username, text=text)
+        ref = post_ref(post_info["media_id"], post_info["permalink"])
+        key = (sub, ref or "")
+        if key in self._emoji_answered:
+            return result
+        if len(self._emoji_answered) > 20000:
+            self._emoji_answered.clear()
+        self._emoji_answered.add(key)
+        async with self.session_factory() as session:
+            match = await resolve_car(
+                CarRepository(session), ref=ref, caption=post_info["caption"] or None,
+                permalink=post_info["permalink"] or None, text=None,
+            )
+            await session.commit()
+        result.update(public_reply=emoji_reply(text, match.car), car_id=match.car.id if match.car else None)
+        logger.info("Instagram emoji-komment: sub=%s car=%s", sub, result["car_id"])
         return result
 
     def _spawn(self, coro) -> None:

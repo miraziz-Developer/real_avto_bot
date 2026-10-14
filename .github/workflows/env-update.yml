@@ -53,7 +53,7 @@ jobs:
           fi
           args=()
           for pair in $SETTINGS; do
-            [[ "$pair" =~ ^[A-Z_]+=[A-Za-z0-9@_.:/+-]*$ ]] || { echo "::error::Bad pair: $pair"; exit 1; }
+            [[ "$pair" =~ ^[A-Z_]+=[A-Za-z0-9@_.:/+,-]*$ ]] || { echo "::error::Bad pair: $pair"; exit 1; }
             args+=("$pair")
           done
           [ "$ARCHIVE" = "true" ] && args+=("--archive-old-channel")

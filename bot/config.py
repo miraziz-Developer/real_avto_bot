@@ -48,8 +48,16 @@ _SALES_PHONE_DEFAULT = "+998 90 123 45 67"
 
 
 def _sales_phone() -> str:
-    """Wishlist / savdo: .env dagi matn (bir nechta raqam vergul/nuqta-vergul/| bilan)."""
-    return (os.getenv("SALES_PHONE", "") or "").strip() or _SALES_PHONE_DEFAULT
+    """Wishlist / savdo: .env dagi raqam(lar) — bir nechtasi vergul bilan, o'qishga qulay ko'rinishda."""
+    return ", ".join(sales_phone_entries())
+
+
+def _pretty_phone(phone: str) -> str:
+    """«+998974337608» → «+998 97 433 76 08» (.env da bo'shliqsiz yoziladi)."""
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 12 and digits.startswith("998"):
+        return f"+998 {digits[3:5]} {digits[5:8]} {digits[8:10]} {digits[10:12]}"
+    return phone
 
 
 def sales_phone_entries() -> list[str]:
@@ -58,7 +66,7 @@ def sales_phone_entries() -> list[str]:
     if not raw:
         return [_SALES_PHONE_DEFAULT]
     parts = re.split(r"\s*[,;|]\s*|\n+", raw)
-    out = [p.strip() for p in parts if p.strip()]
+    out = [_pretty_phone(p.strip()) for p in parts if p.strip()]
     return out if out else [_SALES_PHONE_DEFAULT]
 
 

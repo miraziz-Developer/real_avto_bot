@@ -402,3 +402,30 @@ async def test_username_only_comment_gets_stable_key(factory):
         form = {"user_id": "", "ig_username": "aziz_ig", "event": "comment", "dm": "false", "text": "gentra narxi?"}
         body = await (await client.post("/webhooks/make", data=form, headers=AUTH)).json()
     assert body["car_id"] == 4
+
+
+def test_emoji_only_comments_are_detected_and_answered_by_kind():
+    import random
+
+    from bot.services.emoji_reply import emoji_reply, is_emoji_only, reaction_kind
+
+    assert is_emoji_only("❤️") and is_emoji_only("🔥🔥🔥") and is_emoji_only(" 👍🏻 ") and is_emoji_only("😂😂")
+    assert not is_emoji_only("zo'r 🔥") and not is_emoji_only("5") and not is_emoji_only("") and not is_emoji_only("?")
+    assert reaction_kind("😍") == "love" and reaction_kind("👍🏻") == "fire" and reaction_kind("😂") == "funny"
+    assert reaction_kind("😡👎") == "bad" and reaction_kind("😢") == "sad" and reaction_kind("😱") == "wow"
+    rnd = random.Random(1)
+    assert "Fikringiz" in emoji_reply("👎", rnd=rnd) or "fikringiz" in emoji_reply("👎", rnd=rnd)
+    assert emoji_reply("❤️", rnd=rnd).startswith("Rahmat")
+
+
+async def test_emoji_comment_gets_short_reply_once_without_ai(factory):
+    async with TestClient(TestServer(app_for(bridge := ManyChatBridge(FakeBot(), factory)))) as client:
+        base = {"user_id": "555", "event": "comment", "dm": "false", "media_id": "1796", "caption": "Gentra ID: 4"}
+        r = await (await client.post("/webhooks/make", json={**base, "text": "❤️🔥"}, headers=AUTH)).json()
+        assert r["car_id"] == 4 and r["public_reply"] and r["reply"] == ""
+        assert "sotuvda" in r["public_reply"] or "Ko'rishga" in r["public_reply"] or "narxi" in r["public_reply"]
+        again = await (await client.post("/webhooks/make", json={**base, "text": "🔥"}, headers=AUTH)).json()
+        assert again["public_reply"] == ""  # bir odamga bir postda bir marta
+        bad = await (await client.post("/webhooks/make", json={**base, "user_id": "556", "text": "👎"}, headers=AUTH)).json()
+        assert "ikr" in bad["public_reply"].lower() or "🙏" in bad["public_reply"]
+    assert not bridge.bot.sent  # adminlarga xabar yo'q
