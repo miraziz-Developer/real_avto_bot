@@ -494,3 +494,12 @@ async def test_make_poll_media_then_comments_once(factory):
         object.__setattr__(config.settings, "instagram_username", "x")
     r = await bridge.answer({"user_id": "12", "event": "comment", "dm": "false", "text": "gentra narxi qancha?", "comment_id": "c2"})
     assert r["public_reply"] == ""  # webhook orqali kelsa ham — allaqachon javob berilgan
+
+
+async def test_profanity_comment_gets_no_public_reply_but_admins_know(factory):
+    bot = FakeBot()
+    async with TestClient(TestServer(app_for(ManyChatBridge(bot, factory)))) as client:
+        body = {"user_id": "901", "event": "comment", "dm": "false", "text": "gentra buncha qimmat blee gandon?", "ig_username": "troll"}
+        r = await (await client.post("/webhooks/make", json=body, headers=AUTH)).json()
+    assert r["public_reply"] == "" and r["reply"] == ""
+    assert any("haqorat" in t and "@troll" in t for _, t, _ in bot.sent)

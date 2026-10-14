@@ -58,7 +58,7 @@ from bot.instagram.car_match import CarMatch, post_ref, resolve_car
 from bot.instagram.client import IGError, InstagramClient, split_text
 from bot.services.car_cards import notify_admins_text
 from bot.services.car_parser import detect_brand_model, normalize_text
-from bot.services.comment_ai import CommentDecision, decide_comment_reply, public_post_text
+from bot.services.comment_ai import CommentDecision, decide_comment_reply, has_profanity, public_post_text
 from bot.services.emoji_reply import emoji_reply, is_emoji_only
 from bot.services.lead_cards import lead_score
 from bot.utils.currency import fmt_price
@@ -331,6 +331,12 @@ class ManyChatBridge:
         comment_id = _field(payload, "comment_id", limit=64)
         if is_comment and comment_id and not await self._claim_comment(comment_id, _field(payload, "media_id", limit=64)):
             return result  # bu kommentga allaqachon javob berilgan (webhook va davriy tekshiruv ikkalasi ham olib keladi)
+        if is_comment and has_profanity(text):
+            # So'kinish — ochiq javob yo'q (AI ishlamasa ham), adminlarga xabar
+            toxic = CommentDecision(action="ignore", category="toxic", notify_admin=True, admin_note="javob yozilmadi")
+            await self._notify_admins(toxic, text, who=f"@{username}" if username else (name or sub), car=None,
+                                      permalink=_field(payload, "post_url", "permalink", limit=300))
+            return result
         if is_comment and is_emoji_only(text):
             return await self._emoji_answer(payload, sub, text, username, result)
         # Make.com: Direct yuborilmaydi ("dm": false) — javob to'liq komment ostida bo'ladi

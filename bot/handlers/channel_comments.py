@@ -28,7 +28,7 @@ from bot.handlers.channel_watch import channel_post_by_content, is_main_channel
 from bot.services.business_info import sell_link
 from bot.services.car_cards import notify_admins_text
 from bot.services.car_parser import detect_brand_model, normalize_text
-from bot.services.comment_ai import CommentDecision, decide_comment_reply, public_post_text
+from bot.services.comment_ai import CommentDecision, decide_comment_reply, has_profanity, public_post_text
 from bot.utils.currency import fmt_price
 
 logger = logging.getLogger(__name__)
@@ -373,6 +373,11 @@ async def _handle_group_text(message: Message, bot: Bot, cars: CarRepository, bo
     if post is None and not await _is_our_group(message, cars):
         logger.info("Guruh %s bizning muhokama guruhimiz emas — xabar o'tkazildi", message.chat.id)
         return  # bot boshqa guruhga qo'shilgan bo'lsa — aralashmaymiz
+    if has_profanity(text):
+        # So'kinishga ochiq guruhda javob yozilmaydi (AI'siz ham) — adminlar ko'radi, kerak bo'lsa o'chiradi
+        car = await cars.find_by_channel_message(*post) if post else None
+        await _notify_admins_about(bot, message, car, "⚠️ <b>Kommentda haqorat / so'kinish</b>", text, "javob yozilmadi")
+        return
     if worth_reading(text) and await _ai_handle(message, bot, cars, bot_username, text, post=post):
         return
     await _template_handle(message, bot, cars, bot_username, text, post)

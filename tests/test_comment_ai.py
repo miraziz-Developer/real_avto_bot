@@ -95,3 +95,20 @@ def test_availability_freshness_and_unknown_post_hints():
     assert "mashina deb taxmin qilma" in payload["eslatma"]
     prompt = build_system_prompt()
     assert "uy, yer" in prompt and "biz faqat mashina sotamiz" in prompt and "oxirgi_tasdiq_kun_oldin" in prompt
+
+
+def test_profanity_is_never_answered_publicly():
+    import asyncio
+
+    from bot.services.comment_ai import decide_comment_reply, has_profanity
+
+    assert has_profanity("buncha qimmat blee gandon") and has_profanity("сука дорого") and has_profanity("Onangni")
+    for ok in ("qimmat-ku", "narxi qancha", "sikl", "blank", "oblast", "Toshkent"):
+        assert not has_profanity(ok)
+
+    class NoAI:
+        async def chat_json(self, *a, **kw):  # so'kinishda AI chaqirilmaydi (token tejaladi)
+            raise AssertionError("AI chaqirilmasligi kerak")
+
+    d = asyncio.run(decide_comment_reply(NoAI(), text="buncha qimmat blee gandon", author=None, car=None, other_cars=[]))
+    assert d.action == "ignore" and d.category == "toxic" and d.notify_admin

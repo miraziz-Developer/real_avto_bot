@@ -58,9 +58,10 @@ VAZIYATLAR:
   ha, sotib olamiz yoki e'lonini kanalga chiqaramiz — botdagi «E'lon berish» orqali yuborsin (tugma javob ostida
   bo'ladi). Narx va'da qilma.
 - Xarid niyati ("olaman", "ko'rsam bo'ladimi", "kredit bormi", raqam so'rash) → qisqa javob + menejer bog'lanishini ayt; buy_intent=true.
-- Salbiy fikr (qimmat, aldov, yomon xizmat, mashina nuqsoni haqida) → himoyalanma, bahslashma, ayblama. Xushmuomala,
-  hamdardlik bilan javob ber, faktni (bo'lsa) tinch tushuntir, muammoni botda yoki menejer bilan hal qilishni taklif qil.
-  notify_admin=true.
+- Salbiy fikr (qimmat, aldov, yomon xizmat, mashina nuqsoni haqida) → himoyalanma, bahslashma, ayblama, nasihat qilma.
+  1–2 gap, xotirjam va hurmat bilan: faktni (bo'lsa) tinch tushuntir, muammoni menejer bilan hal qilishni taklif qil.
+  notify_admin=true. Masalan "qimmat-ku" → "Narx mashina holati va bozorga qarab qo'yilgan. Ko'rib chiqing — narx bo'yicha
+  menejerimiz bilan gaplashsangiz bo'ladi: <telefon>". Chegirma va'da qilma, raqibni yomonlama.
 - Haqorat, so'kinish, provokatsiya (toxic) yoki reklama/spam → JAVOB BERMA (action=ignore). toxic bo'lsa notify_admin=true.
 - Maqtov ("zo'r", "👍", "omad") → odatda ignore (guruhni to'ldirmaslik uchun).
 - Mavzudan tashqari oddiy suhbat (salon/mashinalarga aloqasi yo'q) → ignore.
@@ -136,6 +137,21 @@ def public_post_text(raw_text: str | None) -> str:
         if ln.strip() and not ln.lstrip().startswith(("[Ovoz]", "[Videoda", "[Video]"))
     ]
     return "\n".join(lines).strip()
+
+
+# So'kinish/haqorat (o'zbek, rus, translit) — AI'gacha ushlanadi: ochiq javob yo'q, adminga xabar, token sarflanmaydi
+PROFANITY_RE = re.compile(
+    r"(?<![a-zа-яё])(?:gandon|gondon|blya\w*|bl[ey]+a?t\w*|bleee*|blee|suka|suqa|pid[ao]r\w*|xuy\w*|huy\w*|"
+    r"pizd\w*|eba[lnt]\w*|yeban\w*|mudak\w*|dolbo\w*|dalbay?ob\w*|dolbay?ob\w*|jalab\w*|qanjiq\w*|"
+    r"onang(?:ni|di)\w*|sikay\w*|skay|sikib\w*|haromi\w*|"
+    r"гандон\w*|гондон\w*|бля\w*|сука|суки|пид[оа]р\w*|хуй\w*|хуе\w*|пизд\w*|еба[лнт]\w*|ёб\w*|мудак\w*|долбо\w*)"
+    r"(?![a-zа-яё])",
+    re.IGNORECASE,
+)
+
+
+def has_profanity(text: str | None) -> bool:
+    return bool(PROFANITY_RE.search(text or ""))
 
 
 # Instagram kommentlari: bir xil qoidalar, platformaga moslangan farqlar
@@ -278,6 +294,11 @@ async def decide_comment_reply(
     platform: str = "telegram",
 ) -> CommentDecision:
     """AI qarori. AIError (kalit yo'q, chegara tugagan, tarmoq) — chaqiruvchiga o'tadi."""
+    if has_profanity(text):
+        # Ochiq joyda so'kinishga javob yozilmaydi (trollni qizdirmaslik) — adminlar ko'radi, kerak bo'lsa o'chiradi
+        return CommentDecision(
+            action="ignore", category="toxic", notify_admin=True, admin_note="So'kinish/haqorat — javob yozilmadi"
+        )
     data = await ai.chat_json(
         build_system_prompt(bot_username=bot_username, platform=platform),
         build_user_payload(
