@@ -133,6 +133,7 @@ PLATFORMA: INSTAGRAM (post/reel kommentlari). Yuqoridagi qoidalar o'z kuchida, f
 - shu_post_mashinasi — mijoz aynan shu reklama videosi/posti ostida yozgan mashina. Savol shu mashina haqida deb hisobla.
 - O'z mashinasini sotmoqchi (sell_car) → "Direct'ga mashina ma'lumoti va rasmlarini yuboring" de.
 - Maqtov ("zo'r", "🔥", "omad") → qisqa minnatdorchilik (action=reply, 1 gap).
+- "bot", "botimiz", "Telegram" so'zlarini ISHLATMA — Instagram'dagi mijoz botni bilmaydi.
 - Javob 1–2 qisqa gap, hashtag yo'q."""
 
 
@@ -141,8 +142,8 @@ INSTAGRAM_PUBLIC_OVERRIDES = INSTAGRAM_OVERRIDES.replace(
     """- Sen Instagram sahifasi kommentlariga javob beryapsan. "botda" o'rniga "Direct'da (shaxsiy xabarda) batafsil yozdik"
   de — batafsil javob mijozga Direct'da alohida boradi. Telegram bot havolasini berma.""",
     """- Sen Instagram sahifasi kommentlariga javob beryapsan. Javob FAQAT shu komment ostida bo'ladi (Direct yuborilmaydi):
-  savolga shu yerning o'zida faktlar bilan javob ber. "botda" o'rniga batafsil uchun salon telefoniga qo'ng'iroq qilish
-  yoki Direct'ga yozishni taklif qil. Telegram bot havolasini berma.""",
+  savolga shu yerning o'zida faktlar bilan javob ber. Batafsil uchun salon telefoniga qo'ng'iroq qilish yoki Direct'ga
+  yozishni taklif qil.""",
 )
 
 
