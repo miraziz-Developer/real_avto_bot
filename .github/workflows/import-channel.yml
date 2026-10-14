@@ -1,0 +1,48 @@
+name: Import channel
+
+# Imports the channel history from its public web view without AI (scripts/import_public_channel.py).
+# Commit message "[import]" → report only; "[import-apply]" → writes to the database.
+# Extra arguments (days, fresh window, owner-confirmed sold posts) come from deploy/import-args.txt.
+on:
+  push:
+    branches: [main, claude/lucid-pascal-2zqc9d]
+
+jobs:
+  import:
+    if: contains(github.event.head_commit.message, '[import]') || contains(github.event.head_commit.message, '[import-apply]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST || '172.198.138.146' }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER || 'bozorliii' }}
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '/opt/real_avto_bot' }}
+      SSHPASS: ${{ secrets.DEPLOY_SSH_PASSWORD }}
+      APPLY: ${{ contains(github.event.head_commit.message, '[import-apply]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare login
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          if [ -n "$KEY" ]; then
+            printf '%s\n' "$KEY" > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
+            echo "SSH_CMD=ssh -i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" >> "$GITHUB_ENV"
+          else
+            sudo apt-get install -y -qq sshpass > /dev/null
+            echo "SSH_CMD=sshpass -e ssh -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no" >> "$GITHUB_ENV"
+          fi
+
+      - name: Import
+        run: |
+          args="$(grep -v '^#' deploy/import-args.txt | tr '\n' ' ')"
+          [[ "$args" =~ ^[-a-z0-9,\ ]*$ ]] || { echo "::error::Bad arguments: $args"; exit 1; }
+          [ "$APPLY" = "true" ] && args="$args --apply"
+          echo "Arguments: $args"
+          $SSH_CMD "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_DIR' && docker compose exec -T bot python - $args" < scripts/import_public_channel.py
+
+      - name: Clean up
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

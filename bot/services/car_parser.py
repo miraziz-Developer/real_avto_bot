@@ -166,6 +166,20 @@ _MODEL_ALIASES: dict[str, tuple[str, str]] = {
     "epika": ("Chevrolet", "Epica"),
     "эпика": ("Chevrolet", "Epica"),
     "tiida": ("Nissan", "Tiida"),
+    # Kanalda uchraydigan eski/yuk mashinalari
+    "vaz 2101": ("Lada", "2101"),
+    "vaz 21 01": ("Lada", "2101"),
+    "vaz 2106": ("Lada", "2106"),
+    "vaz 21 06": ("Lada", "2106"),
+    "vaz 2107": ("Lada", "2107"),
+    "vaz 21 07": ("Lada", "2107"),
+    "jiguli": ("Lada", "Jiguli"),
+    "jiguli 2101": ("Lada", "2101"),
+    "uvaz": ("UAZ", "UAZ"),
+    "uaz": ("UAZ", "UAZ"),
+    "bongo": ("Kia", "Bongo"),
+    "neksiya3": ("Chevrolet", "Nexia 3"),
+    "neksiya 3": ("Chevrolet", "Nexia 3"),
     "tida": ("Nissan", "Tiida"),
     "orlando": ("Chevrolet", "Orlando"),
     "tico": ("Daewoo", "Tico"),
@@ -195,6 +209,7 @@ _BRAND_ALIASES: dict[str, str] = {
     "skoda": "Skoda",
     "mazda": "Mazda",
     "jac": "JAC",
+    "jak": "JAC",
     "changan": "Changan",
     "jetour": "Jetour",
     "kaiyi": "Kaiyi",
@@ -282,8 +297,9 @@ def detect_brand_model(text: str) -> tuple[str | None, str | None]:
 # --- Raqamlar ---------------------------------------------------------------------
 
 _YEAR = r"(19[89]\d|20[0-4]\d)"
+# «yili: 1978» (UAZ, Jiguli) — belgilangan yil eskiroq bo'lishi ham mumkin
 _YEAR_LABELED_RE = re.compile(
-    r"(?:yili|yil|год|year|ishlab\s+chiqarilgan)\s*[:\-–]?\s*" + _YEAR + r"(?!\d)",
+    r"(?:yili|yil|год|year|ishlab\s+chiqarilgan)\s*[:\-–]?\s*(19[6-9]\d|20[0-4]\d)(?!\d)",
     re.IGNORECASE,
 )
 _YEAR_SUFFIX_RE = re.compile(r"(?<!\d)" + _YEAR + r"\s*-?\s*(?:yil|y\.|год|г\.)", re.IGNORECASE)
@@ -337,7 +353,7 @@ def parse_year(text: str) -> int | None:
         m = rx.search(text)
         if m:
             y = int(m.group(1))
-            if 1980 <= y <= max_year:
+            if (1960 if rx is _YEAR_LABELED_RE else 1980) <= y <= max_year:
                 return y
     return None
 

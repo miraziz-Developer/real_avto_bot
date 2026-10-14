@@ -1,0 +1,2 @@
+# Arguments for scripts/import_public_channel.py (see the Import channel workflow)
+--days 60 --fresh 14

@@ -31,6 +31,19 @@ ARCHIVE=0
 OLD_CHANNEL="$(get_env CHANNEL_ID)"
 for arg in "$@"; do
     if [ "$arg" = "--archive-old-channel" ]; then ARCHIVE=1; continue; fi
+    if [[ "$arg" == ADD_ADMIN=* ]]; then
+        # Yangi admin ro'yxatga qo'shiladi (bor bo'lsa — o'zgarmaydi)
+        id="${arg#ADD_ADMIN=}"
+        [[ "$id" =~ ^[0-9]+$ ]] || { echo "Noto'g'ri admin ID: $id"; exit 1; }
+        cur="$(get_env ADMIN_TELEGRAM_IDS)"
+        if [[ ",${cur// /}," == *",$id,"* ]]; then
+            echo "Admin $id allaqachon bor"
+        else
+            set_env ADMIN_TELEGRAM_IDS "${cur:+$cur,}$id"
+            echo "Admin qo'shildi: $id (jami: $(get_env ADMIN_TELEGRAM_IDS | tr ',' '\n' | grep -c .))"
+        fi
+        continue
+    fi
     key="${arg%%=*}"; value="${arg#*=}"
     [[ "$ALLOWED" == *" $key "* ]] || { echo "Ruxsat yo'q: $key"; exit 1; }
     [[ "$value" != *$'\n'* ]] || { echo "Noto'g'ri qiymat: $key"; exit 1; }
