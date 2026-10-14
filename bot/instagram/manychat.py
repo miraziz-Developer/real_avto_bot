@@ -37,6 +37,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiohttp import web
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from bot.agent.fallback import ABOUT_CAR_RE, is_sell_intent
@@ -47,7 +48,7 @@ from bot.ai.errors import AIError
 from bot.config import settings
 from bot.db.cars_repo import CarRepository
 from bot.db.leads_repo import LeadRepository
-from bot.db.models import Car, CarStatus, InstagramPost, Lead
+from bot.db.models import Car, CarStatus, InstagramComment, InstagramPost, Lead
 from bot.db.repositories import CrmRepository
 from bot.handlers.channel_comments import has_buy_intent, is_question
 from bot.handlers.sales_agent import forward_text_to_manager
@@ -308,6 +309,9 @@ class ManyChatBridge:
         own = (settings.instagram_username or "").lstrip("@").lower()
         if own and username.lower() == own:
             return result  # o'zimizning javobimiz (Make kommentlarni, o'zimiznikini ham, qayta yuboradi)
+        comment_id = _field(payload, "comment_id", limit=64)
+        if is_comment and comment_id and not await self._claim_comment(comment_id, _field(payload, "media_id", limit=64)):
+            return result  # bu kommentga allaqachon javob berilgan (webhook va davriy tekshiruv ikkalasi ham olib keladi)
         if is_comment and is_emoji_only(text):
             return await self._emoji_answer(payload, sub, text, username, result)
         # Make.com: Direct yuborilmaydi ("dm": false) — javob to'liq komment ostida bo'ladi
@@ -387,6 +391,19 @@ class ManyChatBridge:
             f"{decision.category}/{decision.action}" if decision else "",
         )
         return result
+
+    async def _claim_comment(self, comment_id: str, media_id: str | None) -> bool:
+        """Kommentni «ko'rib chiqilmoqda» deb belgilaydi. False — oldin belgilangan (qayta javob yozilmaydi)."""
+        async with self.session_factory() as session:
+            stmt = (
+                pg_insert(InstagramComment)
+                .values(id=comment_id, media_id=media_id or None)
+                .on_conflict_do_nothing(index_elements=[InstagramComment.id])
+                .returning(InstagramComment.id)
+            )
+            claimed = (await session.execute(stmt)).scalar_one_or_none() is not None
+            await session.commit()
+        return claimed
 
     async def _emoji_answer(self, payload: dict, sub: str, text: str, username: str, result: dict) -> dict:
         """«❤️», «🔥», «😂», «👎» — reaksiyaga mos qisqa ochiq javob.

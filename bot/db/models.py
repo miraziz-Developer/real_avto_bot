@@ -448,6 +448,19 @@ class ChannelThread(Base):
     )
 
 
+class InstagramComment(Base):
+    """Javob berilgan (ko'rib chiqilgan) Instagram kommenti — bir kommentga ikki marta javob yozilmasin.
+
+    Make webhook'i ham, davriy tekshiruv (poll) ham shu jadvalga qaraydi.
+    """
+
+    __tablename__ = "instagram_comments"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    media_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class InstagramPost(Base):
     """Instagram post/reel → qaysi mashina. Komment kelganda shu jadvaldan topiladi.
 

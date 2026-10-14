@@ -37,7 +37,8 @@ from bot.db.repositories import CrmRepository
 from bot.handlers.channel_comments import has_buy_intent, is_question
 from bot.handlers.sales_agent import forward_text_to_manager
 from bot.instagram.client import IGError, InstagramClient
-from bot.instagram.manychat import MANYCHAT_PATH, ManyChatBridge
+from bot.instagram.make_poll import POLL_PATH, MakePoller
+from bot.instagram.manychat import MAKE_PATH, MANYCHAT_PATH, ManyChatBridge
 from bot.services.car_cards import notify_admins_text
 from bot.services.lead_cards import lead_score
 
@@ -289,7 +290,8 @@ async def start_instagram_server(
         # IG token bo'lsa — komment qaysi postga yozilganini Graph API'dan aniqlash uchun ishlatiladi
         bridge = ManyChatBridge(bot, session_factory, ig=client if client.enabled else None)
         bridge.add_routes(application)
-        served.append(MANYCHAT_PATH)
+        MakePoller(bridge, session_factory).add_routes(application)
+        served += [MANYCHAT_PATH, MAKE_PATH, POLL_PATH]
     if not served:
         return None
     application.router.add_get("/healthz", _healthz)

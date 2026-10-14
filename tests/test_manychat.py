@@ -69,8 +69,9 @@ async def factory(mc_settings):
     await apply_car_indexes(db_base.get_engine())
     async with db_base.get_engine().begin() as conn:
         await conn.execute(
-            text("TRUNCATE instagram_posts, lead_relays, agent_messages, leads, car_events, cars RESTART IDENTITY CASCADE")
+            text("TRUNCATE instagram_comments, instagram_posts, lead_relays, agent_messages, leads, car_events, cars RESTART IDENTITY CASCADE")
         )
+        await conn.execute(text("DELETE FROM app_meta WHERE key = 'ig_poll_state'"))
     async with f() as s:
         repo = CarRepository(s)
         for p, status in (
@@ -441,3 +442,50 @@ async def test_emoji_comment_answered_by_ai_with_car_status(factory, monkeypatch
     assert r["car_id"] == 3 and r["public_reply"] == "Narxi $8 500, batafsil Direct'da."  # AI javobi ishlatildi
     system, payload = ai.calls[0]
     assert "Faqat emoji" in system and payload["shu_post_mashinasi"]["id"] == 3  # AI mashina (sotilgan Spark) faktini ko'radi
+
+
+async def test_make_poll_media_then_comments_once(factory):
+    from datetime import UTC, datetime, timedelta
+
+    from aiohttp import web as _web
+
+    from bot.instagram.make_poll import FIELD_SEP as F, POLL_PATH, ROW_SEP as R, MakePoller
+
+    bridge = ManyChatBridge(FakeBot(), factory)
+    app = _web.Application()
+    MakePoller(bridge, factory).add_routes(app)
+    object.__setattr__(config.settings, "instagram_username", "real_avto_arzon")
+
+    def media_rows(count: int) -> str:
+        return R.join([
+            F.join(["1801", str(count), "https://instagram.com/reel/AAA111/", "VIDEO", "https://cdn/1801", "Gentra ID: 4"]),
+            F.join(["1802", "0", "https://instagram.com/p/BBB222/", "IMAGE", "", "Nasiya savdosi"]),
+        ])
+
+    try:
+        async with TestClient(TestServer(app)) as client:
+            async def post(data):
+                return await (await client.post(POLL_PATH, data=data, headers=AUTH)).json()
+
+            assert (await post({"stage": "media", "rows": media_rows(2)}))["check"] == []  # birinchi — faqat eslab qoladi
+            assert (await post({"stage": "media", "rows": media_rows(2)}))["check"] == []  # o'zgarish yo'q
+            assert (await post({"stage": "media", "rows": media_rows(5)}))["check"] == ["1801"]
+            now = datetime.now(UTC)
+            old = (now - timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%S+0000")
+            new = (now + timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%S+0000")
+            rows = R.join([
+                F.join(["c1", old, "eski_mijoz", "11", "narxi qancha?"]),
+                F.join(["c2", new, "aziz_ig", "12", "gentra narxi qancha?"]),
+                F.join(["c3", new, "real_avto_arzon", "13", "Rahmat!"]),
+            ])
+            r = await post({"stage": "comments", "media_id": "1801", "rows": rows})
+            assert [x["comment_id"] for x in r["replies"]] == ["c2"] and "Gentra" in r["replies"][0]["message"]
+            # Qayta kelsa — javob yozilmaydi; bizning javobimiz kommentlar sonini oshirgani tekshiruvga sabab bo'lmaydi
+            assert (await post({"stage": "comments", "media_id": "1801", "rows": rows}))["replies"] == []
+            assert (await post({"stage": "media", "rows": media_rows(6)}))["check"] == []
+            bad = await client.post(POLL_PATH, data={"stage": "media"}, headers={"Authorization": "Bearer nope"})
+            assert bad.status == 401
+    finally:
+        object.__setattr__(config.settings, "instagram_username", "x")
+    r = await bridge.answer({"user_id": "12", "event": "comment", "dm": "false", "text": "gentra narxi qancha?", "comment_id": "c2"})
+    assert r["public_reply"] == ""  # webhook orqali kelsa ham — allaqachon javob berilgan
