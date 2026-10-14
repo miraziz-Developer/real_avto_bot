@@ -423,9 +423,21 @@ async def test_emoji_comment_gets_short_reply_once_without_ai(factory):
         base = {"user_id": "555", "event": "comment", "dm": "false", "media_id": "1796", "caption": "Gentra ID: 4"}
         r = await (await client.post("/webhooks/make", json={**base, "text": "❤️🔥"}, headers=AUTH)).json()
         assert r["car_id"] == 4 and r["public_reply"] and r["reply"] == ""
-        assert "sotuvda" in r["public_reply"] or "Ko'rishga" in r["public_reply"] or "narxi" in r["public_reply"]
+        assert "sotuvda" not in r["public_reply"]  # AI'siz zaxira javob mashina holatini taxmin qilmaydi
         again = await (await client.post("/webhooks/make", json={**base, "text": "🔥"}, headers=AUTH)).json()
         assert again["public_reply"] == ""  # bir odamga bir postda bir marta
         bad = await (await client.post("/webhooks/make", json={**base, "user_id": "556", "text": "👎"}, headers=AUTH)).json()
         assert "ikr" in bad["public_reply"].lower() or "🙏" in bad["public_reply"]
     assert not bridge.bot.sent  # adminlarga xabar yo'q
+
+
+async def test_emoji_comment_answered_by_ai_with_car_status(factory, monkeypatch):
+    ai = FakeCommentAI()
+    monkeypatch.setattr(manychat, "get_ai", lambda: ai)
+    monkeypatch.setattr(manychat, "get_budget", lambda: AllowAll())
+    async with TestClient(TestServer(app_for(ManyChatBridge(FakeBot(), factory)))) as client:
+        body = {"user_id": "777", "event": "comment", "dm": "false", "media_id": "1797", "caption": "Spark ID: 3", "text": "😍"}
+        r = await (await client.post("/webhooks/make", json=body, headers=AUTH)).json()
+    assert r["car_id"] == 3 and r["public_reply"] == "Narxi $8 500, batafsil Direct'da."  # AI javobi ishlatildi
+    system, payload = ai.calls[0]
+    assert "Faqat emoji" in system and payload["shu_post_mashinasi"]["id"] == 3  # AI mashina (sotilgan Spark) faktini ko'radi

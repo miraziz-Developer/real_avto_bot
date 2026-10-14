@@ -1,4 +1,7 @@
-"""Faqat emojidan iborat komment («❤️», «🔥🔥», «😂», «👎») — reaksiyaga qarab qisqa javob, AI'siz.
+"""Faqat emojidan iborat komment («❤️», «🔥🔥», «😂», «👎») — reaksiyani aniqlash va AI ishlamasa zaxira javob.
+
+Asosiy javobni komment AI yozadi (mashina va uning bazadagi holatini ko'rib); bu yerdagi shablonlar mashina
+sotuvda/sotilgani haqida hech narsa demaydi — taxmin xato bo'lmasin.
 
 Instagram API postga bosilgan like/reaksiyalarni bermaydi; odamlar reaksiyani ko'pincha emoji-komment qilib
 yozadi. Javoblar bir nechta variantdan tanlanadi (bir xil matn qayta-qayta chiqmasin — Instagram spam deb biladi).
@@ -10,7 +13,6 @@ import random
 import unicodedata
 
 from bot.config import sales_phone_entries
-from bot.db.models import Car, CarStatus
 from bot.services.business_info import with_ai_label
 
 _LOVE = set("❤🧡💛💚💙💜🖤🤍🤎💖💗💓💞💕💘😍🥰😘🤩")
@@ -41,11 +43,8 @@ def reaction_kind(text: str) -> str:
     return "fire"
 
 
-def _on_sale(car: Car | None) -> bool:
-    return car is not None and car.status in (CarStatus.ACTIVE, CarStatus.RESERVED)
-
-
-def emoji_reply(text: str, car: Car | None = None, *, rnd: random.Random | None = None) -> str:
+def emoji_reply(text: str, *, rnd: random.Random | None = None) -> str:
+    """AI ishlamaganda: mashina holati haqida HECH NARSA demaydigan (xato bo'lmasin) qisqa javob."""
     rnd = rnd or random
     phone = sales_phone_entries()[0]
     kind = reaction_kind(text)
@@ -61,20 +60,10 @@ def emoji_reply(text: str, car: Car | None = None, *, rnd: random.Random | None 
         ]
     elif kind == "funny":
         options = ["😄 Rahmat! Savollar bo'lsa, bemalol yozing.", "😁 Kayfiyatingiz zo'r bo'lsin! Savol bo'lsa — yozing."]
-    elif kind == "wow":
-        options = (
-            [f"Ha, mashina zo'r 😉 Batafsil va narx: {phone}", f"Shunday 😎 Ko'rishga keling yoki qo'ng'iroq qiling: {phone}"]
-            if _on_sale(car)
-            else ["😉 Savollar bo'lsa, yozing!", f"Batafsil ma'lumot: {phone}"]
-        )
-    else:  # love / fire
-        options = (
-            [
-                f"Rahmat! ❤️ Mashina hali sotuvda — narx va batafsil: {phone}",
-                f"Rahmat 🔥 Ko'rishga keling yoki qo'ng'iroq qiling: {phone}",
-                "Rahmat! ❤️ Narx va ma'lumot uchun «narxi?» deb yozing.",
-            ]
-            if _on_sale(car)
-            else ["Rahmat! ❤️", "Rahmat 🔥 Sahifamizni kuzatib boring!", "Rahmat! 🙌 Yangi mashinalar har kuni chiqadi."]
-        )
+    else:  # love / fire / wow
+        options = [
+            "Rahmat! ❤️",
+            f"Rahmat 🔥 Savollar bo'lsa, yozing yoki qo'ng'iroq qiling: {phone}",
+            "Rahmat! 🙌 Sahifamizni kuzatib boring.",
+        ]
     return with_ai_label(rnd.choice(options))

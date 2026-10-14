@@ -133,6 +133,10 @@ PLATFORMA: INSTAGRAM (post/reel kommentlari). Yuqoridagi qoidalar o'z kuchida, f
 - shu_post_mashinasi — mijoz aynan shu reklama videosi/posti ostida yozgan mashina. Savol shu mashina haqida deb hisobla.
 - O'z mashinasini sotmoqchi (sell_car) → "Direct'ga mashina ma'lumoti va rasmlarini yuboring" de.
 - Maqtov ("zo'r", "🔥", "omad") → qisqa minnatdorchilik (action=reply, 1 gap).
+- Faqat emoji (reaksiya: "❤️", "🔥🔥", "😍", "😂", "😮", "👎") → doim action=reply, reaksiyaga mos 1 qisqa gap:
+  ijobiy — minnatdorchilik; shu_post_mashinasi faktlarda "sotuvda" bo'lsa telefonni qo'shib, ko'rishga taklif qil;
+  sotilgan bo'lsa — "bu mashina sotilgan, o'xshash variantlar bor" de; mashina noma'lum bo'lsa — holati haqida gapirma;
+  kulgi — samimiy; hayrat — qisqa; salbiy (👎😡) — xushmuomala, nima yoqmaganini so'ra (category=negative).
 - "bot", "botimiz", "Telegram" so'zlarini ISHLATMA — Instagram'dagi mijoz botni bilmaydi.
 - Javob 1–2 qisqa gap, hashtag yo'q."""
 

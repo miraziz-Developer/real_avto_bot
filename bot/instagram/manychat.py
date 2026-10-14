@@ -389,7 +389,11 @@ class ManyChatBridge:
         return result
 
     async def _emoji_answer(self, payload: dict, sub: str, text: str, username: str, result: dict) -> dict:
-        """«❤️», «🔥», «😂», «👎» — reaksiyaga mos qisqa ochiq javob (AI'siz, adminlarga xabarsiz)."""
+        """«❤️», «🔥», «😂», «👎» — reaksiyaga mos qisqa ochiq javob.
+
+        Javobni komment AI yozadi (mashina va uning bazadagi holatini ko'rib); AI ishlamasa — mashina haqida
+        hech narsa demaydigan zaxira javob. Adminlarga xabar yo'q, bitta odamga bitta postda bir marta.
+        """
         post_info = await self._find_post(payload, is_comment=True, username=username, text=text)
         ref = post_ref(post_info["media_id"], post_info["permalink"])
         key = (sub, ref or "")
@@ -398,14 +402,22 @@ class ManyChatBridge:
         if len(self._emoji_answered) > 20000:
             self._emoji_answered.clear()
         self._emoji_answered.add(key)
+        name = _field(payload, "name", "full_name", limit=200)
+        decision: CommentDecision | None = None
         async with self.session_factory() as session:
+            cars = CarRepository(session)
             match = await resolve_car(
-                CarRepository(session), ref=ref, caption=post_info["caption"] or None,
-                permalink=post_info["permalink"] or None, text=None,
+                cars, ref=ref, caption=post_info["caption"] or None, permalink=post_info["permalink"] or None, text=None,
             )
+            if settings.comments_ai_enabled and get_ai().enabled:
+                decision = await self._decide(
+                    cars, match.car, text, author=name or username, sub=sub, caption=post_info["caption"],
+                    platform="instagram_public",
+                )
             await session.commit()
-        result.update(public_reply=emoji_reply(text, match.car), car_id=match.car.id if match.car else None)
-        logger.info("Instagram emoji-komment: sub=%s car=%s", sub, result["car_id"])
+        reply = decision.reply if decision is not None and decision.should_reply else emoji_reply(text)
+        result.update(public_reply=reply, car_id=match.car.id if match.car else None)
+        logger.info("Instagram emoji-komment: sub=%s car=%s ai=%s", sub, result["car_id"], decision is not None)
         return result
 
     def _spawn(self, coro) -> None:
