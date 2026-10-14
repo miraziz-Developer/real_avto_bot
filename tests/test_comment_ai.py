@@ -76,3 +76,22 @@ def test_ai_label_added_once_and_stripped_from_history():
         assert with_ai_label("") == ""
     finally:
         object.__setattr__(config.settings, "ai_reply_label", old)
+
+
+def test_availability_freshness_and_unknown_post_hints():
+    import json as _json
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+
+    from bot.services.comment_ai import build_system_prompt, build_user_payload, car_facts
+
+    old = SimpleNamespace(
+        id=7, title="Chevrolet Spark 2018", status="active", price_usd=None, mileage_km=None, color=None,
+        transmission=None, fuel=None, position=None, paint_status=None, location=None, has_accident=None,
+        published_at=datetime.now(UTC) - timedelta(days=20), stale_prompted_at=datetime.now(UTC) - timedelta(days=3),
+    )
+    assert car_facts(old)["oxirgi_tasdiq_kun_oldin"] == 3  # oxirgi tasdiq (qayta e'lon) hisoblanadi
+    payload = _json.loads(build_user_payload(text="sotildimi?", author=None, car=None, other_cars=[], post_text=None, replied_text=None))
+    assert "mashina deb taxmin qilma" in payload["eslatma"]
+    prompt = build_system_prompt()
+    assert "uy, yer" in prompt and "biz faqat mashina sotamiz" in prompt and "oxirgi_tasdiq_kun_oldin" in prompt

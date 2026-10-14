@@ -41,6 +41,15 @@ QAT'IY QOIDALAR:
 5. Shaxsiy ma'lumot (telefon, manzil) so'ralsa — faqat quyidagi salon telefoni/manzilini ber; sotuvchi raqamini hech qachon berma.
 
 VAZIYATLAR:
+- Kanalda asosan mashinalar, lekin ba'zan boshqa e'lonlar ham chiqadi (uy, yer, boshqa narsalar reklamasi). post_matni
+  mashina haqida bo'lmasa — "biz faqat mashina sotamiz" DEMA: savolga post_matni dagi ma'lumot bilan javob ber, qolganini
+  (sotildimi, narx tushadimi) "aniq ma'lumot uchun e'londagi raqamga qo'ng'iroq qiling" de.
+- Post mazmuni noma'lum (post_matni ham, shu_post_mashinasi ham yo'q) — post mashina deb taxmin qilma; qisqa javob ber va
+  aniq ma'lumot uchun salon telefoniga qo'ng'iroq qilishni taklif qil.
+- "Sotildimi / hali bormi / sotuvdami" — faqat faktlarga qara: holati "sotilgan" bo'lsa — sotilganini ochiq ayt;
+  "sotuvda" va oxirgi_tasdiq_kun_oldin 7 dan kichik bo'lsa — sotuvda de; "sotuvda" lekin 7 kun va undan ko'p (yoki
+  ma'lum emas) bo'lsa — "sotilgani haqida xabar yo'q, lekin aniq bilish uchun qo'ng'iroq qilib ko'ring" de (telefon bilan).
+  Hech qachon taxmin bilan "sotuvda" yoki "sotilgan" dema.
 - Savol (narx, bormi, probeg, holat, manzil, ko'rish, kredit) → javob ber. Mashina sotilgan/bron bo'lsa ochiq ayt va o'xshashini
   botda ko'rsatishimizni ayt.
 - Umumiy savol ("qanday mashinalar bor", "nima sotuvda", "10 ming dollargacha nima bor") → hozir_sotuvdagi_mashinalardan
@@ -112,6 +121,11 @@ def car_facts(car: Car) -> dict:
     facts.update({key: value for key, value in optional.items() if value not in (None, "")})
     if car.has_accident is not None:
         facts["avariya"] = "bo'lgan" if car.has_accident else "bo'lmagan"
+    if car.status in (CarStatus.ACTIVE, CarStatus.RESERVED):
+        # Oxirgi marta qachon sotuvda ekani tasdiqlangan: e'lon/qayta e'lon yoki admin tasdig'i
+        seen = [d for d in (getattr(car, "published_at", None), getattr(car, "stale_prompted_at", None)) if d is not None]
+        if seen:
+            facts["oxirgi_tasdiq_kun_oldin"] = max(0, (datetime.now(UTC) - max(seen)).days)
     return facts
 
 
@@ -216,6 +230,10 @@ def build_user_payload(
         payload["eslatma"] = "Post mashinasi bazada yo'q — post_matni dagi ochiq ma'lumotlardan foydalanish mumkin."
     elif car is None and not other_cars:
         payload["eslatma"] = "Bu xabar uchun bazadan mashina topilmadi."
+    if car is None and not post_text:
+        payload["eslatma"] = (
+            payload.get("eslatma", "") + " Post mazmuni noma'lum (matnsiz video bo'lishi mumkin) — mashina deb taxmin qilma."
+        ).strip()
     return json.dumps(payload, ensure_ascii=False)
 
 
