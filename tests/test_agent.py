@@ -358,3 +358,27 @@ async def test_bad_ai_numbers_do_not_break_the_session(session_factory, monkeypa
         out = json.loads(await ctx.execute("search_cars", {"model": "Gentra"}))
         assert [c["id"] for c in out["cars"]] == [ids["gentra"]]
         await s.commit()
+
+
+async def test_seller_is_saved_and_admins_only_call(session_factory):
+    from bot.workers.lead_reminder import remind_once
+
+    bot = FakeBot()
+    async with session_factory() as s:
+        ctx = await _ctx(s, bot)
+        # AI'siz: «sotmoqchiman» → ma'lumot so'raladi, admin bezovta qilinmaydi
+        reply, kb = await fallback_reply(ctx, "Assalomu alaykum, mashinamni sotmoqchiman")
+        assert "telefon" in reply and kb.inline_keyboard[0][0].url
+        assert not bot.sent
+        # Keyingi xabar — mashina + telefon: menejerlarga bitta «qo'ng'iroq qiling» kartasi
+        reply, _ = await fallback_reply(ctx, "Cobalt 2020, probeg 80 000, 9500$, tel 90 123 45 67")
+        assert "qo'ng'iroq" in reply
+        assert ctx.lead.phone == "+998901234567" and ctx.lead.wants.startswith("SOTADI: Chevrolet Cobalt")
+        cards = [t for _, chat, t in bot.sent if chat == ADMIN_ID]
+        assert len(cards) == 1 and "MASHINA SOTMOQCHI" in cards[0] and "+998901234567" in cards[0]
+        # Takror yozsa — qayta xabar yo'q
+        out = json.loads(await ctx.execute("save_seller_car", {"model": "Chevrolet Cobalt", "year": 2020, "mileage_km": 80000, "price_usd": 9500, "phone": "901234567"}))
+        assert "allaqachon" in out["note"]
+        assert ctx.lead.status == LeadStatus.ACTIVE  # topshirilmadi — AI suhbatni davom ettiradi
+        await s.commit()
+    assert await remind_once(bot, session_factory) == 0  # eslatma yuborilmaydi

@@ -6,10 +6,10 @@ import re
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.agent.tools import AgentContext
-from bot.config import settings
+from bot.agent.tools import SELLER_REASON, AgentContext
+from bot.config import sales_phone_entries, settings
 from bot.db.models import Car, CarStatus
-from bot.services.car_parser import normalize_text, parse_car_text
+from bot.services.car_parser import _PHONE_RE, normalize_text, parse_car_text
 from bot.utils.currency import fmt_price
 
 HANDOFF_CB = "agent:handoff"
@@ -48,16 +48,12 @@ def is_sell_intent(text: str) -> bool:
 
 
 def sell_reply() -> tuple[str, InlineKeyboardMarkup]:
-    fee = "pullik" if settings.listing_payment_enabled else "bepul"
+    phones = ", ".join(sales_phone_entries())
     return (
-        "Ha, mashinangizni sotib olamiz yoki e'loningizni kanalimizga chiqaramiz (e'lon berish " + fee + "). "
-        "Mashina ma'lumoti va rasmlarini yuboring — jamoa ko'rib chiqib, narx taklif qiladi yoki e'lonni chiqaradi 👇",
-        InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="📢 E'lon berish / sotish", callback_data="ad_start")],
-                [InlineKeyboardButton(text="📞 Menejer bilan bog'lanish", callback_data=HANDOFF_CB)],
-            ]
-        ),
+        "Ha, mashinangizni ko'rib chiqamiz 👍 Model, yil, probeg, narxi va telefon raqamingizni yozing — "
+        f"menejerimiz o'zi qo'ng'iroq qiladi. Yoki o'zingiz qo'ng'iroq qiling: {phones}. "
+        f"Mashinani ko'rsatish uchun manzilimizga ham olib kelishingiz mumkin: {settings.business_address}.",
+        InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📍 Manzil (xarita)", url=settings.map_url)]]),
     )
 
 
@@ -93,9 +89,39 @@ async def _about_car(ctx: AgentContext, car: Car) -> str:
     return "\n".join(lines)
 
 
+def _is_seller(ctx: AgentContext) -> bool:
+    return (ctx.lead.wants or "").startswith("SOTADI") or (ctx.lead.handoff_reason or "").startswith(SELLER_REASON)
+
+
+async def _seller_details(ctx: AgentContext, text: str) -> tuple[str, InlineKeyboardMarkup] | None:
+    """Sotuvchi mashinasi/telefonini yozdi — saqlab, menejerlarga «qo'ng'iroq qiling» xabari (AI'siz)."""
+    p = parse_car_text(text, usd_rate_uzs=settings.usd_rate_uzs)
+    phone = _PHONE_RE.search(text)
+    model = " ".join(str(x) for x in (p.brand, p.model) if x)
+    if not model and (ctx.lead.wants or "").startswith("SOTADI: "):
+        model = ctx.lead.wants.removeprefix("SOTADI: ").split(",")[0]
+    if not (model or phone):
+        return None
+    args = {"model": model or "mashina", "year": p.year, "mileage_km": p.mileage_km, "price_usd": p.price_usd}
+    if phone:
+        args["phone"] = phone.group(0)
+    await ctx.execute("save_seller_car", args)
+    phones = ", ".join(sales_phone_entries())
+    if not ctx.lead.phone:
+        return "Rahmat! Telefon raqamingizni ham yozing — menejerimiz o'zi qo'ng'iroq qiladi.", sell_reply()[1]
+    return (
+        f"Rahmat, ma'lumot menejerga yuborildi — tez orada o'zi qo'ng'iroq qiladi. Xohlasangiz o'zingiz ham "
+        f"qo'ng'iroq qiling: {phones}, yoki mashinani manzilimizga olib keling: {settings.business_address}.",
+        sell_reply()[1],
+    )
+
+
 async def _fallback_reply(ctx: AgentContext, text: str) -> tuple[str, InlineKeyboardMarkup]:
-    if is_sell_intent(text):
-        return sell_reply()
+    if is_sell_intent(text) or _is_seller(ctx):
+        if not ctx.lead.wants or not ctx.lead.wants.startswith("SOTADI"):
+            ctx.lead.wants = "SOTADI"
+        done = await _seller_details(ctx, text)
+        return done if done is not None else sell_reply()
     p = parse_car_text(text, usd_rate_uzs=settings.usd_rate_uzs)
     if not (p.brand or p.model or p.price_usd):
         car = await ctx.current_car() if ABOUT_CAR_RE.search(text) else None

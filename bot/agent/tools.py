@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import re
@@ -30,6 +31,8 @@ MAX_VIDEOS = 2
 MAX_ACTIVE_ALERTS = 5
 # channel_watch dumaloq videolarni shu prefiks bilan saqlaydi
 VIDEO_NOTE_PREFIX = "vn:"
+# Sotuvchi mijoz (o'z mashinasini sotadi) — menejer faqat qo'ng'iroq qiladi, eslatmalar yuborilmaydi
+SELLER_REASON = "sotuvchi"
 
 
 async def send_car_media(
@@ -147,6 +150,27 @@ TOOL_SCHEMAS: list[dict] = [
                     "budget_max_usd": {"type": "integer"},
                 },
                 ["brand"],
+            ),
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_seller_car",
+            "description": (
+                "Mijoz O'Z mashinasini sotmoqchi: mashina ma'lumoti va telefonini saqlab, menejerlarga bitta qisqa "
+                "xabar yuboradi (ular faqat qo'ng'iroq qiladi). Model va telefon ma'lum bo'lgach chaqir."
+            ),
+            "parameters": _obj(
+                {
+                    "model": {"type": "string", "description": "Marka va model, masalan Chevrolet Cobalt"},
+                    "year": {"type": "integer"},
+                    "mileage_km": {"type": "integer"},
+                    "price_usd": {"type": "integer", "description": "Mijoz so'ragan narx, dollarda"},
+                    "phone": {"type": "string"},
+                    "details": {"type": "string", "description": "Rang, kraska, holat, nasiya/naqd — qisqa"},
+                },
+                ["model"],
             ),
         },
     },
@@ -386,6 +410,46 @@ class AgentContext:
             condition_key=None,
         )
         return {"saved": True, "alert_id": wish.id, "note": "Mos e'lon kanalga chiqsa mijozga avtomatik xabar boradi."}
+
+    async def _tool_save_seller_car(self, a: dict) -> dict:
+        lead = self.lead
+        if a.get("phone"):
+            phone = _normalize_phone(str(a["phone"]))
+            if phone is None:
+                return {"error": "telefon raqami noto'g'ri — qayta so'ra"}
+            lead.phone = phone
+        parts = [str(a.get("model") or "").strip()[:80]]
+        if _int(a.get("year")):
+            parts.append(str(_int(a.get("year"))))
+        if _int(a.get("mileage_km")):
+            parts.append(f"{_int(a.get('mileage_km')):,} km".replace(",", " "))
+        if _int(a.get("price_usd")):
+            parts.append(f"${_int(a.get('price_usd')):,}")
+        if a.get("details"):
+            parts.append(str(a["details"])[:200])
+        car_text = ", ".join(p for p in parts if p)
+        wants = f"SOTADI: {car_text}"[:500]
+        changed = wants != lead.wants or (bool(lead.phone) and lead.handoff_reason != SELLER_REASON + "+tel")
+        lead.wants = wants
+        note = (
+            "Saqlandi. Mijozga: rahmat ayt; menejerimiz o'zi qo'ng'iroq qilishini, xohlasa o'zi ham telefon qilishi "
+            "yoki mashinani ko'rsatish uchun manzilimizga kelishi mumkinligini ayt — telefon raqamlarimiz va manzil/xaritani ber. "
+            "Narx va'da qilma."
+        )
+        if not lead.phone:
+            note = "Saqlandi, lekin telefon yo'q — telefon raqamini so'ra (menejer qo'ng'iroq qiladi), keyin qayta chaqir. " + note
+        if not changed:
+            return {"ok": True, "note": "Menejerlar allaqachon xabardor. " + note}
+        lead.handoff_reason = SELLER_REASON + ("+tel" if lead.phone else "")
+        if not lead.phone:
+            return {"ok": True, "notified_managers": 0, "note": note}
+        phone = html.escape(lead.phone)
+        header = (
+            f"🚗 <b>MASHINA SOTMOQCHI</b> — faqat qo'ng'iroq qiling: <b>{phone}</b>\n"
+            f"{html.escape(car_text)}\n(AI suhbatni davom ettiradi; javob yozish shart emas)"
+        )
+        sent = await send_lead_card(self.bot, self.leads, lead, header=header)
+        return {"ok": True, "notified_managers": sent, "note": note}
 
     async def _tool_handoff_to_manager(self, a: dict) -> dict:
         lead = self.lead

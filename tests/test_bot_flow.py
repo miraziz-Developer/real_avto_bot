@@ -1110,7 +1110,8 @@ def test_fallback_understands_people_selling_their_car():
     assert is_sell_intent("Nexiamni sotmoqchiman, olasizlarmi?") and is_sell_intent("Купите мою машину")
     assert not is_sell_intent("Cobalt bormi?") and not is_sell_intent("mashina olmoqchiman")
     text, kb = sell_reply()
-    assert "sotib olamiz" in text and kb.inline_keyboard[0][0].callback_data == "ad_start"
+    assert "qo'ng'iroq" in text and "Model, yil" in text
+    assert kb.inline_keyboard[0][0].url  # manzil (xarita) tugmasi — e'lon/moderatsiya oqimi emas
 
 
 def _media_comment(uid: int, thread: int, **media) -> Update:
