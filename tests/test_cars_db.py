@@ -1073,5 +1073,8 @@ async def test_admin_forwards_old_channel_post_to_bot(session_factory, watch, mo
     async with session_factory() as s:
         car = (await s.execute(select(Car))).scalar_one()
         assert car.channel_message_ids == [4000] and car.model == "Nexia 3"
+    assert "Bazaga qo'shildi" in bot.sent[-1][2]
     await channel_import.import_forwarded(bot, ADMIN_ID, [post])  # forwarded twice — no duplicate
-    assert "bazada bor" in bot.sent[-1][2]
+    assert "<code>#1</code>" in bot.sent[-1][2] and "Bazaga qo'shildi" not in bot.sent[-1][2]
+    async with session_factory() as s:
+        assert len((await s.execute(select(Car))).scalars().all()) == 1

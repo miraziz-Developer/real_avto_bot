@@ -33,7 +33,7 @@ from bot.db.cars_repo import CarRepository
 from bot.db.models import Car, CarStatus
 from bot.handlers import channel_watch
 from bot.services.car_cards import notifications_muted
-from bot.services.car_parser import has_phone
+from bot.services.car_parser import has_phone, is_sold_text
 import contextlib
 
 logger = logging.getLogger(__name__)
@@ -281,30 +281,67 @@ async def _answer(bot: Bot, chat_id: int, text: str) -> None:
         await bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
 
 
+CONFIRMED_EVENT = "confirmed_on_sale"
+
+
+async def confirm_forwarded(cars: CarRepository, car: Car, text: str, *, actor: int | None = None) -> str:
+    """Admin kanal postini forward qildi — «bu mashina hozir sotuvda» degani (post o'zi sotilgan deb turmasa).
+
+    Qaytaradi: adminga javob qatori. Tasdiqlangan mashina «confirmed_on_sale» hodisasini oladi — /sotuvdagilar
+    oxirida forward qilinmay qolganlarni shu bo'yicha topadi; avtomatik arxiv ham bir muddat tegmaydi.
+    """
+    title = f"<b>{html.escape(car.title)}</b> <code>#{car.id}</code>"
+    if is_sold_text(text):
+        changed = await cars.set_status(car, CarStatus.SOLD, actor=actor)
+        return f"🔴 {title} — postda «SOTILDI» yozilgan" + (", sotilgan deb belgilandi." if changed else ".")
+    if text and not has_phone(text):
+        return f"⚠️ {title} — postda telefon raqami yo'q (sotilgan bo'lishi mumkin). Holati o'zgarmadi: {car.status}."
+    if not text and car.status == CarStatus.SOLD:
+        return f"ℹ️ {title} — sotilgan deb turibdi. Sotuvda bo'lsa, shu mashinaning tavsif postini forward qiling."
+    was = car.status
+    if car.status in (CarStatus.SOLD, CarStatus.ARCHIVED):
+        await cars.set_status(car, CarStatus.ACTIVE, actor=actor)
+    await cars.mark_stale_prompted(car)
+    await cars.add_event(car, CONFIRMED_EVENT, {"by": actor})
+    if car.status == CarStatus.REVIEW:
+        return f"🟡 {title} — sotuvda, lekin ma'lumoti to'liq emas (model/yil). /mashina {car.id} orqali to'ldiring."
+    again = " (avval sotilgan/arxivda edi — qaytarildi)" if was in (CarStatus.SOLD, CarStatus.ARCHIVED) else ""
+    return f"✅ {title} — sotuvda{again}."
+
+
 async def import_forwarded(bot: Bot, admin_chat_id: int, posts: list[Message]) -> None:
-    """Forward qilingan kanal postini (albomni) bazaga qo'shish va adminga natijani aytish."""
+    """Forward qilingan kanal postini (albomni) bazaga qo'shish yoki sotuvda deb tasdiqlash, adminga natijani aytish."""
     posts = sorted(posts, key=lambda m: m.message_id)
     channel_id = posts[0].chat.id
+    text = "\n".join(t for p in posts if (t := (p.caption or p.text or "").strip()))
     async with get_session_factory()() as session:
-        known = await CarRepository(session).find_by_channel_message(channel_id, posts[0].message_id)
-    if known is not None:
-        await _answer(
-            bot, admin_chat_id,
-            f"ℹ️ Bu post bazada bor: <b>{html.escape(known.title)}</b> <code>#{known.id}</code> — /mashina {known.id}",
-        )
-        return
+        cars = CarRepository(session)
+        known = None
+        for p in posts:
+            known = await cars.find_by_channel_message(channel_id, p.message_id)
+            if known is not None:
+                break
+        if known is not None:
+            reply = await confirm_forwarded(cars, known, text, actor=admin_chat_id)
+            await session.commit()
+            await _answer(bot, admin_chat_id, reply)
+            return
     for p in posts:
         channel_watch.remember_post_content(p)
     await channel_watch.process_channel_post(bot, posts)
     async with get_session_factory()() as session:
-        car = await CarRepository(session).find_by_channel_message(channel_id, posts[0].message_id)
-    if car is None:
-        if any(p.video_note or p.video or p.photo for p in posts) and not any(p.caption or p.text for p in posts):
-            await _answer(bot, admin_chat_id, "🎥 Media qabul qilindi — endi shu mashinaning tavsif postini ham forward qiling.")
-        else:
-            await _answer(bot, admin_chat_id, "⚠️ Bu postdan mashina aniqlanmadi (e'lon emas).")
-        return
+        cars = CarRepository(session)
+        car = await cars.find_by_channel_message(channel_id, posts[0].message_id)
+        if car is None:
+            if any(p.video_note or p.video or p.photo for p in posts) and not text:
+                await _answer(bot, admin_chat_id, "🎥 Media qabul qilindi — endi shu mashinaning tavsif postini ham forward qiling.")
+            else:
+                await _answer(bot, admin_chat_id, "⚠️ Bu postdan mashina aniqlanmadi (e'lon emas).")
+            return
+        reply = await confirm_forwarded(cars, car, text, actor=admin_chat_id)
+        await session.commit()
     logger.info("Admin forward qildi: kanal posti %s → mashina #%s", posts[0].message_id, car.id)
+    await _answer(bot, admin_chat_id, "🆕 Bazaga qo'shildi. " + reply)
 
 
 def queue_forwarded(bot: Bot, admin_chat_id: int, message: Message) -> bool:

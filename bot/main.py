@@ -229,6 +229,7 @@ async def _set_admin_commands(bot: Bot) -> None:
         BotCommand(command="panel", description="🛠 Admin panel (CRM)"),
         BotCommand(command="leadlar", description="🔥 Ochiq mijozlar (leadlar)"),
         BotCommand(command="statistika", description="📊 Mashinalar statistikasi (30 kun)"),
+        BotCommand(command="sotuvdagilar", description="📋 Sotuvdagilarni forward qilib belgilash"),
         BotCommand(command="aniqlash", description="🔎 Sotildi/sotuvda — birma-bir belgilash"),
         BotCommand(command="sotuvda", description="🟢 Sotuvdagi mashinalar"),
         BotCommand(command="tekshiruv", description="🟡 Tekshiruv kutayotgan postlar"),

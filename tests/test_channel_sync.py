@@ -225,3 +225,30 @@ async def test_review_walks_open_cars_in_order(factory):
         text_ = review_text(car, 0)
         assert "Aniqlash" in text_ and "sotildimi" in text_
         assert {b.callback_data for row in review_kb(car).inline_keyboard for b in row} >= {f"rv:sold:{c}", f"rv:keep:{c}"}
+
+
+async def test_forward_confirms_on_sale_and_lists_the_rest(factory):
+    from bot.handlers.car_review import onsale_split
+    from bot.services.channel_import import confirm_forwarded
+
+    f, _ = factory
+    start = datetime.now(UTC) - timedelta(seconds=1)
+    on_sale = await _car(f, ids=[1])
+    was_sold = await _car(f, ids=[2], status=CarStatus.SOLD, model="Cobalt", year=2020)
+    not_forwarded = await _car(f, ids=[3], model="Gentra", year=2019)
+    really_sold = await _car(f, ids=[4], model="Damas", year=2020)
+    async with f() as s:
+        cars = CarRepository(s)
+        r1 = await confirm_forwarded(cars, await cars.get(on_sale), LISTING)
+        r2 = await confirm_forwarded(cars, await cars.get(was_sold), LISTING)
+        r3 = await confirm_forwarded(cars, await cars.get(really_sold), "❗️—SOTILDI—❗️\n" + LISTING)
+        # Matnsiz (dumaloq video) forward sotilganni qayta sotuvga chiqarmaydi
+        r4 = await confirm_forwarded(cars, await cars.get(really_sold), "")
+        await s.commit()
+    assert r1.startswith("✅") and "qaytarildi" in r2 and r3.startswith("🔴") and r4.startswith("ℹ️")
+    assert (await _get(f, was_sold)).status == CarStatus.ACTIVE
+    assert (await _get(f, really_sold)).status == CarStatus.SOLD
+    async with f() as s:
+        confirmed, rest = await onsale_split(CarRepository(s), start)
+    assert [c.id for c in confirmed] == [on_sale, was_sold]
+    assert [c.id for c in rest] == [not_forwarded]
