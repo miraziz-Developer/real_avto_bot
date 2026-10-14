@@ -503,3 +503,34 @@ async def test_profanity_comment_is_ignored_quietly(factory):
         r = await (await client.post("/webhooks/make", json=body, headers=AUTH)).json()
     assert r["public_reply"] == "" and r["reply"] == ""
     assert not bot.sent  # adminlarga ham xabar yo'q
+
+
+async def test_make_poll_groups_comments_of_many_posts_and_stops_retrying(factory):
+    from datetime import UTC, datetime, timedelta
+
+    from aiohttp import web as _web
+
+    from bot.instagram.make_poll import FIELD_SEP as F, POLL_PATH, ROW_SEP as R, MakePoller
+
+    app = _web.Application()
+    MakePoller(ManyChatBridge(FakeBot(), factory), factory).add_routes(app)
+
+    def media(c1: int, c2: int) -> str:
+        return R.join([F.join(["m1", str(c1), "", "VIDEO", "", "Gentra ID: 4"]), F.join(["m2", str(c2), "", "VIDEO", "", "Cobalt 2019 ID: 2"])])
+
+    async with TestClient(TestServer(app)) as client:
+        async def post(data):
+            return await (await client.post(POLL_PATH, data=data, headers=AUTH)).json()
+
+        assert (await post({"stage": "media", "rows": media(1, 1)}))["check"] == []
+        assert sorted((await post({"stage": "media", "rows": media(2, 2)}))["check"]) == ["m1", "m2"]
+        new = (datetime.now(UTC) + timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%S+0000")
+        rows = R.join([F.join(["k1", new, "a1", "1", "m1", "narxi qancha?"]), F.join(["k2", new, "a2", "2", "m2", "narxi qancha?"])])
+        r = await post({"stage": "comments", "rows": rows})  # ikkala post kommentlari bitta so'rovda
+        msgs = {x["comment_id"]: x["message"] for x in r["replies"]}
+        assert "Gentra" in msgs["k1"] and "Cobalt" in msgs["k2"]  # har biri o'z posti mashinasi bo'yicha
+        assert (await post({"stage": "media", "rows": media(3, 3)}))["check"] == []  # javoblar hisobga olingan
+        # Kommentlari kelmagan post ko'pi bilan 2 marta tekshiriladi
+        assert (await post({"stage": "media", "rows": media(5, 3)}))["check"] == ["m1"]
+        assert (await post({"stage": "media", "rows": media(5, 3)}))["check"] == ["m1"]
+        assert (await post({"stage": "media", "rows": media(5, 3)}))["check"] == []

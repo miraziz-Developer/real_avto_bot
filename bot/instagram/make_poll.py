@@ -34,6 +34,7 @@ ROW_SEP = "␞"  # ␞
 FIELD_SEP = "␟"  # ␟
 STATE_KEY = "ig_poll_state"
 MAX_REPLIES_PER_POST = 10
+MAX_TRIES = 2
 # Shundan eski kommentlarga javob yozilmaydi (birinchi ishga tushirishdan oldingi kommentlar ham)
 MAX_COMMENT_AGE = timedelta(days=2)
 
@@ -93,7 +94,9 @@ class MakePoller:
             first_run = "since" not in state
             counts: dict = state.get("counts", {})
             media: dict = state.get("media", {})
-            pending: list = state.get("pending", [])
+            pending = state.get("pending", {})
+            if isinstance(pending, list):
+                pending = dict.fromkeys(pending, 1)
             check: list[str] = []
             cars = CarRepository(session)
             for media_id, count_raw, permalink, media_type, media_url, caption in rows:
@@ -109,14 +112,16 @@ class MakePoller:
                 if caption or permalink:
                     await remember_post(cars, media_id, car=None, caption=caption or None, permalink=permalink or None)
             seen = {r[0] for r in rows}
-            check += [m for m in pending if m in seen and m not in check]
-            # Faqat so'nggi postlar holati saqlanadi (jadval o'smasin)
-            keep = list(seen) + [m for m in pending if m not in seen][:20]
+            # Javobi kelmagan post yana bir marta tekshiriladi, keyin tashlab yuboriladi (operatsiya behuda ketmasin)
+            retry = [m for m, tries in pending.items() if m in seen and m not in check and tries < MAX_TRIES]
+            new_pending = dict.fromkeys(check, 1)
+            new_pending.update({m: pending[m] + 1 for m in retry})
+            check += retry
             state = {
                 "since": state.get("since") or now.isoformat(),
-                "counts": {k: v for k, v in counts.items() if k in keep},
-                "media": {k: v for k, v in media.items() if k in keep},
-                "pending": check,
+                "counts": {k: v for k, v in counts.items() if k in seen},
+                "media": {k: v for k, v in media.items() if k in seen},
+                "pending": new_pending,
             }
             await self._save(session, state)
             await session.commit()
@@ -127,26 +132,32 @@ class MakePoller:
         return {"check": check}
 
     async def comments(self, payload: dict) -> dict:
-        """Bitta post kommentlari → yangi kommentlarga javoblar."""
-        # id, timestamp, username, from_id, media_id, text (Make'da iterator qiymati aggregator'dan keyin ko'rinmaydi —
-        # post ID har bir qatorda keladi)
+        """Kommentlar (bir yoki bir nechta post) → yangi kommentlarga javoblar.
+
+        Qator: id, timestamp, username, from_id, media_id, text. Make bir nechta post kommentlarini bitta so'rovga
+        yig'ishi mumkin — har komment o'z posti (qatordagi media_id) bo'yicha ko'riladi.
+        """
         rows = parse_rows(payload.get("rows", ""), 6)
-        media_id = str(payload.get("media_id") or "").strip() or next((r[4] for r in rows if r[4]), "")
+        fallback_media = str(payload.get("media_id") or "").strip()
         now = datetime.now(UTC)
         async with self.session_factory() as session:
             state = await self._load(session)
         since = _ts(state.get("since", "")) or now
-        info = state.get("media", {}).get(media_id, {})
         own = (settings.instagram_username or "").lstrip("@").lower()
         replies: list[dict] = []
-        for comment_id, ts_raw, username, from_id, _media, text in rows:
+        per_media: dict[str, int] = {}
+        seen_media: set[str] = set()
+        for comment_id, ts_raw, username, from_id, row_media, text in rows:
+            media_id = row_media or fallback_media
+            seen_media.add(media_id)
             ts = _ts(ts_raw)
             if not comment_id or not text or (own and username.lower() == own):
                 continue
             if ts is not None and (ts < since or now - ts > MAX_COMMENT_AGE):
                 continue
-            if len(replies) >= MAX_REPLIES_PER_POST:
-                break
+            if per_media.get(media_id, 0) >= MAX_REPLIES_PER_POST:
+                continue
+            info = state.get("media", {}).get(media_id, {})
             result = await self.bridge.answer(
                 {
                     "event": "comment",
@@ -164,14 +175,21 @@ class MakePoller:
             )
             if result.get("public_reply"):
                 replies.append({"comment_id": comment_id, "message": result["public_reply"]})
+                per_media[media_id] = per_media.get(media_id, 0) + 1
+        if fallback_media:
+            seen_media.add(fallback_media)
         async with self.session_factory() as session:
             state = await self._load(session)
-            state["pending"] = [m for m in state.get("pending", []) if m != media_id]
-            if media_id in state.get("counts", {}):
-                state["counts"][media_id] += len(replies)  # o'zimizning javoblarimiz ham kommentlar sonini oshiradi
+            pending = state.get("pending", {})
+            if isinstance(pending, list):
+                pending = dict.fromkeys(pending, 1)
+            state["pending"] = {m: t for m, t in pending.items() if m not in seen_media}
+            for media_id, n in per_media.items():
+                if media_id in state.get("counts", {}):
+                    state["counts"][media_id] += n  # o'zimizning javoblarimiz ham kommentlar sonini oshiradi
             await self._save(session, state)
             await session.commit()
-        logger.info("IG poll comments: post %s — %d komment, %d javob", media_id, len(rows), len(replies))
+        logger.info("IG poll comments: %d post, %d komment, %d javob", len(seen_media), len(rows), len(replies))
         return {"replies": replies, "count": len(replies)}
 
     async def handle(self, request: web.Request) -> web.Response:
