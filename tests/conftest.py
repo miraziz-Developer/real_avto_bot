@@ -24,5 +24,7 @@ for _key, _value in {
     "IG_ACCESS_TOKEN": "",
     "CATALOG_URL": "",
     "ADMIN_TELEGRAM_IDS": "",
+    # Javob matnlarini tekshiradigan testlar belgisiz ishlaydi; belgi alohida testda
+    "AI_REPLY_LABEL": "",
 }.items():
     os.environ[_key] = _value

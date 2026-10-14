@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone, UTC
 from bot.ai import AIClient, AIError
 from bot.config import sales_phone_entries, settings
 from bot.db.models import Car, CarStatus
-from bot.services.business_info import services_block
+from bot.services.business_info import services_block, with_ai_label
 from bot.services.car_parser import _PHONE_RE
 
 logger = logging.getLogger(__name__)
@@ -270,7 +270,10 @@ async def decide_comment_reply(
         temperature=0.2,
         max_tokens=500,
     )
-    return parse_decision(data)
+    decision = parse_decision(data)
+    if decision.should_reply:
+        decision.reply = with_ai_label(decision.reply)
+    return decision
 
 
 __all__ = ["AIError", "CommentDecision", "car_facts", "decide_comment_reply", "parse_decision"]

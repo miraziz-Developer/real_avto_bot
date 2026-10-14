@@ -177,6 +177,7 @@ class Settings:
     comments_enabled: bool
     comments_ai_enabled: bool
     comments_answer_admins: bool
+    ai_reply_label: str
     discussion_group_id: int | None
     listing_freeze_hours: int
     work_hour_start: int
@@ -283,6 +284,8 @@ settings = Settings(
     # Admin guruhda o'zi savol yozsa (sinash uchun) ham javob beriladi. Admin boshqa odamga reply qilib
     # yozgan xabarlarga (mijozga javob) bot hech qachon aralashmaydi
     comments_answer_admins=_bool("COMMENTS_ANSWER_ADMINS", True),
+    # AI yozgan javob oxiridagi belgi (mijoz javobni AI yozganini bilsin). Bo'sh — belgi qo'yilmaydi
+    ai_reply_label=(os.getenv("AI_REPLY_LABEL", "(🤖 AI yordamchi javobi)") or "").strip(),
     # Muhokama guruhi ID (-100...). Bo'sh — kanal postlari avto-forward bo'ladigan guruh o'zi aniqlanadi
     discussion_group_id=_optional_int("DISCUSSION_GROUP_ID"),
     # Bot orqali kelgan e'lon shuncha ISH soati muzlatiladi (jamoa sotib olishi mumkin), keyin avtomatik kanalga.

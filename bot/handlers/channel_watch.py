@@ -49,7 +49,8 @@ _album_tasks: dict[str, asyncio.Task] = {}
 
 # Matnsiz media post (masalan dumaloq video) — ortidan kelgan matnli post bilan bitta e'lon qilish uchun.
 # Forward qilinganda reply bog'lanishi yo'qoladi: video va uning tavsifi ketma-ket ikki post bo'lib keladi.
-ORPHAN_MEDIA_SECONDS = 120
+# Kanalda dumaloq video va tavsif orasi odatda 2–40 s, ba'zan 2 daqiqadan oshadi
+ORPHAN_MEDIA_SECONDS = 300
 _orphan_media: dict[int, tuple[float, list[Message]]] = {}
 # Gapirilgan video o'zi mashina bo'lib yaratilgan bo'lsa — ortidan kelgan tavsif shu mashinani to'ldiradi
 _recent_media_car: dict[int, tuple[float, int]] = {}
@@ -462,7 +463,8 @@ async def _sold_by_announcement(
         for car in candidates[:3]:
             await send_car_card_to_admins(bot, car, header="❓ <b>Shu mashina sotildimi?</b>")
         return
-    if create_if_missing and parsed.looks_like_car():
+    # «DAMAS SOTILDI» — faqat model: bazada yo'q bo'lsa, ma'lumotsiz «sotilgan» yozuv yaratmaymiz
+    if create_if_missing and parsed.looks_like_car() and (parsed.year or parsed.mileage_km):
         photos, videos = _media_of(messages)
         car = await cars.create_from_parsed(
             parsed,

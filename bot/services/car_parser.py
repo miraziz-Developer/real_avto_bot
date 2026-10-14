@@ -16,7 +16,10 @@ from bot.data.car_catalog import BRAND_MODELS
 
 # «sotiladi» (sotuvda) ni «sotildi» deb adashtirmaslik uchun aniq so'zlar.
 _SOLD_RE = re.compile(
-    r"(?<![\w])(sotildi|sotilgan|сотилди|сотилган|продан[оа]?|sold\s*out|sold)(?![\w])",
+    # «sotildi» va kanaldagi xato yozilishlari («SOTiIDi»); «sotiladi» (sotuvda) bunga tushmaydi.
+    # «BARAKA BO'LDI» (BOLDI, BÕLDI, BO'lLDI) — kanal sotilgan mashina uchun shunday yozadi
+    r"(?<![\w])(sot[il]{2,3}di|sotilgan|сотилди|сотилган|продан[оа]?|sold\s*out|sold|baraka\s+bo'?l+di|"
+    r"барака\s+бўлди|барака\s+булди)(?![\w])",
     re.IGNORECASE,
 )
 
@@ -99,7 +102,10 @@ def has_phone(text: str | None) -> bool:
 
 # --- Matnni tozalash -------------------------------------------------------------
 
-_APOSTROPHES = str.maketrans({"‘": "'", "’": "'", "ʻ": "'", "ʼ": "'", "`": "'"})
+_APOSTROPHES = str.maketrans(
+    # «Õ», «Ô» — ba'zi yozuvchilar «O'» o'rniga ishlatadi (BÕLDI, NEKSIYA BÔLDI)
+    {"‘": "'", "’": "'", "ʻ": "'", "ʼ": "'", "`": "'", "õ": "o'", "ô": "o'", "Õ": "O'", "Ô": "O'"}
+)
 
 
 def normalize_text(text: str) -> str:
@@ -146,6 +152,7 @@ _MODEL_ALIASES: dict[str, tuple[str, str]] = {
     "малибу": ("Chevrolet", "Malibu"),
     "tracker": ("Chevrolet", "Tracker"),
     "trekker": ("Chevrolet", "Tracker"),
+    "treker": ("Chevrolet", "Tracker"),
     "трекер": ("Chevrolet", "Tracker"),
     "captiva": ("Chevrolet", "Captiva"),
     "kaptiva": ("Chevrolet", "Captiva"),
@@ -156,6 +163,10 @@ _MODEL_ALIASES: dict[str, tuple[str, str]] = {
     "equinox": ("Chevrolet", "Equinox"),
     "cruze": ("Chevrolet", "Cruze"),
     "epica": ("Chevrolet", "Epica"),
+    "epika": ("Chevrolet", "Epica"),
+    "эпика": ("Chevrolet", "Epica"),
+    "tiida": ("Nissan", "Tiida"),
+    "tida": ("Nissan", "Tiida"),
     "orlando": ("Chevrolet", "Orlando"),
     "tico": ("Daewoo", "Tico"),
     "тико": ("Daewoo", "Tico"),
@@ -344,6 +355,8 @@ def parse_mileage(text: str) -> int | None:
         if val is None:
             continue
         km = int(_apply_multiplier(val, m.group(2)))
+        if km == 0 and "?" in text[max(0, m.start() - 8) : m.end()]:
+            continue  # «probeg: ???.000km» — noma'lum, 0 emas
         if 0 <= km <= MILEAGE_MAX_KM:
             return km
     return None

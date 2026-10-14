@@ -155,7 +155,8 @@ def test_merge_missing_keeps_regex_values():
 @pytest.mark.parametrize(
     ("text", "strict", "extended"),
     [
-        ("Baraka bo'ldi ✅", False, True),
+        # Kanal sotilgan mashinani «BARAKA BO'LDI» deb e'lon qiladi — bu har qanday postda sotildi
+        ("Baraka bo'ldi ✅", True, True),
         ("Barakasini bersin", False, True),
         ("olib ketildi", False, True),
         ("SOTILDI", True, True),
@@ -199,3 +200,49 @@ def test_model_names_with_uzbek_and_russian_suffixes():
         assert detect_brand_model(normalize_text(text))[1] == model, text
     # Tasodifiy so'zlar model bo'lib qolmaydi
     assert detect_brand_model(normalize_text("so'ngi narxi qancha"))[1] is None
+
+
+# @REAL_AVTO_ARZON kanalidan haqiqiy postlar (2026-oktyabr)
+REAL_CHANNEL_SOLD = [
+    "DAMAS BARAKA BOʻLDI🤝",
+    "SPARK BARAKA BOLDI🤝❗️",
+    "NEKSIYA BARAKA BÔLDI🤝🤝",
+    "MATIZ BARAKA BÕLDI🤝",
+    "JENTRA BARAKA BO’LDI",
+    "ONIX MEXANIKA BARAKA BO’lLDI",
+    "2021 DAMAS\nBARAKA BO’LDI",
+    "DAMAS SOTiIDi🤝",
+    "🚘AVTOMOBIL: DAMAS\n🗓️yili: 2025\n📍probeg: 32.000km\n \n❗️—SOTILDI—❗️",
+]
+REAL_CHANNEL_NOT_CARS = [
+    "BUGUN\n📆13.10.2026\n          NASIYA SOVDASI BOR\n☎️Aloqa: +998 (97) 433 76 08\n☎️Aloqa: +998 (97) 782 92 99",
+    "KELORASILA🫡",
+    "🏠: kadastrli uy\n🗺️: 5.7 sotix\n\n📞Aloqa: +998 99 306 31 16 EGA",
+]
+
+
+@pytest.mark.parametrize("text", REAL_CHANNEL_SOLD)
+def test_real_channel_sold_posts(text):
+    assert is_sold_text(text)
+
+
+@pytest.mark.parametrize("text", ["Spark sotiladi, 2019", "barakasini bersin, Cobalt 2020 sotuvda", "Sotildimi?"])
+def test_not_sold(text):
+    assert not is_sold_text(text)
+
+
+@pytest.mark.parametrize("text", REAL_CHANNEL_NOT_CARS)
+def test_real_channel_non_car_posts(text):
+    assert not parse_car_text(text, usd_rate_uzs=12800).looks_like_car()
+
+
+def test_real_channel_listing_format():
+    p = parse_car_text(
+        "🚘AVTOMOBIL: COBALT AVTOMAT\n🗓️yili: 2020\n📍probeg: 105.000km\n\n📞Aloqa: +998 (88) 345 66 00",
+        usd_rate_uzs=12800,
+    )
+    assert (p.brand, p.model, p.year, p.mileage_km, p.transmission) == ("Chevrolet", "Cobalt", 2020, 105000, "avtomat")
+    assert parse_car_text("🚘AVTOMOBIL: TREKER LTZ PLUS\n🗓️yili: 2026", usd_rate_uzs=12800).model == "Tracker"
+    assert parse_car_text("🚘Avtomobil: EPIKA AVTAMAT", usd_rate_uzs=12800).model == "Epica"
+    assert parse_car_text("🚘AVTOMOBIL: NISSAN TIIDA", usd_rate_uzs=12800).model == "Tiida"
+    assert parse_car_text("🚘AVTOMOBIL: MATIZ BEST\n📍probeg:???.000km", usd_rate_uzs=12800).mileage_km is None

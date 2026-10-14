@@ -31,3 +31,20 @@ def services_block(bot_username: str | None) -> str:
         "yuboradi; jamoa ko'rib chiqadi: yoki o'zimiz narx taklif qilamiz, yoki e'loni kanalga chiqadi. "
         "Narxni oldindan aytma — mashinani ko'rmasdan baholab bo'lmaydi; menejer bilan ham bog'lanishi mumkin."
     )
+
+
+def with_ai_label(text: str) -> str:
+    """AI yozgan javob oxiriga belgi: «(🤖 AI yordamchi javobi)». Takror qo'shilmaydi."""
+    label = settings.ai_reply_label
+    text = (text or "").rstrip()
+    if not label or not text or text.endswith(label):
+        return text
+    return f"{text}\n\n{label}"
+
+
+def strip_ai_label(text: str) -> str:
+    """Tarixdan belgini olib tashlash — model o'z javoblarini belgisiz ko'rsin (belgini o'zi yozmasin)."""
+    label = settings.ai_reply_label
+    if label and text and text.rstrip().endswith(label):
+        return text.rstrip()[: -len(label)].rstrip()
+    return text

@@ -60,3 +60,19 @@ def test_reply_language_and_seller_phone_hidden():
         )
     )
     assert "111" not in payload["post_matni"] and payload["javob_tili"] == "o'zbek (lotin)"
+
+
+def test_ai_label_added_once_and_stripped_from_history():
+    from bot import config
+    from bot.services.business_info import strip_ai_label, with_ai_label
+
+    old = config.settings.ai_reply_label
+    object.__setattr__(config.settings, "ai_reply_label", "(🤖 AI yordamchi javobi)")
+    try:
+        labelled = with_ai_label("Narxi $8 500.")
+        assert labelled == "Narxi $8 500.\n\n(🤖 AI yordamchi javobi)"
+        assert with_ai_label(labelled) == labelled
+        assert strip_ai_label(labelled) == "Narxi $8 500."
+        assert with_ai_label("") == ""
+    finally:
+        object.__setattr__(config.settings, "ai_reply_label", old)
