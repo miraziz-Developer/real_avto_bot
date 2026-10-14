@@ -171,6 +171,8 @@ psql() { docker compose exec -T db psql -U postgres -d real_avto_konkurs -At -c 
 cars="$(psql "select status, count(*) from cars group by status order by status" | tr '\n' ' ')"
 [ -n "$cars" ] && ok "mashinalar: ${cars}" || note "mashinalar jadvali bo'sh"
 ok "leadlar: $(psql 'select count(*) from leads' || echo '?'), foydalanuvchilar: $(psql 'select count(*) from users' || echo '?')"
+last="$(psql "select '#' || id || ' ' || coalesce(model,'?') || ' ' || coalesce(year::text,'') || ' · ' || status || ' · xabarlar ' || array_to_string(channel_message_ids, ',') || ' · tinglangan video ' || (length(raw_text) - length(replace(raw_text, '[Ovoz]', ''))) / 6 || ' · rang ' || coalesce(color,'-') from cars where source = 'channel' order by id desc limit 3" | tr '\n' ';')"
+ok "oxirgi kanal mashinalari: ${last:-yo'q}"
 ig="$(psql "select coalesce((select left(value::jsonb->>'since', 16) || ' · postlar: ' || (select count(*) from jsonb_object_keys(value::jsonb->'counts')) || ' · kutilmoqda: ' || (case jsonb_typeof(value::jsonb->'pending') when 'object' then (select count(*) from jsonb_object_keys(value::jsonb->'pending')) when 'array' then jsonb_array_length(value::jsonb->'pending') else 0 end) from app_meta where key = 'ig_poll_state'), 'yo''q')")"
 ok "Instagram tekshiruvi: holat ${ig:-?} · javob berilgan kommentlar: $(psql 'select count(*) from instagram_comments' || echo 0)"
 
