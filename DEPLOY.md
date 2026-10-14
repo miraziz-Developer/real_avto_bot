@@ -362,7 +362,7 @@ itself (`POST https://PUBLIC_HOST/webhooks/make/poll`, same `Authorization` head
 *Instagram for Business → List user media* (limit 10) → *Text aggregator* (one row per post:
 `id␟comments_count␟permalink␟media_type␟media_url␟caption␞`) → HTTP `stage=media`, `rows` → the bot answers
 `{"check": [media ids whose comment count grew]}` → filter `length(check) > 0` → *Iterator* → *List media comments*
-→ *Text aggregator* (`id␟timestamp␟username␟from.id␟text␞`) → HTTP `stage=comments`, `media_id`, `rows` → the bot
+→ *Text aggregator* (`id␟timestamp␟username␟from.id␟media_id␟text␞`) → HTTP `stage=comments`, `media_id`, `rows` → the bot
 answers `{"replies": [{"comment_id", "message"}]}` → filter → *Iterator* → *Create a Reply*. The first run only
 remembers the counts (old comments are never answered); every comment is answered once, by the webhook or the poll
 (`instagram_comments`). A quiet run costs 3 Make operations; on the free plan (1 000 operations a month) run it every

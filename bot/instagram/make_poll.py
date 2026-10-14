@@ -128,8 +128,10 @@ class MakePoller:
 
     async def comments(self, payload: dict) -> dict:
         """Bitta post kommentlari → yangi kommentlarga javoblar."""
-        media_id = str(payload.get("media_id") or "").strip()
-        rows = parse_rows(payload.get("rows", ""), 5)  # id, timestamp, username, from_id, text
+        # id, timestamp, username, from_id, media_id, text (Make'da iterator qiymati aggregator'dan keyin ko'rinmaydi —
+        # post ID har bir qatorda keladi)
+        rows = parse_rows(payload.get("rows", ""), 6)
+        media_id = str(payload.get("media_id") or "").strip() or next((r[4] for r in rows if r[4]), "")
         now = datetime.now(UTC)
         async with self.session_factory() as session:
             state = await self._load(session)
@@ -137,7 +139,7 @@ class MakePoller:
         info = state.get("media", {}).get(media_id, {})
         own = (settings.instagram_username or "").lstrip("@").lower()
         replies: list[dict] = []
-        for comment_id, ts_raw, username, from_id, text in rows:
+        for comment_id, ts_raw, username, from_id, _media, text in rows:
             ts = _ts(ts_raw)
             if not comment_id or not text or (own and username.lower() == own):
                 continue

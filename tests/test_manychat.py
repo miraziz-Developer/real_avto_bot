@@ -479,11 +479,11 @@ async def test_make_poll_media_then_comments_once(factory):
             old = (now - timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%S+0000")
             new = (now + timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%S+0000")
             rows = R.join([
-                F.join(["c1", old, "eski_mijoz", "11", "narxi qancha?"]),
-                F.join(["c2", new, "aziz_ig", "12", "gentra narxi qancha?"]),
-                F.join(["c3", new, "real_avto_arzon", "13", "Rahmat!"]),
+                F.join(["c1", old, "eski_mijoz", "11", "1801", "narxi qancha?"]),
+                F.join(["c2", new, "aziz_ig", "12", "1801", "gentra narxi qancha?"]),
+                F.join(["c3", new, "real_avto_arzon", "13", "1801", "Rahmat!"]),
             ])
-            r = await post({"stage": "comments", "media_id": "1801", "rows": rows})
+            r = await post({"stage": "comments", "media_id": "", "rows": rows})  # post ID qatordan olinadi
             assert [x["comment_id"] for x in r["replies"]] == ["c2"] and "Gentra" in r["replies"][0]["message"]
             # Qayta kelsa — javob yozilmaydi; bizning javobimiz kommentlar sonini oshirgani tekshiruvga sabab bo'lmaydi
             assert (await post({"stage": "comments", "media_id": "1801", "rows": rows}))["replies"] == []
