@@ -38,10 +38,12 @@ for arg in "$@"; do
     set_env "$key" "$value"
 done
 
-if [ "$ARCHIVE" = 1 ] && [ -n "$OLD_CHANNEL" ] && [[ "$OLD_CHANNEL" =~ ^-?[0-9]+$ ]] && [ "$OLD_CHANNEL" != "$(get_env CHANNEL_ID)" ]; then
+NEW_CHANNEL="$(get_env CHANNEL_ID)"
+if [ "$ARCHIVE" = 1 ] && [[ "$NEW_CHANNEL" =~ ^-[0-9]+$ ]] && [ "$NEW_CHANNEL" != "$OLD_CHANNEL" ]; then
+    # Boshqa (eski/test) kanaldan olingan, hali sotuvdagi mashinalar — katalog va AI javoblaridan chiqadi
     n="$(docker compose exec -T db psql -U postgres -d real_avto_konkurs -At -c \
-        "with a as (update cars set status='archived' where channel_chat_id=$OLD_CHANNEL and status in ('active','reserved','review') returning 1) select count(*) from a" < /dev/null)"
-    echo "Eski kanal ($OLD_CHANNEL) mashinalari arxivlandi: $n"
+        "with a as (update cars set status='archived' where channel_chat_id is not null and channel_chat_id <> $NEW_CHANNEL and status in ('active','reserved','review') returning 1) select count(*) from a" < /dev/null)"
+    echo "Eski kanal mashinalari arxivlandi: $n"
 fi
 
 docker compose up -d --force-recreate bot backend < /dev/null

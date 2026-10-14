@@ -1,13 +1,16 @@
 name: Update settings
 
 # Changes public settings (channel, discussion group, business info) in the server .env and restarts the bot.
-# Run from the Actions tab: "Run workflow" → e.g. "CHANNEL_ID=-1001234567890 CHANNEL_USERNAME=realavto".
+# Push with "[settings]" in the commit message applies deploy/settings-update.env; or run it from the Actions tab.
 on:
+  push:
+    branches: [main, claude/lucid-pascal-2zqc9d]
+    paths: [deploy/settings-update.env]
   workflow_dispatch:
     inputs:
       settings:
         description: "KEY=VALUE pairs separated by spaces (allowed keys: see scripts/env_update.sh)"
-        required: true
+        required: false
       archive_old_channel:
         description: "Archive cars on sale from the previous CHANNEL_ID (test channel)"
         type: boolean
@@ -15,6 +18,7 @@ on:
 
 jobs:
   update:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[settings]')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -43,6 +47,10 @@ jobs:
 
       - name: Update and restart
         run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            SETTINGS="$(grep -E '^[A-Z_]+=' deploy/settings-update.env | grep -v '^ARCHIVE_OLD_CHANNEL=' | tr '\n' ' ')"
+            grep -q '^ARCHIVE_OLD_CHANNEL=1' deploy/settings-update.env && ARCHIVE=true || ARCHIVE=false
+          fi
           args=()
           for pair in $SETTINGS; do
             [[ "$pair" =~ ^[A-Z_]+=[A-Za-z0-9@_.:/+-]*$ ]] || { echo "::error::Bad pair: $pair"; exit 1; }
