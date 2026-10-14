@@ -26,10 +26,12 @@ import asyncio
 import hashlib
 import hmac
 import html
+import json
 import logging
 import re
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qs
 
 import aiohttp
 from aiogram import Bot
@@ -145,6 +147,23 @@ def dynamic_block(texts: list[str], image_urls: list[str] | None = None) -> dict
     for t in texts:
         messages.extend({"type": "text", "text": part} for part in split_text(t))
     return {"version": "v2", "content": {"type": "instagram", "messages": messages, "actions": [], "quick_replies": []}}
+
+
+async def read_payload(request: web.Request) -> dict:
+    """So'rov maydonlari: JSON, forma yoki URL-kodlangan matn.
+
+    Make.com «x-www-form-urlencoded» maydonlari ba'zan application/octet-stream bo'lib keladi — shuning uchun
+    Make so'rovni «raw» matn (`a=...&b=...`, qiymatlar encodeURL bilan) qilib yuboradi.
+    """
+    if request.content_type in ("application/x-www-form-urlencoded", "multipart/form-data"):
+        return {k: str(v) for k, v in (await request.post()).items()}
+    raw = (await request.read()).decode("utf-8", "replace").strip()
+    if raw.startswith("{"):
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("JSON obyekt kerak")
+        return data
+    return {k: v[-1] for k, v in parse_qs(raw, keep_blank_values=True).items()}
 
 
 class ManyChatAPI:
@@ -602,11 +621,7 @@ class ManyChatBridge:
         if not self._authorized(request):
             return web.json_response({"error": "unauthorized"}, status=401)
         try:
-            if request.content_type in ("application/x-www-form-urlencoded", "multipart/form-data"):
-                # Make.com «Fields» — JSON yozish shart emas (komment matnidagi qo'shtirnoqlar ham buzmaydi)
-                payload = {k: str(v) for k, v in (await request.post()).items()}
-            else:
-                payload = await request.json()
+            payload = await read_payload(request)
         except ValueError:
             return web.json_response({"error": "json kerak"}, status=400)
         if not isinstance(payload, dict) or not subscriber_key(payload):

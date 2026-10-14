@@ -467,7 +467,12 @@ async def test_make_poll_media_then_comments_once(factory):
             async def post(data):
                 return await (await client.post(POLL_PATH, data=data, headers=AUTH)).json()
 
-            assert (await post({"stage": "media", "rows": media_rows(2)}))["check"] == []  # birinchi — faqat eslab qoladi
+            from urllib.parse import quote
+
+            # Make «raw» matn (application/octet-stream / text/plain) — qiymatlar encodeURL bilan
+            raw = f"stage=media&rows={quote(media_rows(2))}"
+            first = await client.post(POLL_PATH, data=raw.encode(), headers={**AUTH, "Content-Type": "application/octet-stream"})
+            assert (await first.json())["check"] == []  # birinchi — faqat eslab qoladi
             assert (await post({"stage": "media", "rows": media_rows(2)}))["check"] == []  # o'zgarish yo'q
             assert (await post({"stage": "media", "rows": media_rows(5)}))["check"] == ["1801"]
             now = datetime.now(UTC)

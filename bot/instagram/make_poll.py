@@ -25,6 +25,7 @@ from bot.config import settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import AppMeta
 from bot.instagram.car_match import remember_post
+from bot.instagram.manychat import read_payload
 
 logger = logging.getLogger(__name__)
 
@@ -175,10 +176,7 @@ class MakePoller:
         if not self.bridge._authorized(request):
             return web.json_response({"error": "unauthorized"}, status=401)
         try:
-            if request.content_type == "application/json":
-                payload = {k: str(v) for k, v in (await request.json()).items()}
-            else:
-                payload = {k: str(v) for k, v in (await request.post()).items()}
+            payload = {k: str(v) for k, v in (await read_payload(request)).items()}
         except ValueError:
             return web.json_response({"error": "form kerak"}, status=400)
         stage = payload.get("stage", "")
