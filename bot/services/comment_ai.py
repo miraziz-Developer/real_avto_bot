@@ -136,9 +136,23 @@ PLATFORMA: INSTAGRAM (post/reel kommentlari). Yuqoridagi qoidalar o'z kuchida, f
 - Javob 1–2 qisqa gap, hashtag yo'q."""
 
 
+# Direct yuborilmaydigan ulanish (Make.com): javob to'liq komment ostida
+INSTAGRAM_PUBLIC_OVERRIDES = INSTAGRAM_OVERRIDES.replace(
+    """- Sen Instagram sahifasi kommentlariga javob beryapsan. "botda" o'rniga "Direct'da (shaxsiy xabarda) batafsil yozdik"
+  de — batafsil javob mijozga Direct'da alohida boradi. Telegram bot havolasini berma.""",
+    """- Sen Instagram sahifasi kommentlariga javob beryapsan. Javob FAQAT shu komment ostida bo'ladi (Direct yuborilmaydi):
+  savolga shu yerning o'zida faktlar bilan javob ber. "botda" o'rniga batafsil uchun salon telefoniga qo'ng'iroq qilish
+  yoki Direct'ga yozishni taklif qil. Telegram bot havolasini berma.""",
+)
+
+
 def build_system_prompt(now: datetime | None = None, *, bot_username: str | None = None, platform: str = "telegram") -> str:
     prompt = _build_system_prompt(now, bot_username=bot_username)
-    return prompt + INSTAGRAM_OVERRIDES if platform == "instagram" else prompt
+    if platform == "instagram":
+        return prompt + INSTAGRAM_OVERRIDES
+    if platform == "instagram_public":
+        return prompt + INSTAGRAM_PUBLIC_OVERRIDES
+    return prompt
 
 
 def _build_system_prompt(now: datetime | None = None, *, bot_username: str | None = None) -> str:

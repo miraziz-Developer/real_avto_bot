@@ -21,6 +21,16 @@ class IGError(RuntimeError):
     pass
 
 
+async def download_url(url: str, *, max_bytes: int) -> tuple[bytes, str]:
+    """Post videosi (CDN havolasi, token kerak emas). Juda katta bo'lsa — bo'sh."""
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as http, http.get(url) as resp:
+        if resp.status != 200 or (resp.content_length or 0) > max_bytes:
+            return b"", ""
+        data = await resp.content.read(max_bytes + 1)
+        mime = (resp.headers.get("Content-Type") or "video/mp4").split(";")[0].strip()
+    return (b"", "") if len(data) > max_bytes else (data, mime)
+
+
 def split_text(text: str, limit: int = IG_TEXT_LIMIT) -> list[str]:
     """Uzun javobni Instagram chegarasiga moslab bo'lish (iloji boricha qator chegarasida)."""
     text = text.strip()
@@ -138,13 +148,7 @@ class InstagramClient:
         return [m for m in data.get("data") or [] if m.get("id")]
 
     async def download(self, url: str, *, max_bytes: int) -> tuple[bytes, str]:
-        """Post videosi (CDN havolasi, token kerak emas). Juda katta bo'lsa — bo'sh."""
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as http, http.get(url) as resp:
-            if resp.status != 200 or (resp.content_length or 0) > max_bytes:
-                return b"", ""
-            data = await resp.content.read(max_bytes + 1)
-            mime = (resp.headers.get("Content-Type") or "video/mp4").split(";")[0].strip()
-        return (b"", "") if len(data) > max_bytes else (data, mime)
+        return await download_url(url, max_bytes=max_bytes)
 
     async def refresh_token(self) -> str | None:
         """Uzoq muddatli token (60 kun) muddatini yangilash — yangi token qaytadi."""

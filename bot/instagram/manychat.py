@@ -61,6 +61,7 @@ from bot.utils.currency import fmt_price
 logger = logging.getLogger(__name__)
 
 MANYCHAT_PATH = "/manychat/instagram"
+MAKE_PATH = "/webhooks/make"
 MANYCHAT_API = "https://api.manychat.com"
 LEAD_ID_OFFSET = 10**13
 MAX_PHOTOS = 4
@@ -68,6 +69,8 @@ MEDIA_MAX_BYTES = 19 * 1024 * 1024
 ADMIN_CAR_CHOICES = 8
 # Shu toifadagi kommentga batafsil javob Direct'da (savdo agenti) ham beriladi
 DM_CATEGORIES = frozenset({"question", "buy_intent", "sell_car"})
+# Instagram komment chegarasi 2200 belgi — ochiq javob qisqa bo'lsin
+PUBLIC_REPLY_MAX = 900
 PUBLIC_COMMENT_REPLY = "Assalomu alaykum! Javobni Direct'ga yubordik 📩"
 HOLD_REPLY = "Assalomu alaykum! Savolingizni oldik, bir daqiqada javob beramiz 🙏"
 LATE_FALLBACK_REPLY = "Assalomu alaykum! Savolingizni oldik — menejerimiz tez orada javob beradi 🙏"
@@ -278,6 +281,12 @@ class ManyChatBridge:
         result: dict[str, Any] = {"reply": "", "public_reply": "", "car_id": None, "images": []}
         if not text:
             return result
+        own = (settings.instagram_username or "").lstrip("@").lower()
+        if own and username.lower() == own:
+            return result  # o'zimizning javobimiz (Make kommentlarni, o'zimiznikini ham, qayta yuboradi)
+        # Make.com: Direct yuborilmaydi ("dm": false) — javob to'liq komment ostida bo'ladi
+        dm_ok = _field(payload, "dm", limit=10).lower() not in ("false", "0", "no")
+        media_url = _field(payload, "media_url", limit=2000)
         ai_comments = is_comment and settings.comments_ai_enabled and get_ai().enabled
         if is_comment and not ai_comments and not (is_question(text) or has_buy_intent(text)):
             return result  # AI yo'q va savol emas («zo'r 🔥») — javob shart emas
@@ -306,7 +315,10 @@ class ManyChatBridge:
                 text=text,
             )
             if ai_comments:
-                decision = await self._decide(cars, match.car, text, author=name or username, sub=sub, caption=post_info["caption"])
+                decision = await self._decide(
+                    cars, match.car, text, author=name or username, sub=sub, caption=post_info["caption"],
+                    platform="instagram" if dm_ok else "instagram_public",
+                )
             if not is_comment:
                 wants_dm = True
             elif decision is not None:
@@ -314,14 +326,19 @@ class ManyChatBridge:
                 wants_dm = decision.category in DM_CATEGORIES or decision.buy_intent
             else:
                 wants_dm = is_question(text) or has_buy_intent(text)
-            if wants_dm:
+            # Direct yo'q va komment AI ochiq javobni yozgan bo'lsa — savdo agenti shart emas
+            if wants_dm and (dm_ok or not is_comment or decision is None):
                 reply = await self._agent_reply(
                     session, cars, sub, text, match, is_comment=is_comment, username=username, name=name,
                     photo_sender=photo_sender,
                 )
                 result.update(reply=reply or "", images=images)
             result["car_id"] = match.car.id if match.car else None
-            if match.car is None and match.post is not None and match.post.asked_admin_at is None and wants_dm:
+            # Post videosi bor (Make beradi) — avval AI videoni ko'radi, keyin kerak bo'lsa adminlardan so'raladi
+            watch_post = match.car is None and match.post is not None and media_url.startswith("https://")
+            if watch_post:
+                self._spawn(self._link_post_video(ref, post_info, media_url))
+            elif match.car is None and match.post is not None and match.post.asked_admin_at is None and wants_dm:
                 ask_post = match.post
                 ask_post.asked_admin_at = datetime.now(UTC)
                 choices = await cars.search_offerable(limit=ADMIN_CAR_CHOICES)
@@ -329,8 +346,10 @@ class ManyChatBridge:
         if is_comment:
             public = decision.reply if decision is not None and decision.should_reply else ""
             if not public and result["reply"]:
-                public = PUBLIC_COMMENT_REPLY
+                public = PUBLIC_COMMENT_REPLY if dm_ok else result["reply"][:PUBLIC_REPLY_MAX]
             result["public_reply"] = public
+            if not dm_ok:
+                result.update(reply="", images=[])
         who = f"@{username}" if username else (name or sub)
         if ask_post is not None:
             await ask_admins_about_post(self.bot, ask_post, choices, who=who, text=text)
@@ -343,8 +362,31 @@ class ManyChatBridge:
         )
         return result
 
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _link_post_video(self, ref: str | None, post_info: dict, media_url: str) -> None:
+        from bot.workers.ig_sync import link_media  # ig_sync → manychat (aylanma import)
+
+        media = {"id": ref, "caption": post_info["caption"], "permalink": post_info["permalink"],
+                 "media_type": "VIDEO", "media_url": media_url}
+        try:
+            await link_media(self.bot, self.session_factory, media)
+        except Exception:
+            logger.exception("Instagram post videosini bog'lab bo'lmadi (%s)", ref)
+
     async def _decide(
-        self, cars: CarRepository, car: Car | None, text: str, *, author: str, sub: str, caption: str
+        self,
+        cars: CarRepository,
+        car: Car | None,
+        text: str,
+        *,
+        author: str,
+        sub: str,
+        caption: str,
+        platform: str = "instagram",
     ) -> CommentDecision | None:
         """Komment AI (Telegram kommentlari bilan bir xil «miya»): toifa va ochiq javob."""
         if not await get_budget().allow_user(f"mc:{sub}"):
@@ -368,7 +410,7 @@ class ManyChatBridge:
                 other_cars=other,
                 post_text=post_text or None,
                 general_inventory=general,
-                platform="instagram",
+                platform=platform,
             )
         except AIError as e:
             logger.warning("Instagram komment AI ishlamadi: %s", e)
@@ -485,7 +527,11 @@ class ManyChatBridge:
         if not self._authorized(request):
             return web.json_response({"error": "unauthorized"}, status=401)
         try:
-            payload = await request.json()
+            if request.content_type in ("application/x-www-form-urlencoded", "multipart/form-data"):
+                # Make.com «Fields» — JSON yozish shart emas (komment matnidagi qo'shtirnoqlar ham buzmaydi)
+                payload = {k: str(v) for k, v in (await request.post()).items()}
+            else:
+                payload = await request.json()
         except ValueError:
             return web.json_response({"error": "json kerak"}, status=400)
         if not isinstance(payload, dict) or not _field(payload, "user_id", "subscriber_id", limit=40).isdigit():
@@ -528,4 +574,5 @@ class ManyChatBridge:
 
     def add_routes(self, app: web.Application) -> None:
         app.router.add_post(MANYCHAT_PATH, self.handle)
+        app.router.add_post(MAKE_PATH, self.handle)  # Make.com — xuddi shu format
         app.on_cleanup.append(self.close)

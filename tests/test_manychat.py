@@ -339,3 +339,41 @@ async def test_without_post_info_asks_which_car_then_uses_code(factory):
         # Reel matnidagi kodni kommentga yozsa ham bo'ladi
         body = await (await client.post(MANYCHAT_PATH, json=comment("kod 4 narxi qancha?", user_id="9"), headers=AUTH)).json()
         assert body["car_id"] == 4 and "Gentra" in body["reply"]
+
+
+async def test_make_mode_public_answer_own_reply_and_video(factory, monkeypatch):
+    from bot.workers import ig_sync
+
+    async def fake_download(url, *, max_bytes):
+        return b"v", "video/mp4"
+
+    monkeypatch.setattr(ig_sync, "get_ai", lambda: FakeVideoAI())
+    monkeypatch.setattr(ig_sync, "get_budget", lambda: AllowAll())
+    monkeypatch.setattr(ig_sync, "download_url", fake_download)
+    object.__setattr__(config.settings, "instagram_username", "realavto")
+    bot = FakeBot()
+    bridge = ManyChatBridge(bot, factory)
+    try:
+        async with TestClient(TestServer(app_for(bridge))) as client:
+            make = {"user_id": "17841400000000777", "event": "comment", "ig_username": "aziz_ig", "dm": "false"}
+            # O'zimizning javobimiz qayta keldi — jim
+            own = await (await client.post("/webhooks/make", json={**make, "ig_username": "realavto", "text": "narxi?"}, headers=AUTH)).json()
+            assert own["public_reply"] == "" and own["reply"] == ""
+            # Post matni hech narsa demaydi, lekin video bor — javob ochiq, «Direct'ga» demaydi
+            body = {**make, "text": "narxi qancha?", "media_id": "1795", "caption": "Yangi kelgan 🔥",
+                    "media_url": "https://cdn/1795"}
+            r = await (await client.post("/webhooks/make", json=body, headers=AUTH)).json()
+            assert r["reply"] == "" and "Direct" not in r["public_reply"] and "Raqamini yozing" in r["public_reply"]
+            await asyncio.gather(*list(bridge._tasks))  # fonda video ko'rildi
+            r = await (await client.post("/webhooks/make", json={**body, "text": "probegi qancha?"}, headers=AUTH)).json()
+            assert r["car_id"] == 4 and "Gentra" in r["public_reply"]
+    finally:
+        object.__setattr__(config.settings, "instagram_username", "x")
+    assert any("video bo'yicha" in t for _, t, _ in bot.sent)
+
+
+async def test_form_fields_are_accepted(factory):
+    async with TestClient(TestServer(app_for(ManyChatBridge(FakeBot(), factory)))) as client:
+        form = {"user_id": "12345", "event": "comment", "dm": "false", "text": 'gentra "narxi" qancha?'}
+        body = await (await client.post("/webhooks/make", data=form, headers=AUTH)).json()
+    assert body["car_id"] == 4 and "Gentra" in body["public_reply"] and body["reply"] == ""

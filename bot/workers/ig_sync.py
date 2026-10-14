@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from aiogram import Bot
@@ -25,7 +26,7 @@ from bot.config import settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import AppMeta, Car
 from bot.instagram.car_match import get_post, match_caption, match_parsed, remember_post
-from bot.instagram.client import IGError, InstagramClient
+from bot.instagram.client import IGError, InstagramClient, download_url
 from bot.instagram.manychat import ADMIN_CAR_CHOICES, ask_admins_about_post
 from bot.services.car_cards import notify_admins_text
 from bot.services.car_extract import extract_car
@@ -49,12 +50,15 @@ def _posted_at(media: dict) -> datetime | None:
         return None
 
 
-async def _watch_video(ig: InstagramClient, url: str) -> str:
+Downloader = Callable[..., Awaitable[tuple[bytes, str]]]
+
+
+async def _watch_video(download: Downloader, url: str) -> str:
     ai = get_ai()
     if not (ai.enabled and getattr(ai, "supports_video", False)) or not await get_budget().allow_user("ig:sync"):
         return ""
     try:
-        data, mime = await ig.download(url, max_bytes=VIDEO_MAX_BYTES)
+        data, mime = await download(url, max_bytes=VIDEO_MAX_BYTES)
         if not data:
             return ""
         return await ai.transcribe(data, filename="video.mp4", mime_type=mime if mime.startswith("video/") else "video/mp4")
@@ -63,48 +67,72 @@ async def _watch_video(ig: InstagramClient, url: str) -> str:
         return ""
 
 
+async def link_media(
+    bot: Bot,
+    session_factory: async_sessionmaker[AsyncSession],
+    media: dict,
+    *,
+    download: Downloader | None = None,
+    watch_video: bool = True,
+    now: datetime | None = None,
+) -> Car | None:
+    """Bitta Instagram postini mashinaga bog'lash: matn → (kerak bo'lsa) video → admin tanlovi.
+
+    Allaqachon bog'langan, admin hal qilgan yoki adminlardan so'ralgan postga tegmaydi.
+    """
+    now = now or datetime.now(UTC)
+    download = download or download_url
+    ref = str(media["id"])
+    caption = media.get("caption") or ""
+    async with session_factory() as session:
+        cars = CarRepository(session)
+        post = await get_post(cars, ref)
+        if post is not None and (post.car_id or post.source == "admin" or post.asked_admin_at):
+            return None
+        car: Car | None = await match_caption(cars, caption)
+        how = "post matni"
+        stored = caption
+        if car is None and watch_video and media.get("media_type") in VIDEO_TYPES and media.get("media_url"):
+            seen = await _watch_video(download, media["media_url"])
+            if seen:
+                stored = f"{caption}\n[Video]: {seen}".strip()
+                parsed = await extract_car(stored, ai=get_ai(), usd_rate_uzs=settings.usd_rate_uzs)
+                car = await match_parsed(cars, parsed)
+                how = "video"
+        post = await remember_post(cars, ref, car=car, caption=stored or None, permalink=media.get("permalink"))
+        posted = _posted_at(media)
+        ask = car is None and (posted is None or now - posted <= ASK_ADMIN_MAX_AGE)
+        choices: list[Car] = []
+        if ask:
+            post.asked_admin_at = now
+            choices = await cars.search_offerable(limit=ADMIN_CAR_CHOICES)
+        await session.commit()
+    if car is not None:
+        link = f'<a href="{html.escape(post.permalink)}">Instagram post</a>' if post.permalink else "Instagram post"
+        await notify_admins_text(
+            bot,
+            f"📸 {link} → #{car.id} {html.escape(car.title)} ({how} bo'yicha).\n"
+            f"Noto'g'ri bo'lsa: <code>/ig {html.escape(ref)} ID</code>",
+        )
+    elif ask:
+        await ask_admins_about_post(bot, post, choices)
+    return car
+
+
 async def sync_once(bot: Bot, session_factory: async_sessionmaker[AsyncSession], ig: InstagramClient) -> int:
     """Yangi postlarni bog'laydi. Qaytaradi: shu safar bog'langan postlar soni."""
     linked = 0
     videos_left = VIDEOS_PER_RUN
     now = datetime.now(UTC)
     for media in await ig.list_media(RECENT_MEDIA):
-        ref = str(media["id"])
-        caption = media.get("caption") or ""
         async with session_factory() as session:
-            cars = CarRepository(session)
-            post = await get_post(cars, ref)
-            if post is not None and (post.car_id or post.source == "admin" or post.asked_admin_at):
-                continue
-            car: Car | None = await match_caption(cars, caption)
-            how = "post matni"
-            stored = caption
-            if car is None and media.get("media_type") in VIDEO_TYPES and media.get("media_url") and videos_left > 0:
-                videos_left -= 1
-                seen = await _watch_video(ig, media["media_url"])
-                if seen:
-                    stored = f"{caption}\n[Video]: {seen}".strip()
-                    parsed = await extract_car(stored, ai=get_ai(), usd_rate_uzs=settings.usd_rate_uzs)
-                    car = await match_parsed(cars, parsed)
-                    how = "video"
-            post = await remember_post(cars, ref, car=car, caption=stored or None, permalink=media.get("permalink"))
-            posted = _posted_at(media)
-            ask = car is None and (posted is None or now - posted <= ASK_ADMIN_MAX_AGE)
-            choices: list[Car] = []
-            if ask:
-                post.asked_admin_at = now
-                choices = await cars.search_offerable(limit=ADMIN_CAR_CHOICES)
-            await session.commit()
-        if car is not None:
-            linked += 1
-            link = f'<a href="{html.escape(post.permalink)}">Instagram post</a>' if post.permalink else "Instagram post"
-            await notify_admins_text(
-                bot,
-                f"📸 {link} → #{car.id} {html.escape(car.title)} ({how} bo'yicha).\n"
-                f"Noto'g'ri bo'lsa: <code>/ig {html.escape(ref)} ID</code>",
-            )
-        elif ask:
-            await ask_admins_about_post(bot, post, choices)
+            post = await get_post(CarRepository(session), str(media["id"]))
+        if post is not None and (post.car_id or post.source == "admin" or post.asked_admin_at):
+            continue
+        car = await link_media(bot, session_factory, media, download=ig.download, watch_video=videos_left > 0, now=now)
+        if media.get("media_type") in VIDEO_TYPES:
+            videos_left -= 1  # taxminiy: matndan topilgan video ham hisoblanadi (bir ishga tushishda AI xarajati chegarasi)
+        linked += car is not None
     return linked
 
 
