@@ -165,6 +165,9 @@ class Settings:
     ai_price_output_per_m: float | None
     ai_price_audio_per_m: float | None
     car_stale_days: int
+    channel_sync_minutes: int
+    car_auto_archive_days: int
+    daily_report_hour: int
     agent_enabled: bool
     agent_model: str
     business_name: str
@@ -262,6 +265,13 @@ settings = Settings(
     ai_price_audio_per_m=_float("AI_PRICE_AUDIO_PER_M", 0.0) or None,
     # Shuncha kundan beri sotuvda turgan mashina uchun adminlarga «hali sotuvdami?» so'rovi
     car_stale_days=_int("CAR_STALE_DAYS", 7),
+    # Kanalning ochiq veb ko'rinishini shuncha daqiqada tekshirish: bot o'tkazib yuborgan e'lonlar, «SOTILDI»
+    # tahrirlari (AI'siz). 0 — o'chiq
+    channel_sync_minutes=_int("CHANNEL_SYNC_MINUTES", 20),
+    # Kanal e'loni shuncha kun qayta chiqmasa — mashina avtomatik arxivga (adminlarga xulosa). 0 — o'chiq
+    car_auto_archive_days=_int("CAR_AUTO_ARCHIVE_DAYS", 21),
+    # Har kuni shu soatda (Toshkent) adminlarga kunlik hisobot. -1 — o'chiq
+    daily_report_hour=_int("DAILY_REPORT_HOUR", 21),
     # AI savdo agenti: botga yozilgan savollarga mashinalar bazasidan javob beradi
     agent_enabled=_bool("AGENT_ENABLED", True),
     agent_model=(os.getenv("GROQ_AGENT_MODEL", "") or os.getenv("GROQ_MODEL", "") or "openai/gpt-oss-120b").strip(),

@@ -49,7 +49,11 @@ async def stale_cars_loop(bot: Bot, session_factory: async_sessionmaker[AsyncSes
 async def _check_once(bot: Bot, session_factory: async_sessionmaker[AsyncSession]) -> None:
     async with session_factory() as session:
         cars = CarRepository(session)
-        rows = await cars.stale_active_cars(older_than_days=settings.car_stale_days, limit=10)
+        # Asosiy kanal e'lonlarini kanal sinxronizatsiyasi kuzatadi (qayta chiqmasa — o'zi arxivlaydi): so'ramaymiz
+        exclude = int(settings.channel_id) if settings.channel_sync_minutes > 0 and settings.car_auto_archive_days > 0 else None
+        rows = await cars.stale_active_cars(
+            older_than_days=settings.car_stale_days, limit=10, exclude_channel_chat_id=exclude
+        )
         now = datetime.now(UTC)
         for car in rows:
             days = (now - car.published_at).days if car.published_at else settings.car_stale_days

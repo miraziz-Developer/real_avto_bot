@@ -268,7 +268,10 @@ Then put the new password into:
 | `BOT_USERNAME`, `CATALOG_URL`, `CRM_URL` | Catalog and CRM Mini Apps (HTTPS only) |
 | `LISTING_FREEZE_HOURS`, `WORK_HOUR_START` / `WORK_HOUR_END`, `BUYOUT_REPLY_HOURS` | Listing freeze and buy-out offers |
 | `COMMENTS_ENABLED`, `COMMENTS_AI_ENABLED`, `COMMENTS_ANSWER_ADMINS`, `DISCUSSION_GROUP_ID` | Channel comments |
-| `CAR_STALE_DAYS` | "Still for sale?" prompt (default 7 days) |
+| `CAR_STALE_DAYS` | "Still for sale?" prompt (default 7 days; not asked for main-channel cars while the channel sync archives them) |
+| `CHANNEL_SYNC_MINUTES` | Public channel page check: missed listings, "SOTILDI" edits, removed phones (default 20, `0` = off) |
+| `CAR_AUTO_ARCHIVE_DAYS` | Main-channel listing not re-posted for this many days → archived, one summary to admins (default 21, `0` = off) |
+| `DAILY_REPORT_HOUR` | Daily report to admins at this hour, Tashkent time (default 21, `-1` = off) |
 | `INSTAGRAM_ENABLED`, `IG_*` | Instagram, after Meta approval |
 
 The complete list with comments is in [`.env.example`](.env.example).

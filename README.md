@@ -82,6 +82,8 @@ Every listing posted to the main channel is written to the `cars` table. The sal
   - If several cars match, admins are asked to choose. If none match, admins are notified and no junk record is created.
 - **Deleted posts:** checked every 3 hours. Deleted posts take the car off sale; a mass-deletion guard prevents accidents.
 - **Stale cars:** a car on sale for more than `CAR_STALE_DAYS` (7) days triggers an "is it still for sale?" prompt to admins, sent during working hours.
+- **Channel sync (no AI):** every `CHANNEL_SYNC_MINUTES` the bot reads the main channel's public page. Listings it missed are added, posts edited to "SOTILDI" (or with the phone removed) mark the car sold, a re-posted archived car goes back on sale, and once a day listings not re-posted for `CAR_AUTO_ARCHIVE_DAYS` days are archived (with a safety stop if too many look stale at once). Main-channel cars are then not part of the "still for sale?" prompts.
+- **Daily report:** at `DAILY_REPORT_HOUR` (Tashkent) admins get on-sale / added / sold counts, new and waiting customers.
 - **Approved bot listings** are added to the database as well.
 
 **Admin commands:** `/statistika [days]` · `/sotuvda` · `/tekshiruv` · `/mashina ID` · `/sotildi ID [price]` · `/qayta ID` · `/import_kanal LINK` · `/umumiy` · `/navbat`

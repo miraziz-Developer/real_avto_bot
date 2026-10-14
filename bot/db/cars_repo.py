@@ -219,7 +219,12 @@ class CarRepository:
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def find_repost_candidate(
-        self, parsed: ParsedCar, *, within_days: int = 90, exclude_id: int | None = None
+        self,
+        parsed: ParsedCar,
+        *,
+        within_days: int = 90,
+        exclude_id: int | None = None,
+        statuses: tuple[str, ...] = (CarStatus.ACTIVE, CarStatus.RESERVED, CarStatus.REVIEW),
     ) -> Car | None:
         """Kanalga qayta tashlangan (yoki bot e'loni qo'lda qayta joylangan) o'sha mashina.
 
@@ -229,7 +234,7 @@ class CarRepository:
         if not (parsed.model and parsed.year):
             return None
         conds = [
-            Car.status.in_((CarStatus.ACTIVE, CarStatus.RESERVED, CarStatus.REVIEW)),
+            Car.status.in_(statuses),
             Car.year == parsed.year,
             func.lower(Car.model) == parsed.model.lower(),
             Car.created_at >= _now() - timedelta(days=within_days),
@@ -450,17 +455,40 @@ class CarRepository:
     async def mark_stale_prompted(self, car: Car) -> None:
         car.stale_prompted_at = _now()
 
-    async def stale_active_cars(self, *, older_than_days: int, reprompt_days: int = 7, limit: int = 20) -> list[Car]:
+    async def stale_active_cars(
+        self,
+        *,
+        older_than_days: int,
+        reprompt_days: int = 7,
+        limit: int = 20,
+        exclude_channel_chat_id: int | None = None,
+    ) -> list[Car]:
         now = _now()
+        conds = [
+            Car.status == CarStatus.ACTIVE,
+            Car.published_at < now - timedelta(days=max(1, older_than_days)),
+            or_(Car.stale_prompted_at.is_(None), Car.stale_prompted_at < now - timedelta(days=reprompt_days)),
+        ]
+        if exclude_channel_chat_id is not None:
+            # Kanal sinxronizatsiyasi bu kanal e'lonlarini o'zi kuzatadi (qayta chiqmasa — arxiv)
+            conds.append(
+                or_(
+                    Car.source != CarSource.CHANNEL,
+                    Car.channel_chat_id.is_(None),
+                    Car.channel_chat_id != exclude_channel_chat_id,
+                )
+            )
         stmt = (
             select(Car)
-            .where(
-                Car.status == CarStatus.ACTIVE,
-                Car.published_at < now - timedelta(days=max(1, older_than_days)),
-                or_(Car.stale_prompted_at.is_(None), Car.stale_prompted_at < now - timedelta(days=reprompt_days)),
-            )
+            .where(*conds)
             .order_by(Car.published_at.asc())
             .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def channel_cars(self, chat_id: int, *, status: str = CarStatus.ACTIVE) -> list[Car]:
+        stmt = select(Car).where(
+            Car.status == status, Car.source == CarSource.CHANNEL, Car.channel_chat_id == chat_id
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
