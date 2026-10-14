@@ -390,3 +390,15 @@ async def test_make_secret_derived_from_bot_token(factory):
         assert ok.status == 200
         bad = await client.post("/webhooks/make", data=form, headers={"Authorization": f"Bearer {key[:-1]}x"})
         assert bad.status == 401
+
+
+async def test_username_only_comment_gets_stable_key(factory):
+    from bot.instagram.manychat import subscriber_key
+
+    a = subscriber_key({"ig_username": "@Aziz_IG"})
+    assert a == subscriber_key({"ig_username": "aziz_ig"}) and a.isdigit() and int(a) < 10**16
+    assert subscriber_key({}) == ""
+    async with TestClient(TestServer(app_for(ManyChatBridge(FakeBot(), factory)))) as client:
+        form = {"user_id": "", "ig_username": "aziz_ig", "event": "comment", "dm": "false", "text": "gentra narxi?"}
+        body = await (await client.post("/webhooks/make", data=form, headers=AUTH)).json()
+    assert body["car_id"] == 4

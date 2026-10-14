@@ -23,6 +23,7 @@ ID lari bilan to'qnashmaydi.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import html
 import logging
@@ -124,6 +125,17 @@ async def clarify_reply(cars: CarRepository) -> str:
         lines.append(f"{c.id} — {c.title}, {price}")
     lines.append("Yoki model nomini yozing (masalan: Cobalt).")
     return "\n".join(lines)
+
+
+def subscriber_key(payload: dict) -> str:
+    """Mijoz kaliti: ManyChat/Instagram ID; Make ID bermasa — Instagram username'dan barqaror raqam."""
+    sub = _field(payload, "user_id", "subscriber_id", limit=40)
+    if sub.isdigit():
+        return sub
+    username = _field(payload, "ig_username", "username", limit=64).lstrip("@").lower()
+    if username:
+        return str(int(hashlib.sha256(username.encode()).hexdigest()[:13], 16))
+    return ""
 
 
 def dynamic_block(texts: list[str], image_urls: list[str] | None = None) -> dict:
@@ -272,8 +284,8 @@ class ManyChatBridge:
 
     async def answer(self, payload: dict) -> dict:
         """Javob tayyorlash (sinxron qism): {reply, public_reply, car_id, images}."""
-        sub = _field(payload, "user_id", "subscriber_id", limit=40)
-        if not sub.isdigit():
+        sub = subscriber_key(payload)
+        if not sub:
             raise ValueError("user_id kerak")
         is_comment = _field(payload, "event", "type", limit=20).lower().startswith("comment")
         text = _field(payload, "text", "last_input_text", "comment", limit=2000)
@@ -543,7 +555,7 @@ class ManyChatBridge:
                 payload = await request.json()
         except ValueError:
             return web.json_response({"error": "json kerak"}, status=400)
-        if not isinstance(payload, dict) or not _field(payload, "user_id", "subscriber_id", limit=40).isdigit():
+        if not isinstance(payload, dict) or not subscriber_key(payload):
             return web.json_response({"error": "user_id kerak"}, status=400)
         task = asyncio.create_task(self.answer(payload))
         self._tasks.add(task)
@@ -552,7 +564,7 @@ class ManyChatBridge:
             result = await asyncio.wait_for(asyncio.shield(task), timeout=settings.manychat_reply_timeout)
         except TimeoutError:
             # ManyChat ~10 soniyadan ko'p kutmaydi: hozircha qisqa javob, tayyor bo'lgach API orqali yuboramiz
-            sub = int(_field(payload, "user_id", "subscriber_id", limit=40))
+            sub = int(subscriber_key(payload))
             if self.api.enabled:
                 late = asyncio.create_task(self._deliver_late(task, sub))
                 self._tasks.add(late)
