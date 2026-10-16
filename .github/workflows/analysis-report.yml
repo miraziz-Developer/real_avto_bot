@@ -1,0 +1,42 @@
+name: Analysis report
+
+# Activity report of the last days (scripts/analysis_report.sh): database changes, conversations, full bot log.
+# Runs on demand, or on a push whose commit message contains "[report]". Read-only; secrets and personal data masked.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, claude/lucid-pascal-2zqc9d]
+
+jobs:
+  report:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[report]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST || '172.198.138.146' }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER || 'bozorliii' }}
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '/opt/real_avto_bot' }}
+      SSHPASS: ${{ secrets.DEPLOY_SSH_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare login
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          if [ -n "$KEY" ]; then
+            printf '%s\n' "$KEY" > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
+            echo "SSH_CMD=ssh -i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" >> "$GITHUB_ENV"
+          else
+            sudo apt-get install -y -qq sshpass > /dev/null
+            echo "SSH_CMD=sshpass -e ssh -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no" >> "$GITHUB_ENV"
+          fi
+
+      - name: Report from the server
+        run: $SSH_CMD "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_DIR' && DAYS=3 bash -s" < scripts/analysis_report.sh
+
+      - name: Clean up
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
