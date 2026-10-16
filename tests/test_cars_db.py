@@ -1157,6 +1157,10 @@ async def test_data_fixes_repair_analysis_mistakes(session_factory):
             _parsed(model="Damas", year=2014, price_usd=600), source=CarSource.CHANNEL,
             raw_text="Damas 2014. Nasiya savdoga, 600 dollar pulingiz bo’lsa, 18 oy 200 dan",
         )
+        damas2 = await cars.create_from_parsed(
+            _parsed(model="Damas", year=2015, price_usd=700), source=CarSource.CHANNEL, raw_text="Damas 2015 NASIYA 700$",
+        )
+        damas2.notes = "Nasiyaga: boshlang'ich to'lov 700 dollar, 18 oy 200 dollardan."
         jig = await cars.create_from_parsed(_parsed(brand="Lada", model="2106", year=1990), source=CarSource.CHANNEL, raw_text="jiguli")
         await s.flush()
         follow = await cars.create_from_parsed(
@@ -1176,18 +1180,19 @@ async def test_data_fixes_repair_analysis_mistakes(session_factory):
         await s.execute(text(f"UPDATE cars SET created_at = now() - interval '1 hour' + interval '10 minutes' WHERE id = {matiz.id}"))
         await s.execute(text(f"UPDATE cars SET created_at = now() - interval '1 hour' + interval '50 minutes' WHERE id = {dup.id}"))
         await s.commit()
-        ids = (fake.id, damas.id, jig.id, follow.id, matiz.id, dup.id)
+        ids = (fake.id, damas.id, jig.id, follow.id, matiz.id, dup.id, damas2.id)
 
     async with session_factory() as s:
         lines = await fix_cars(s)
         await s.commit()
     async with session_factory() as s:
         cars = CarRepository(s)
-        fake, damas, jig, follow, matiz, dup = [await cars.get(i) for i in ids]
+        fake, damas, jig, follow, matiz, dup, damas2 = [await cars.get(i) for i in ids]
+        assert damas2.price_usd is None
         assert fake.status == CarStatus.ARCHIVED
         assert damas.price_usd is None and damas.status == CarStatus.ACTIVE
         assert follow is None and 5189 in jig.channel_message_ids
         assert dup is None and matiz.price_usd == 1950
-    assert len(lines) == 4
+    assert len(lines) == 5
     async with session_factory() as s:
         assert await fix_cars(s) == []  # ikkinchi marta hech narsa o'zgarmaydi

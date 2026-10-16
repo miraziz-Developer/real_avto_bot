@@ -20,12 +20,13 @@ from bot.config import settings
 from bot.db.cars_repo import CarRepository, _brand_aliases, same_car_model
 from bot.db.models import AppMeta, Car, CarSource, CarStatus
 from bot.services.car_cards import notify_admins_text
+from bot.services.car_extract import _price_is_down_payment
 from bot.services.car_parser import down_payment_amounts, parse_car_text
 
 logger = logging.getLogger(__name__)
 
 # v2: narx matni normalizatsiyadan keyin o'qiladi («bo’lsa» egri apostrof bilan ham)
-FIX_KEY = "fix:2026-10-analysis-v2"
+FIX_KEY = "fix:2026-10-analysis-v3"  # v3: AI izohida boshlang'ich to'lov deb yozilgan summa ham
 _OPEN = (CarStatus.ACTIVE, CarStatus.REVIEW, CarStatus.RESERVED)
 _NO_INFO_PREFIXES = ("postda mashina haqida ma'lumot yo'q",)
 # E'londan keyin shuncha vaqt ichida yaratilgan, o'zida ma'lumoti yo'q «mashina» — o'sha e'lonning videosi
@@ -70,10 +71,14 @@ async def fix_cars(session: AsyncSession, now: datetime | None = None) -> list[s
     for car in rows:
         if car.id in gone or not car.price_usd:
             continue
-        if car.price_usd in down_payment_amounts(car.raw_text or ""):
+        in_text = car.price_usd in down_payment_amounts(car.raw_text or "")
+        in_notes = _price_is_down_payment(car.price_usd, car.notes)
+        if in_text or in_notes:
             new = parse_car_text(car.raw_text or "", usd_rate_uzs=settings.usd_rate_uzs).price_usd
             if new == car.price_usd:
-                continue
+                if not in_notes:
+                    continue
+                new = None  # AI shu summani boshlang'ich to'lov degan — boshqa joyda ham yozilgan bo'lsa ham narx emas
             await cars.add_event(car, "price_changed", {"old": car.price_usd, "new": new, "reason": "nasiya_down_payment"})
             old = car.price_usd
             car.price_usd = new
