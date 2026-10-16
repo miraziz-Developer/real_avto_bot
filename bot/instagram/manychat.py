@@ -59,7 +59,13 @@ from bot.instagram.car_match import CarMatch, post_ref, resolve_car
 from bot.instagram.client import IGError, InstagramClient, split_text
 from bot.services.car_cards import notify_admins_text
 from bot.services.car_parser import detect_brand_model, normalize_text
-from bot.services.comment_ai import CommentDecision, decide_comment_reply, has_profanity, public_post_text
+from bot.services.comment_ai import (
+    CommentDecision,
+    comment_context,
+    decide_comment_reply,
+    has_profanity,
+    public_post_text,
+)
 from bot.services.emoji_reply import emoji_reply, is_emoji_only
 from bot.services.lead_cards import lead_score
 from bot.utils.currency import fmt_price
@@ -484,15 +490,7 @@ class ManyChatBridge:
         """Komment AI (Telegram kommentlari bilan bir xil «miya»): toifa va ochiq javob."""
         if not await get_budget().allow_user(f"mc:{sub}"):
             return None
-        other: list[Car] = []
-        general = False
-        if car is None or car.status not in (CarStatus.ACTIVE, CarStatus.RESERVED):
-            brand, model = detect_brand_model(normalize_text(text))
-            if brand or model:
-                other = await cars.search_offerable(brand=brand, model=model, limit=5)
-            elif car is None:
-                other = await cars.search_offerable(limit=6)
-                general = bool(other)
+        ctx = await comment_context(cars, car, text)
         post_text = public_post_text(car.raw_text) if car is not None else (caption or None)
         try:
             return await decide_comment_reply(
@@ -500,10 +498,12 @@ class ManyChatBridge:
                 text=text,
                 author=author or None,
                 car=car,
-                other_cars=other,
+                other_cars=ctx.other,
                 post_text=post_text or None,
-                general_inventory=general,
+                general_inventory=ctx.general,
                 platform=platform,
+                asked=ctx.asked,
+                asked_missing=ctx.asked_missing,
             )
         except AIError as e:
             logger.warning("Instagram komment AI ishlamadi: %s", e)

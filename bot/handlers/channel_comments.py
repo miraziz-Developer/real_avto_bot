@@ -27,8 +27,14 @@ from bot.db.models import Car, CarStatus
 from bot.handlers.channel_watch import channel_post_by_content, is_main_channel
 from bot.services.business_info import sell_link
 from bot.services.car_cards import notify_admins_text
-from bot.services.car_parser import detect_brand_model, normalize_text
-from bot.services.comment_ai import CommentDecision, decide_comment_reply, has_profanity, public_post_text
+from bot.services.car_parser import normalize_text
+from bot.services.comment_ai import (
+    CommentDecision,
+    comment_context,
+    decide_comment_reply,
+    has_profanity,
+    public_post_text,
+)
 from bot.utils.currency import fmt_price
 
 logger = logging.getLogger(__name__)
@@ -285,16 +291,8 @@ async def _ai_handle(
         logger.info("Komment %s: foydalanuvchi %s kunlik AI limitiga yetdi", message.message_id, uid)
         return True
     car = await cars.find_by_channel_message(*post) if post else None
-    other: list[Car] = []
-    general = False
-    if car is None or car.status not in (CarStatus.ACTIVE, CarStatus.RESERVED):
-        brand, model = detect_brand_model(normalize_text(text))
-        if brand or model:
-            other = await cars.search_offerable(brand=brand, model=model, limit=5)
-        elif car is None:
-            # «Nima mashinalar bor?» kabi umumiy savol — sotuvdagilardan qisqa namuna (AI faqat kerak bo'lsa ishlatadi)
-            other = await cars.search_offerable(limit=6)
-            general = bool(other)
+    ctx = await comment_context(cars, car, text)
+    other, general, asks_other = ctx.other, ctx.general, ctx.asks_other
     replied = message.reply_to_message
     replied_text = None
     post_text = public_post_text(car.raw_text) if car else None
@@ -315,6 +313,8 @@ async def _ai_handle(
             replied_text=replied_text,
             general_inventory=general,
             bot_username=bot_username,
+            asked=ctx.asked,
+            asked_missing=ctx.asked_missing,
         )
     except AIError as e:
         logger.warning("Komment AI ishlamadi, shablon rejimi: %s", e)
@@ -331,8 +331,16 @@ async def _ai_handle(
             kb = InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text="📢 E'lon berish / sotish", url=sell_link(bot_username))]]
             )
+        elif ctx.asked_missing:
+            # So'ralgan mashina hozir yo'q — bir bosishda botda qidiruvni saqlaydi, kelishi bilan xabar boradi
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔔 Chiqsa xabar ber", url=f"https://t.me/{bot_username}?start=alert")],
+                    [InlineKeyboardButton(text="🚗 Sotuvdagilar", url=f"https://t.me/{bot_username}")],
+                ]
+            )
         else:
-            target = car or (other[0] if other and not general else None)
+            target = (other[0] if other and not general else None) if asks_other else (car or (other[0] if other and not general else None))
             deep = f"https://t.me/{bot_username}?start=car_{target.id}" if target else f"https://t.me/{bot_username}"
             kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🤖 Botda batafsil", url=deep)]])
         await message.reply(decision.reply, parse_mode=None, reply_markup=kb, disable_web_page_preview=True)

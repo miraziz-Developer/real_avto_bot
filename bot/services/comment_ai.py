@@ -57,6 +57,14 @@ VAZIYATLAR:
 - O'z mashinasini sotmoqchi ("mashinamni sotib olasizmi", "e'lon bermoqchiman", "vikup qilasizlarmi") → category=sell_car:
   ha, sotib olamiz yoki e'lonini kanalga chiqaramiz — botdagi «E'lon berish» orqali yuborsin (tugma javob ostida
   bo'ladi). Narx va'da qilma.
+- SO'RALGAN MASHINA: xabarda boshqa model so'ralsa (masalan Damas posti ostida "Onix bormi?", "Gentra avtomat
+  bormi?") — javob SO'RALGAN mashina haqida bo'lsin, post mashinasi haqida emas. sotuvdagi_mos_mashinalar — shu
+  so'ralganlar: bor bo'lsa 1–3 tasini qisqa ayt (nomi, yili, narxi, uzatma).
+- So'ralgan mashina HOZIR YO'Q (so'ralgan_mashina_bazada_yoq=true) — quruq "yo'q" deb qo'yma. 2–3 gapda:
+  1) hozircha sotuvda yo'qligini ayt; 2) byudjeti va yilini so'ra ("Byudjetingiz qancha, qaysi yillar kerak?");
+  3) hozir_sotuvdagi_mashinalardan mosroq 1–2 tasini taklif qil (bo'lsa); 4) javob ostidagi «🔔 Chiqsa xabar ber»
+  tugmasini bosib qidiruvni saqlashni ayt — shunday mashina kanalga chiqishi bilan o'zlariga xabar boradi.
+  category=buy_intent, buy_intent=true.
 - Xarid niyati ("olaman", "ko'rsam bo'ladimi", "kredit bormi", raqam so'rash) → qisqa javob + menejer bog'lanishini ayt; buy_intent=true.
   Shartli xarid ham xarid niyati: "Gentra bo'lsa olardim", "ген буса олдим", "arzonroq bo'lsa olaman", "nasiyaga
   bormi" — bazada mos mashina bo'lsa ayt, bo'lmasa «kelishi bilan xabar beramiz, qo'ng'iroq qiling»; buy_intent=true.
@@ -171,7 +179,9 @@ PLATFORMA: INSTAGRAM (post/reel kommentlari). Yuqoridagi qoidalar o'z kuchida, f
   ijobiy — minnatdorchilik; shu_post_mashinasi faktlarda "sotuvda" bo'lsa telefonni qo'shib, ko'rishga taklif qil;
   sotilgan bo'lsa — "bu mashina sotilgan, o'xshash variantlar bor" de; mashina noma'lum bo'lsa — holati haqida gapirma;
   kulgi — samimiy; hayrat — qisqa; salbiy (👎😡) — xushmuomala, nima yoqmaganini so'ra (category=negative).
-- "bot", "botimiz", "Telegram" so'zlarini ISHLATMA — Instagram'dagi mijoz botni bilmaydi.
+- "bot", "botimiz", "Telegram" so'zlarini ISHLATMA — Instagram'dagi mijoz botni bilmaydi. So'ralgan mashina yo'q
+  bo'lsa «🔔 Chiqsa xabar ber» tugmasi o'rniga: byudjetini so'ra va "telefon qiling yoki Direct'ga yozing — kelishi
+  bilan xabar beramiz" de.
 - Javob 1–2 qisqa gap, hashtag yo'q."""
 
 
@@ -233,8 +243,14 @@ def build_user_payload(
     post_text: str | None,
     replied_text: str | None,
     general_inventory: bool = False,
+    asked: str | None = None,
+    asked_missing: bool = False,
 ) -> str:
     payload: dict = {"xabar": text[:1500], "muallif": author or "", "javob_tili": reply_language(text)}
+    if asked:
+        payload["so'ralgan_mashina"] = asked
+        if asked_missing:
+            payload["so'ralgan_mashina_bazada_yoq"] = True
     if replied_text:
         payload["javob_berilgan_xabar"] = replied_text[:500]
     if car is not None:
@@ -255,6 +271,56 @@ def build_user_payload(
             payload.get("eslatma", "") + " Post mazmuni noma'lum (matnsiz video bo'lishi mumkin) — mashina deb taxmin qilma."
         ).strip()
     return json.dumps(payload, ensure_ascii=False)
+
+
+_AUTOMAT_RE = re.compile(r"avtomat|автомат|akpp|акпп", re.IGNORECASE)
+_MEXANIKA_RE = re.compile(r"mexanika|механик|mkpp|мкпп|ruchnoy|ручн", re.IGNORECASE)
+
+
+def asked_transmission(text: str) -> str | None:
+    if _AUTOMAT_RE.search(text or ""):
+        return "avtomat"
+    if _MEXANIKA_RE.search(text or ""):
+        return "mexanika"
+    return None
+
+
+@dataclass
+class CommentContext:
+    """Komment uchun bazadan olingan mashinalar: so'ralgani, yo'q bo'lsa — sotuvdagilardan namuna."""
+
+    other: list = field(default_factory=list)
+    general: bool = False
+    asked: str | None = None
+    asked_missing: bool = False
+    asks_other: bool = False
+
+
+async def comment_context(cars, car: Car | None, text: str) -> CommentContext:
+    from bot.db.cars_repo import same_car_model
+    from bot.services.car_parser import detect_brand_model, normalize_text
+
+    ctx = CommentContext()
+    brand, model = detect_brand_model(normalize_text(text))
+    # Damas posti ostida «Onix bormi?» — gap boshqa mashina haqida: post mashinasi emas, so'ralgani qidiriladi
+    ctx.asks_other = bool(model) and not (car is not None and car.model and same_car_model(model, car.model))
+    post_open = car is not None and car.status in (CarStatus.ACTIVE, CarStatus.RESERVED)
+    if ctx.asks_other or ((brand or model) and not post_open):
+        ctx.asked = " ".join(x for x in (brand, model) if x)
+        trans = asked_transmission(text)
+        ctx.other = await cars.search_offerable(brand=brand, model=model, transmission=trans, limit=5)
+        if not ctx.other and trans:
+            ctx.other = await cars.search_offerable(brand=brand, model=model, limit=5)  # avtomat yo'q — mexanikasi bormi
+        if not ctx.other:
+            ctx.asked_missing = True
+            # So'ralgan mashina yo'q — «yo'q» deb qo'ymasdan, sotuvdagi boshqa variantlardan namuna
+            ctx.other = await cars.search_offerable(limit=4)
+            ctx.general = bool(ctx.other)
+    elif car is None and not (brand or model):
+        # «Nima mashinalar bor?» kabi umumiy savol — sotuvdagilardan qisqa namuna (AI faqat kerak bo'lsa ishlatadi)
+        ctx.other = await cars.search_offerable(limit=6)
+        ctx.general = bool(ctx.other)
+    return ctx
 
 
 def _clean_reply(text: str) -> str:
@@ -296,6 +362,8 @@ async def decide_comment_reply(
     general_inventory: bool = False,
     bot_username: str | None = None,
     platform: str = "telegram",
+    asked: str | None = None,
+    asked_missing: bool = False,
 ) -> CommentDecision:
     """AI qarori. AIError (kalit yo'q, chegara tugagan, tarmoq) — chaqiruvchiga o'tadi."""
     if has_profanity(text):
@@ -313,6 +381,8 @@ async def decide_comment_reply(
             post_text=post_text,
             replied_text=replied_text,
             general_inventory=general_inventory,
+            asked=asked,
+            asked_missing=asked_missing,
         ),
         temperature=0.2,
         max_tokens=500,

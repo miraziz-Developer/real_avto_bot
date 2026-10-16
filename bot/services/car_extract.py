@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime
 
 from bot.ai import AIClient, AIError
-from bot.services.car_parser import MILEAGE_MAX_KM, ParsedCar, mentioned_models, parse_car_text, possessive_models
+from bot.services.car_parser import (
+    MILEAGE_MAX_KM,
+    ParsedCar,
+    down_payment_amounts,
+    mentioned_models,
+    parse_car_text,
+    possessive_models,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,11 +138,11 @@ def is_roundup(text: str) -> bool:
 
 
 def _price_is_down_payment(price: int, notes: str | None) -> bool:
-    """AI izohida shu summa nasiya boshlang'ich to'lovi deb yozilgan («boshlang'ich to'lov 600 dollar»)."""
-    if not notes or not re.search(r"nasiya|boshlang|oldindan|oyiga|bo'lib to'la", notes, re.IGNORECASE):
-        return False
-    digits = {int(re.sub(r"[ ,.]", "", n)) for n in re.findall(r"\d{1,3}(?:[ ,.]\d{3})+|\d+", notes)}
-    return price in digits
+    """AI izohida aynan shu summa boshlang'ich/oylik to'lov sifatida yozilgan («boshlang'ich to'lov 600 dollar»).
+
+    Faqat summa to'lov so'zi yonida bo'lsa — «Nasiya bor. Narxi 5150 dollar» dagi haqiqiy narx tegilmaydi.
+    """
+    return bool(notes) and price in down_payment_amounts(notes)
 
 
 async def extract_car(text: str, *, ai: AIClient | None, usd_rate_uzs: int) -> ParsedCar:

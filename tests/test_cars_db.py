@@ -1190,8 +1190,7 @@ async def test_data_fixes_repair_analysis_mistakes(session_factory):
         fake, damas, jig, follow, matiz, dup, damas2 = [await cars.get(i) for i in ids]
         assert damas2.price_usd is None
         assert fake.status == CarStatus.ARCHIVED
-        assert damas.price_usd is None  # shubhali narx — yaratilganda ham sotuvga chiqmagan (tekshiruvda)
-        assert damas.status == CarStatus.REVIEW
+        assert damas.price_usd is None and damas.status == CarStatus.ACTIVE
         assert follow is None and 5189 in jig.channel_message_ids
         assert dup is None and matiz.price_usd == 1950
     assert len(lines) == 5
@@ -1199,21 +1198,41 @@ async def test_data_fixes_repair_analysis_mistakes(session_factory):
         assert await fix_cars(s) == []  # ikkinchi marta hech narsa o'zgarmaydi
 
 
-async def test_suspicious_price_keeps_car_in_review_and_daily_report_lists_it(session_factory):
-    from bot.services.price_check import market_problem
+
+async def test_daily_report_lists_what_bot_fixed_and_cars_without_price(session_factory):
     from bot.workers.daily_report import build_report
 
     async with session_factory() as s:
         cars = CarRepository(s)
-        cheap = await cars.create_from_parsed(_parsed(model="Damas", year=2021, price_usd=1000), source=CarSource.CHANNEL, raw_text="")
-        assert cheap.status == CarStatus.REVIEW  # $1000 lik 2021-yil Damas — sotuvga o'zicha chiqmaydi
-        for p in (5200, 5400, 5600):
-            await cars.create_from_parsed(_parsed(model="Damas", year=2021, price_usd=p), source=CarSource.CHANNEL, raw_text="")
-        odd = await cars.create_from_parsed(_parsed(model="Damas", year=2021, price_usd=1900), source=CarSource.CHANNEL, raw_text="")
+        ok = await cars.create_from_parsed(_parsed(model="Damas", year=2021, price_usd=5200), source=CarSource.CHANNEL, raw_text="")
         nop = await cars.create_from_parsed(_parsed(model="Cobalt", year=2020, price_usd=None), source=CarSource.CHANNEL, raw_text="")
         await s.commit()
-        assert await market_problem(s, "Damas", 2021, 1900, exclude_id=odd.id) is not None
-        assert await market_problem(s, "Damas", 2021, 5300) is None
         report = await build_report(s, datetime.now(UTC), fixes=["🗄 test tuzatish"])
     assert "Bot o'zi tuzatdi" in report and "test tuzatish" in report
-    assert f"#{odd.id}</code>" in report and f"#{nop.id}</code>" in report and "narxi yo'q" in report
+    assert f"#{nop.id}</code>" in report and "narxi yo'q" in report and f"#{ok.id}</code>" not in report
+
+
+async def test_comment_about_other_model_searches_that_model(session_factory):
+    """Damas posti ostida «Onix bormi?» — javob Onix haqida; yo'q bo'lsa «yo'q» emas: variantlar + qidiruvni saqlash."""
+    import json as _json
+
+    from bot.services.comment_ai import build_user_payload, comment_context
+
+    async with session_factory() as s:
+        cars = CarRepository(s)
+        damas = await cars.create_from_parsed(_parsed(model="Damas", year=2021, price_usd=5200), source=CarSource.CHANNEL, raw_text="")
+        gentra = await cars.create_from_parsed(
+            _parsed(model="Gentra", year=2016, price_usd=5800, transmission="mexanika"), source=CarSource.CHANNEL, raw_text=""
+        )
+        await s.commit()
+        onix = await comment_context(cars, damas, "Onix bormi?")
+        assert onix.asks_other and onix.asked_missing and onix.asked == "Chevrolet Onix" and onix.other
+        payload = _json.loads(build_user_payload(
+            text="Onix bormi?", author=None, car=damas, other_cars=onix.other, post_text=None, replied_text=None,
+            general_inventory=onix.general, asked=onix.asked, asked_missing=onix.asked_missing,
+        ))
+        assert payload["so'ralgan_mashina_bazada_yoq"] is True and "hozir_sotuvdagi_mashinalardan" in payload
+        gen = await comment_context(cars, damas, "gentra avtomat bormi")
+        assert not gen.asked_missing and [c.id for c in gen.other] == [gentra.id]  # avtomat yo'q — mexanikasi taklif
+        same = await comment_context(cars, damas, "Damas narxi qancha?")
+        assert not same.asks_other and same.other == []  # post mashinasining o'zi haqida

@@ -94,6 +94,9 @@ async def fix_cars(session: AsyncSession, now: datetime | None = None) -> list[s
         earlier = [c for c in alive[:i] if c.id not in gone]
         target, why = None, ""
         bare = later.status == CarStatus.REVIEW and not (later.year or later.mileage_km or later.price_usd)
+        prev_model = earlier[-1].model if earlier else None
+        # Boshqa model (masalan keyingi mashinaning videosi) — birlashtirilmaydi
+        bare = bare and (not later.model or not prev_model or same_car_model(later.model, prev_model))
         prev = earlier[-1] if earlier else None
         if (
             bare and prev is not None and later.created_at is not None and prev.created_at is not None

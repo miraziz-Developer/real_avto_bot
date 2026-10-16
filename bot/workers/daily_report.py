@@ -15,7 +15,6 @@ from bot.config import settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import AppMeta, Car, CarStatus, Lead, LeadStatus
 from bot.services.car_cards import notify_admins_text
-from bot.services.price_check import car_price_problem
 from bot.workers.data_fixes import fix_cars
 
 logger = logging.getLogger(__name__)
@@ -28,7 +27,7 @@ ATTENTION_MAX = 12
 
 
 async def attention_lines(session: AsyncSession, now: datetime) -> list[str]:
-    """Admin ko'rib chiqishi kerak bo'lgan mashinalar: narxsiz/shubhali narxli sotuvdagilar, uzoq tekshiruvdagilar."""
+    """Admin ko'rib chiqishi kerak bo'lgan mashinalar: narxsiz sotuvdagilar, uzoq tekshiruvdagilar."""
     rows = (
         await session.execute(
             select(Car).where(Car.status.in_((CarStatus.ACTIVE, CarStatus.REVIEW))).order_by(Car.id.desc()).limit(300)
@@ -41,10 +40,7 @@ async def attention_lines(session: AsyncSession, now: datetime) -> list[str]:
             if car.created_at is not None and now - car.created_at > timedelta(hours=12):
                 out.append(f"🟡 {name} — tekshiruvda kutib qolgan")
             continue
-        problem = await car_price_problem(session, car) if car.price_usd else None
-        if problem:
-            out.append(f"💰 {name} — {html.escape(problem)}")
-        elif not car.price_usd:
+        if not car.price_usd:
             out.append(f"❔ {name} — narxi yo'q")
     return out
 
