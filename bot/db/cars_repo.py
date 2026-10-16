@@ -45,6 +45,9 @@ def _now() -> datetime:
 SAME_CAR_MODELS: dict[str, tuple[str, ...]] = {
     "gentra": ("Gentra", "Lacetti"),
     "lacetti": ("Lacetti", "Gentra"),
+    # «Jiguli» — VAZ 2101…2107 umumiy nomi
+    "jiguli": ("Jiguli", "2101", "2103", "2104", "2105", "2106", "2107"),
+    **{m: (m, "Jiguli") for m in ("2101", "2103", "2104", "2105", "2106", "2107")},
 }
 
 
@@ -94,6 +97,19 @@ def same_car_model(a: str, b: str) -> bool:
     """«Gentra» va «Lacetti», «Matiz» va «Matiz Best» — bitta mashina."""
     x, y = a.split()[0].lower(), b.split()[0].lower()
     return x == y or y.capitalize() in SAME_CAR_MODELS.get(x, ())
+
+
+# Matiz, Nexia, Damas... bozorda Daewoo ham, Chevrolet ham, Ravon ham deyiladi — bitta mashina
+_GM_UZ_BRANDS = ("chevrolet", "daewoo", "ravon")
+_LADA_BRANDS = ("lada", "vaz")
+
+
+def _brand_aliases(brand: str) -> tuple[str, ...]:
+    b = brand.strip().lower()
+    for group in (_GM_UZ_BRANDS, _LADA_BRANDS):
+        if b in group:
+            return group
+    return (b,)
 
 
 class CarRepository:
@@ -240,7 +256,7 @@ class CarRepository:
             Car.created_at >= _now() - timedelta(days=within_days),
         ]
         if parsed.brand:
-            conds.append(or_(Car.brand.is_(None), func.lower(Car.brand) == parsed.brand.lower()))
+            conds.append(or_(Car.brand.is_(None), func.lower(Car.brand).in_(_brand_aliases(parsed.brand))))
         if parsed.mileage_km is not None:
             conds.append(Car.mileage_km == parsed.mileage_km)
         elif parsed.price_usd is not None:
@@ -292,7 +308,7 @@ class CarRepository:
         if parsed.year:
             conds.append(Car.year == parsed.year)
         if parsed.brand:
-            conds.append(or_(Car.brand.is_(None), func.lower(Car.brand) == parsed.brand.lower()))
+            conds.append(or_(Car.brand.is_(None), func.lower(Car.brand).in_(_brand_aliases(parsed.brand))))
         if parsed.color:
             conds.append(or_(Car.color.is_(None), Car.color.ilike(f"%{parsed.color.split()[0]}%")))
         stmt = select(Car).where(*conds).order_by(Car.status.asc(), Car.id.desc()).limit(limit)
@@ -313,7 +329,7 @@ class CarRepository:
         if parsed.year:
             conds.append(or_(Car.year.is_(None), Car.year == parsed.year))
         if parsed.brand:
-            conds.append(or_(Car.brand.is_(None), func.lower(Car.brand) == parsed.brand.lower()))
+            conds.append(or_(Car.brand.is_(None), func.lower(Car.brand).in_(_brand_aliases(parsed.brand))))
         stmt = select(Car).where(*conds).order_by(Car.id.desc()).limit(limit)
         return list((await self.session.execute(stmt)).scalars().all())
 

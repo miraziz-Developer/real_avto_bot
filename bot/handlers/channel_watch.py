@@ -11,6 +11,7 @@ import html
 import logging
 import re
 import time
+from datetime import datetime
 
 from aiogram import Bot, Router
 from aiogram.types import Chat, Message
@@ -21,7 +22,7 @@ from bot.db.base import get_session_factory
 from bot.db.cars_repo import CarRepository, same_car_model
 from bot.db.models import CarSource, CarStatus
 from bot.services.car_cards import notify_admins_text, send_car_card_to_admins
-from bot.services.car_extract import extract_car
+from bot.services.car_extract import extract_car, is_roundup
 from bot.db.repositories import CrmRepository
 from bot.services.car_parser import (
     ParsedCar,
@@ -54,6 +55,10 @@ ORPHAN_MEDIA_SECONDS = 300
 _orphan_media: dict[int, tuple[float, list[Message]]] = {}
 # Gapirilgan video o'zi mashina bo'lib yaratilgan bo'lsa — ortidan kelgan tavsif shu mashinani to'ldiradi
 _recent_media_car: dict[int, tuple[float, int]] = {}
+# Matnli e'londan keyin darhol (tavsif bilan bir paytda) tashlangan matnsiz video — shu mashinaniki.
+# Vaqt Telegram xabar sanasi bo'yicha (transkripsiya kechiksa ham oyna buzilmaydi).
+TEXT_THEN_MEDIA_SECONDS = 120
+_recent_text_car: dict[int, tuple[datetime, int]] = {}
 # Bir kanal postlari navbat bilan: video transkripsiyasi (sekin) va tavsif (tez) tartibi buzilmasin
 _channel_locks: dict[int, asyncio.Lock] = {}
 
@@ -78,10 +83,19 @@ def _take_recent_media_car(chat_id: int) -> int | None:
     return car_id if time.monotonic() - ts <= ORPHAN_MEDIA_SECONDS else None
 
 
+def _recent_text_car_for(m: Message) -> int | None:
+    item = _recent_text_car.get(m.chat.id)
+    if item is None or m.date is None:
+        return None
+    posted, car_id = item
+    return car_id if 0 <= (m.date - posted).total_seconds() <= TEXT_THEN_MEDIA_SECONDS else None
+
+
 def forget_recent_media(chat_id: int) -> None:
     """Matnsiz media buferlarini tozalash (kanal importida bir-biridan uzoq postlar birlashmasin)."""
     _orphan_media.pop(chat_id, None)
     _recent_media_car.pop(chat_id, None)
+    _recent_text_car.pop(chat_id, None)
 
 
 def _take_orphan_media(chat_id: int) -> list[Message]:
@@ -206,7 +220,16 @@ def _media_filename(m: Message) -> str:
 _transcript_cache: dict[tuple[int, int], str] = {}
 
 
-async def _transcribe_one(bot: Bot, m: Message) -> str | None:
+# Gemini «high demand» (503) ba'zan bir-ikki daqiqa davom etadi: urinishlar orasidagi kutish
+TRANSCRIBE_RETRY_DELAYS = (10, 30)
+# Tinglab bo'lmagan video shu vaqt ichida qayta-qayta (har bosqichda) urinilmaydi; keyin fonda qayta tinglanadi
+TRANSCRIBE_FAIL_TTL = 300
+RELISTEN_AFTER_SECONDS = 900
+_transcribe_failed: dict[tuple[int, int], float] = {}
+_relisten_tasks: dict[tuple[int, int], asyncio.Task] = {}
+
+
+async def _transcribe_one(bot: Bot, m: Message, *, force: bool = False) -> str | None:
     """Bitta video/ovoz → matn. None — tinglab bo'lmadi (xato); "" — nutq yo'q."""
     media = m.video_note or m.voice or m.audio or m.video
     if media is None:
@@ -217,8 +240,12 @@ async def _transcribe_one(bot: Bot, m: Message) -> str | None:
     if (getattr(media, "file_size", 0) or 0) > _MAX_TRANSCRIBE_BYTES:
         logger.warning("Video juda katta, tinglanmadi (msg %s, %s bayt)", m.message_id, media.file_size)
         return None
+    failed_at = _transcribe_failed.get(key)
+    if not force and failed_at is not None and time.monotonic() - failed_at < TRANSCRIBE_FAIL_TTL:
+        return None
     ai = get_ai()
-    for attempt in (1, 2):  # tarmoq/AI vaqtinchalik xatosida bir marta qayta urinamiz
+    delays = (*TRANSCRIBE_RETRY_DELAYS, None)
+    for attempt, delay in enumerate(delays, 1):  # AI vaqtinchalik band bo'lsa — kutib qayta urinamiz
         try:
             f = await bot.get_file(media.file_id)
             buf = await bot.download_file(f.file_path)
@@ -228,14 +255,54 @@ async def _transcribe_one(bot: Bot, m: Message) -> str | None:
             if len(_transcript_cache) > 2000:
                 _transcript_cache.clear()
             _transcript_cache[key] = text
+            _transcribe_failed.pop(key, None)
             return text
         except AIError as e:
-            logger.warning("Ovozni matnga aylantirib bo'lmadi (msg %s, %s-urinish): %s", m.message_id, attempt, e)
+            logger.warning("Ovozni matnga aylantirib bo'lmadi (msg %s, %s-urinish): %s", m.message_id, attempt, str(e)[:120])
         except Exception:
             logger.exception("Media yuklab olish/transkripsiya xatosi (msg %s, %s-urinish)", m.message_id, attempt)
-        if attempt == 1:
-            await asyncio.sleep(3)
+        if delay is not None:
+            await asyncio.sleep(delay)
+    if len(_transcribe_failed) > 2000:
+        _transcribe_failed.clear()
+    _transcribe_failed[key] = time.monotonic()
+    _schedule_relisten(bot, m)
     return None
+
+
+def _schedule_relisten(bot: Bot, m: Message) -> None:
+    """Tinglab bo'lmagan video bir necha daqiqadan keyin qayta tinglanadi va mashina ma'lumoti to'ldiriladi."""
+    key = (m.chat.id, m.message_id)
+    if key in _relisten_tasks or RELISTEN_AFTER_SECONDS <= 0:
+        return
+    task = asyncio.create_task(_relisten(bot, m))
+    _relisten_tasks[key] = task
+    task.add_done_callback(lambda _t: _relisten_tasks.pop(key, None))
+
+
+async def _relisten(bot: Bot, m: Message) -> None:
+    await asyncio.sleep(RELISTEN_AFTER_SECONDS)
+    try:
+        text = await _transcribe_one(bot, m, force=True)
+        if not text:
+            # _transcribe_one yangi qayta urinish qo'ymasin — bir marta yetadi
+            logger.info("Video qayta tinglandi, natija yo'q (msg %s)", m.message_id)
+            return
+        _listen_status[(m.chat.id, m.message_id)] = "ok"
+        async with _channel_lock(m.chat.id), get_session_factory()() as session:
+            cars = CarRepository(session)
+            car = await cars.find_by_channel_message(m.chat.id, m.message_id)
+            if car is None:
+                logger.info("Video qayta tinglandi, lekin u hech bir mashinaga bog'lanmagan (msg %s)", m.message_id)
+                return
+            await _apply_reply_to_car(
+                bot, cars, car, [m], "", header="🎙 <b>Avval tinglab bo'lmagan video qayta tinglandi</b>", already_saved=True
+            )
+            logger.info("Video qayta tinglandi → mashina #%s to'ldirildi (msg %s)", car.id, m.message_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Videoni qayta tinglash xatosi (msg %s)", m.message_id)
 
 
 # Oxirgi tinglash natijalari: (chat_id, message_id) → «eshitildi / nutq yo'q / tinglab bo'lmadi» (admin kartasi uchun)
@@ -299,11 +366,15 @@ async def _apply_reply_to_car(
     text: str,
     *,
     header: str = "✏️ <b>Kanaldagi reply bilan yangilandi</b>",
+    already_saved: bool = False,
 ) -> None:
-    """Postga reply bilan qo'shilgan ma'lumot (narx, probeg, holat...) — mavjud mashinani yangilaydi."""
+    """Postga reply bilan qo'shilgan ma'lumot (narx, probeg, holat...) — mavjud mashinani yangilaydi.
+
+    already_saved=True — xabar mashinada allaqachon bor (qayta tinglangan video): faqat yangi ma'lumot qo'shiladi.
+    """
     transcripts = await _transcribe_media(bot, messages)
     full = "\n".join([text, *[f"[Ovoz]: {t}" for t in transcripts]]).strip()
-    photos, videos = _media_of(messages)
+    photos, videos = ([], []) if already_saved else _media_of(messages)
     if not full and not (photos or videos):
         return
     was_active = car.status == CarStatus.ACTIVE
@@ -315,7 +386,7 @@ async def _apply_reply_to_car(
             parsed.brand, parsed.model = car.brand, car.model
         # Faqat ovoz (matnsiz video) — tekshiruvdagi mashinani o'zicha sotuvga chiqarmaydi
         changes = await cars.apply_parsed(
-            car, parsed, raw_text=f"{car.raw_text}\n{full}".strip(), allow_activate=bool(text), merge_notes=True
+            car, parsed, raw_text=f"{car.raw_text}\n{full}".strip(), allow_activate=_has_car_facts(text), merge_notes=True
         )
     # Yangi list beramiz — ARRAY ustunidagi o'zgarish saqlanishi uchun
     new_ids = [m.message_id for m in messages if m.message_id not in car.channel_message_ids]
@@ -350,6 +421,15 @@ async def _apply_reply_to_car(
     if not was_active and car.status == CarStatus.ACTIVE:
         await notify_wishlist_matches_car(bot, CrmRepository(cars.session), cars, car)
         await cars.session.commit()
+
+
+def _has_car_facts(text: str) -> bool:
+    """Matnning o'zida mashina ma'lumoti bor (model + yil/probeg/narx). «BUGUN NASIYA SAVDOSI BOR ☎️...» banneri
+    yoki «Aloqa: ...» kabi post tekshiruvdagi mashinani o'zicha sotuvga chiqarmasin."""
+    if not text:
+        return False
+    p = parse_car_text(text, usd_rate_uzs=settings.usd_rate_uzs)
+    return bool(p.model and (p.year or p.mileage_km or p.price_usd))
 
 
 def _heard_html(transcripts: list[str]) -> str:
@@ -537,7 +617,7 @@ async def _sold_by_announcement(
 # tashlangan videolar (masalan 30 va 31) aralash tartibda qayta ishlanib qolardi. Kelgan postlar ro'yxatga
 # yoziladi va har biri o'zidan oldingi (kichik ID li) postlar tugashini kutadi.
 ORDER_GRACE_SECONDS = 0.5
-ORDER_MAX_WAIT_SECONDS = 30.0
+ORDER_MAX_WAIT_SECONDS = 180.0  # oldingi postning videosi tinglanayotgan bo'lishi mumkin
 _pending_posts: dict[int, set[int]] = {}
 
 
@@ -624,7 +704,7 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
 
         # Matnsiz media (masalan 2-dumaloq video) ketma-ket kelsa — bitta mashinaga tegishli
         if not text and reply_to is None and any(m.photo or m.video or m.video_note for m in messages):
-            recent_car_id = _peek_recent_media_car(chat_id)
+            recent_car_id = _peek_recent_media_car(chat_id) or _recent_text_car_for(first)
             recent_car = await cars.get(recent_car_id) if recent_car_id else None
             if recent_car is not None:
                 heard = parse_car_text(" ".join(await _transcribe_media(bot, messages)), usd_rate_uzs=settings.usd_rate_uzs)
@@ -636,6 +716,7 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
                     _recent_media_car[chat_id] = (time.monotonic(), recent_car.id)  # oyna uzayadi
                     return
                 _recent_media_car.pop(chat_id, None)  # boshqa model — yangi mashina
+                _recent_text_car.pop(chat_id, None)
             orphan = _take_orphan_media(chat_id)
             if orphan:
                 # Oldingi matnsiz media bilan birga ko'rib chiqamiz (2 ta video — bitta mashina)
@@ -658,7 +739,7 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             await _sold_by_announcement(bot, cars, parsed, messages, heard=transcripts, create_if_missing=False)
             return
         if not parsed.looks_like_car():
-            if has_media and not text:
+            if has_media and not text and not is_roundup(full_text):
                 _orphan_media[chat_id] = (time.monotonic(), messages)
             logger.info(
                 "Kanal posti e'lon emas deb topildi (msg %s): %r", msg_ids[0], full_text[:150].replace("\n", " ")
@@ -740,6 +821,8 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             _recent_media_car[chat_id] = (time.monotonic(), car.id)
         else:
             _recent_media_car.pop(chat_id, None)
+            if messages[-1].date is not None:
+                _recent_text_car[chat_id] = (messages[-1].date, car.id)
         if car.status == CarStatus.REVIEW and audio_unverified:
             header = (
                 "🎙 <b>Ma'lumot videodagi ovozdan olindi</b> — to'g'riligini tekshirib tasdiqlang.\n"
@@ -785,6 +868,8 @@ async def _merge_repost(
         car.video_file_ids = [*car.video_file_ids, *videos]
     await cars.add_event(car, "reposted", {"message_ids": new_ids})
     await cars.session.commit()
+    if messages and messages[-1].date is not None and any(_message_text(m) for m in messages):
+        _recent_text_car[messages[0].chat.id] = (messages[-1].date, car.id)
     header = f"♻️ <b>Kanalga qayta joylandi</b> — mavjud <code>#{car.id}</code> bilan birlashtirildi (dublikat yaratilmadi)"
     if "price_usd" in changes:
         header += "\n💰 Narx yangilandi"

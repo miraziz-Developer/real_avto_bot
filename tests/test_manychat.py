@@ -534,3 +534,58 @@ async def test_make_poll_groups_comments_of_many_posts_and_stops_retrying(factor
         assert (await post({"stage": "media", "rows": media(5, 3)}))["check"] == ["m1"]
         assert (await post({"stage": "media", "rows": media(5, 3)}))["check"] == ["m1"]
         assert (await post({"stage": "media", "rows": media(5, 3)}))["check"] == []
+
+
+async def test_make_poll_late_replies_are_sent_next_time_and_failed_ones_retried(factory, monkeypatch):
+    """Javob tayyorlash cho'zilsa Make so'rovi uzilmasin: ulgurmagani keyingi tekshiruvda, xatolisi qayta urinishda."""
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from aiohttp import web as _web
+
+    from bot.instagram import make_poll
+    from bot.instagram.make_poll import FIELD_SEP as F, POLL_PATH, ROW_SEP as R, MakePoller
+
+    monkeypatch.setattr(make_poll, "ANSWER_DEADLINE_SECONDS", 0.3)
+    bridge = ManyChatBridge(FakeBot(), factory)
+    real_answer = bridge.answer
+    calls: dict[str, int] = {}
+
+    async def answer(payload):
+        cid = payload["comment_id"]
+        calls[cid] = calls.get(cid, 0) + 1
+        if cid == "slow" and calls[cid] == 1:
+            await asyncio.sleep(0.8)
+        if cid == "boom" and calls[cid] == 1:
+            await real_answer(payload)  # komment «band» qilinadi, keyin xato
+            raise RuntimeError("AI yiqildi")
+        return await real_answer(payload)
+
+    bridge.answer = answer  # type: ignore[method-assign]
+    app = _web.Application()
+    MakePoller(bridge, factory).add_routes(app)
+    new = (datetime.now(UTC) + timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%S+0000")
+
+    def media(c: int) -> str:
+        return F.join(["m1", str(c), "", "VIDEO", "", "Gentra ID: 4"])
+
+    def rows(*ids: str) -> str:
+        return R.join(F.join([i, new, f"u{i}", i, "m1", "narxi qancha?"]) for i in ids)
+
+    async with TestClient(TestServer(app)) as client:
+        async def post(data):
+            return await (await client.post(POLL_PATH, data=data, headers=AUTH)).json()
+
+        await post({"stage": "media", "rows": media(1)})
+        assert (await post({"stage": "media", "rows": media(4)}))["check"] == ["m1"]
+        r = await post({"stage": "comments", "rows": rows("fast", "slow", "boom")})
+        assert [x["comment_id"] for x in r["replies"]] == ["fast"]  # muddatga ulgurgani
+        await asyncio.sleep(1.0)  # sekin javob fonda tugaydi va saqlanadi
+        # Yangi komment bo'lmasa ham kechikkan javob uchun post tekshiriladi
+        assert (await post({"stage": "media", "rows": media(4)}))["check"] == ["m1"]
+        r = await post({"stage": "comments", "rows": rows("fast", "slow", "boom")})
+        got = sorted(x["comment_id"] for x in r["replies"])
+        assert got == ["boom", "slow"]  # kechikkani yuborildi, xatolisi qayta urinildi
+        assert calls["boom"] == 2  # xatodan keyin «band» belgisi olib tashlangan — qayta urinildi
+        r = await post({"stage": "comments", "rows": rows("fast", "slow", "boom")})
+        assert r["replies"] == []

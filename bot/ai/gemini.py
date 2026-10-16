@@ -18,7 +18,7 @@ from typing import Any
 import aiohttp
 
 from bot.ai.budget import AIBudget, Prices
-from bot.ai.errors import AIBudgetExceeded, AIError
+from bot.ai.errors import AIBudgetExceeded, AIError, json_object
 
 logger = logging.getLogger(__name__)
 
@@ -231,8 +231,7 @@ class GeminiClient:
             result = json.loads(content)
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
             raise AIError(f"JSON javob o'qilmadi: {e}") from e
-        if not isinstance(result, dict):
-            raise AIError("JSON obyekt kutilgan edi")
+        result = json_object(result)
         return result
 
     async def chat(

@@ -10,7 +10,7 @@ from typing import Any
 import aiohttp
 
 from bot.ai.budget import AIBudget, Prices
-from bot.ai.errors import AIError
+from bot.ai.errors import AIError, json_object
 from bot.config import settings
 
 logger = logging.getLogger(__name__)
@@ -112,8 +112,7 @@ class GroqClient:
             out = json.loads(content)
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
             raise AIError(f"JSON javob o'qilmadi: {e}") from e
-        if not isinstance(out, dict):
-            raise AIError("JSON obyekt kutilgan edi")
+        out = json_object(out)
         return out
 
     async def chat(

@@ -273,8 +273,9 @@ async def sync_once(bot: Bot, session_factory: async_sessionmaker[AsyncSession],
     res = await apply_listings(bot, session_factory, listings(posts), chat_id=chat_id, username=username, now=now)
     if deep:
         if complete:
-            await archive_stale(bot, session_factory, posts, chat_id=chat_id, cutoff=since, days=days)
+            archived = await archive_stale(bot, session_factory, posts, chat_id=chat_id, cutoff=since, days=days)
             await _mark_deep(session_factory, now)
+            logger.info("Kanal sinxronizatsiyasi (to'liq): %d post o'qildi, arxivlandi %s", len(posts), archived or "yo'q")
         else:
             logger.info("Kanal sinxronizatsiyasi: sahifalar to'liq o'qilmadi — arxivlash keyinroq")
     if res.created or res.sold or res.reactivated:

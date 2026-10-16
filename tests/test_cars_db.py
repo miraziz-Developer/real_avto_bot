@@ -160,7 +160,9 @@ def watch(monkeypatch):
     monkeypatch.setattr(channel_watch, "settings", patched)
     channel_watch._orphan_media.clear()  # testlar orasida «egasiz media» buferi aralashmasin
     channel_watch._recent_media_car.clear()
+    channel_watch._recent_text_car.clear()
     channel_watch._transcript_cache.clear()
+    channel_watch._transcribe_failed.clear()
     car_cards._recent_cards.clear()  # car ids restart in every test — don't edit another test's card
     return channel_watch
 
@@ -1000,6 +1002,7 @@ async def test_reposted_video_and_description_merge_into_existing_car(session_fa
     bot = FakeBot()
     await watch.process_channel_post(bot, [_channel_msg(1300, text_="Spark 2012, probeg 406 000 km, narxi 3400$")])
     watch._recent_media_car.clear()
+    watch._recent_text_car.clear()  # repost — much later than the first post
     await watch.process_channel_post(bot, [_vnote(1301, "rep")])  # repost starts with a vague video
     await watch.process_channel_post(bot, [_channel_msg(1302, text_="Spark 2012, probeg 406 000 km, narxi 3400$ 🔥")])
     async with session_factory() as s:
@@ -1078,3 +1081,113 @@ async def test_admin_forwards_old_channel_post_to_bot(session_factory, watch, mo
     assert "<code>#1</code>" in bot.sent[-1][2] and "Bazaga qo'shildi" not in bot.sent[-1][2]
     async with session_factory() as s:
         assert len((await s.execute(select(Car))).scalars().all()) == 1
+
+
+# --- 2 kunlik ish tahlili: topilgan xatolar ---------------------------------------------
+
+
+async def test_video_right_after_text_post_belongs_to_that_car(session_factory, watch, monkeypatch):
+    """Matnli e'lon, 8 soniyadan keyin matnsiz video (ovozda model yo'q) — alohida «mashina» bo'lmaydi."""
+    speech = {601: "Telefon nomerlarini qoldiramiz, bu ukamiz Chinozda turadi"}
+
+    async def fake_transcribe(bot, messages):
+        return [speech[m.message_id] for m in messages if m.message_id in speech]
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_channel_msg(600, text_="🚘AVTOMOBIL: JUGULI 2106\n🗓️yili: 1990\n📞Aloqa: +998901234567")])
+    await watch.process_channel_post(bot, [_vnote(601, "jig")])
+    async with session_factory() as s:
+        rows = (await s.execute(select(Car))).scalars().all()
+    assert len(rows) == 1 and rows[0].channel_message_ids == [600, 601] and rows[0].video_file_ids == ["vn:jig"]
+
+
+async def test_daily_roundup_video_and_banner_do_not_become_a_car(session_factory, watch, monkeypatch):
+    speech = {
+        700: "Bugungi kunni boshladik. Tak, Malibumiz 2018, 18 mingga qo'yganmiz. I Oniksimiz 2023, 9100 ga. "
+        "Sparkimiz 7300, 2021. 2100 ga 14 Matizimiz, nasiya savdoga 1000 dollar pulingiz bo'lsa chiqib ketadi."
+    }
+
+    async def fake_transcribe(bot, messages):
+        return [speech[m.message_id] for m in messages if m.message_id in speech]
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_vnote(700, "obzor")])
+    await watch.process_channel_post(bot, [_channel_msg(701, text_="BUGUN\n📆16 10.2026\nNASIYA SOVDASI BOR\n☎️Aloqa: +998974337608")])
+    async with session_factory() as s:
+        assert (await s.execute(select(Car))).scalars().all() == []
+
+
+async def test_banner_text_does_not_activate_review_car(session_factory, watch, monkeypatch):
+    """Videodan (faqat ovozdan) yaratilgan tekshiruvdagi mashina — ortidan kelgan banner uni sotuvga chiqarmaydi."""
+    speech = {710: "Spark 2018 yil, yurgani 90 ming, narxi 7300 dollar"}
+
+    async def fake_transcribe(bot, messages):
+        return [speech[m.message_id] for m in messages if m.message_id in speech]
+
+    monkeypatch.setattr(watch, "_transcribe_media", fake_transcribe)
+    bot = FakeBot()
+    await watch.process_channel_post(bot, [_vnote(710, "sp")])
+    await watch.process_channel_post(bot, [_channel_msg(711, text_="BUGUN 2018-2024 mashinalar\nNASIYA SOVDASI BOR, 2026\n☎️Aloqa: +998974337608")])
+    async with session_factory() as s:
+        rows = (await s.execute(select(Car))).scalars().all()
+    assert len(rows) == 1 and rows[0].status == CarStatus.REVIEW
+
+
+async def test_daewoo_repost_merges_into_chevrolet_car(session_factory):
+    async with session_factory() as s:
+        cars = CarRepository(s)
+        old = await cars.create_from_parsed(
+            _parsed(brand="Chevrolet", model="Matiz", year=2014, mileage_km=110000), source=CarSource.CHANNEL, raw_text=""
+        )
+        await s.commit()
+        found = await cars.find_repost_candidate(_parsed(brand="Daewoo", model="Matiz", year=2014, mileage_km=110000))
+        assert found is not None and found.id == old.id
+
+
+async def test_data_fixes_repair_analysis_mistakes(session_factory):
+    from bot.workers.data_fixes import fix_cars
+
+    async with session_factory() as s:
+        cars = CarRepository(s)
+        fake = await cars.create_from_parsed(_parsed(model="Spark", year=2018, price_usd=1000), source=CarSource.CHANNEL, raw_text="")
+        fake.notes = "Postda mashina haqida ma'lumot yo'q, faqat nasiya savdosi borligi va aloqa raqamlari keltirilgan."
+        damas = await cars.create_from_parsed(
+            _parsed(model="Damas", year=2014, price_usd=600), source=CarSource.CHANNEL,
+            raw_text="Damas 2014. Nasiya savdoga, 600 dollar pulingiz bo'lsa, 18 oy 200 dan",
+        )
+        jig = await cars.create_from_parsed(_parsed(brand="Lada", model="2106", year=1990), source=CarSource.CHANNEL, raw_text="jiguli")
+        await s.flush()
+        follow = await cars.create_from_parsed(
+            ParsedCar(brand="Lada", model="2106"), source=CarSource.CHANNEL, raw_text="[Ovoz]: Chinozda turadi",
+            status=CarStatus.REVIEW, channel_message_ids=[5189],
+        )
+        matiz = await cars.create_from_parsed(
+            _parsed(brand="Chevrolet", model="Matiz", year=2014, mileage_km=110000, price_usd=None), source=CarSource.CHANNEL, raw_text=""
+        )
+        dup = await cars.create_from_parsed(
+            _parsed(brand="Daewoo", model="Matiz", year=2014, mileage_km=110000, price_usd=1950), source=CarSource.CHANNEL, raw_text=""
+        )
+        await s.commit()
+        # Dublikat 1 daqiqadan keyin yaratilgan, «video» 8 soniyadan keyin
+        await s.execute(text("UPDATE cars SET created_at = now() - interval '1 hour'"))
+        await s.execute(text(f"UPDATE cars SET created_at = now() - interval '1 hour' + interval '8 seconds' WHERE id = {follow.id}"))
+        await s.execute(text(f"UPDATE cars SET created_at = now() - interval '1 hour' + interval '10 minutes' WHERE id = {matiz.id}"))
+        await s.execute(text(f"UPDATE cars SET created_at = now() - interval '1 hour' + interval '50 minutes' WHERE id = {dup.id}"))
+        await s.commit()
+        ids = (fake.id, damas.id, jig.id, follow.id, matiz.id, dup.id)
+
+    async with session_factory() as s:
+        lines = await fix_cars(s)
+        await s.commit()
+    async with session_factory() as s:
+        cars = CarRepository(s)
+        fake, damas, jig, follow, matiz, dup = [await cars.get(i) for i in ids]
+        assert fake.status == CarStatus.ARCHIVED
+        assert damas.price_usd is None and damas.status == CarStatus.ACTIVE
+        assert follow is None and 5189 in jig.channel_message_ids
+        assert dup is None and matiz.price_usd == 1950
+    assert len(lines) == 4
+    async with session_factory() as s:
+        assert await fix_cars(s) == []  # ikkinchi marta hech narsa o'zgarmaydi

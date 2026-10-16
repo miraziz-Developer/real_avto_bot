@@ -52,6 +52,7 @@ from bot.db.cars_repo import CarRepository
 from bot.db.leads_repo import LeadRepository
 from bot.db.models import Car, CarStatus, InstagramComment, InstagramPost, Lead
 from bot.db.repositories import CrmRepository
+from bot.instagram.client import download_url
 from bot.handlers.channel_comments import has_buy_intent, is_question
 from bot.handlers.sales_agent import forward_text_to_manager
 from bot.instagram.car_match import CarMatch, post_ref, resolve_car
@@ -281,15 +282,11 @@ class ManyChatBridge:
             return ""
         try:
             timeout = aiohttp.ClientTimeout(total=20)
-            async with aiohttp.ClientSession(timeout=timeout) as http, http.get(url) as resp:
-                if resp.status != 200 or (resp.content_length or 0) > MEDIA_MAX_BYTES:
-                    return ""
-                data = await resp.content.read(MEDIA_MAX_BYTES + 1)
-                mime = (resp.headers.get("Content-Type") or "").split(";")[0].strip()
+            data, mime = await download_url(url, max_bytes=MEDIA_MAX_BYTES, timeout=timeout)
         except (TimeoutError, aiohttp.ClientError) as e:
             logger.info("ManyChat media yuklanmadi: %s", e)
             return ""
-        if len(data) > MEDIA_MAX_BYTES or not data:
+        if not data:
             return ""
         if mime.startswith("video/"):
             filename = "video.mp4"

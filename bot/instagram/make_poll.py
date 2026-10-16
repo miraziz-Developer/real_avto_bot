@@ -14,16 +14,18 @@ maydonlar ␟ bilan ajratilgan; matn (eng oxirgi maydon) ichidagi ␞/␟ Make t
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
 
 from aiohttp import web
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from bot.config import settings
 from bot.db.cars_repo import CarRepository
-from bot.db.models import AppMeta
+from bot.db.models import AppMeta, InstagramComment
 from bot.instagram.car_match import remember_post
 from bot.instagram.manychat import read_payload
 
@@ -37,6 +39,10 @@ MAX_REPLIES_PER_POST = 10
 MAX_TRIES = 2
 # Shundan eski kommentlarga javob yozilmaydi (birinchi ishga tushirishdan oldingi kommentlar ham)
 MAX_COMMENT_AGE = timedelta(days=2)
+# Bir vaqtda nechta kommentga javob tayyorlanadi va javob qancha kutiladi: Make so'rovi uzilib qolmasin
+# (javob kechiksa Make bo'sh javob oladi va yozilgan javoblar yo'qoladi). Ulgurmaganlari keyingi tekshiruvda yuboriladi.
+CONCURRENCY = 4
+ANSWER_DEADLINE_SECONDS = 100.0
 
 
 def parse_rows(raw: str, fields: int) -> list[list[str]]:
@@ -117,11 +123,17 @@ class MakePoller:
             new_pending = dict.fromkeys(check, 1)
             new_pending.update({m: pending[m] + 1 for m in retry})
             check += retry
+            late = state.get("late", [])
+            # Oldingi tekshiruvda ulgurmagan javoblar — shu postlar kommentlari so'raladi (javob o'sha so'rovga qo'shiladi)
+            check += [m for m in dict.fromkeys(r.get("media_id", "") for r in late) if m in seen and m not in check]
+            if late and not check:
+                check = [next(iter(seen))] if seen else []
             state = {
                 "since": state.get("since") or now.isoformat(),
                 "counts": {k: v for k, v in counts.items() if k in seen},
                 "media": {k: v for k, v in media.items() if k in seen},
                 "pending": new_pending,
+                "late": late,
             }
             await self._save(session, state)
             await session.commit()
@@ -136,6 +148,7 @@ class MakePoller:
 
         Qator: id, timestamp, username, from_id, media_id, text. Make bir nechta post kommentlarini bitta so'rovga
         yig'ishi mumkin — har komment o'z posti (qatordagi media_id) bo'yicha ko'riladi.
+        Javoblar parallel tayyorlanadi; muddatga ulgurmaganlari «late» ga yoziladi va keyingi tekshiruvda yuboriladi.
         """
         rows = parse_rows(payload.get("rows", ""), 6)
         fallback_media = str(payload.get("media_id") or "").strip()
@@ -144,9 +157,9 @@ class MakePoller:
             state = await self._load(session)
         since = _ts(state.get("since", "")) or now
         own = (settings.instagram_username or "").lstrip("@").lower()
-        replies: list[dict] = []
         per_media: dict[str, int] = {}
         seen_media: set[str] = set()
+        todo: list[tuple[str, str, dict]] = []
         for comment_id, ts_raw, username, from_id, row_media, text in rows:
             media_id = row_media or fallback_media
             seen_media.add(media_id)
@@ -157,40 +170,92 @@ class MakePoller:
                 continue
             if per_media.get(media_id, 0) >= MAX_REPLIES_PER_POST:
                 continue
+            per_media[media_id] = per_media.get(media_id, 0) + 1
             info = state.get("media", {}).get(media_id, {})
-            result = await self.bridge.answer(
-                {
-                    "event": "comment",
-                    "dm": "false",
-                    "user_id": from_id,
-                    "ig_username": username,
-                    "text": text,
-                    "comment_id": comment_id,
-                    "media_id": media_id,
-                    "caption": info.get("caption", ""),
-                    "post_url": info.get("permalink", ""),
-                    "media_url": info.get("url", "") if info.get("type") in ("VIDEO", "REELS") else "",
-                    "media_type": info.get("type", ""),
-                }
-            )
-            if result.get("public_reply"):
-                replies.append({"comment_id": comment_id, "message": result["public_reply"]})
-                per_media[media_id] = per_media.get(media_id, 0) + 1
+            todo.append((comment_id, media_id, {
+                "event": "comment",
+                "dm": "false",
+                "user_id": from_id,
+                "ig_username": username,
+                "text": text,
+                "comment_id": comment_id,
+                "media_id": media_id,
+                "caption": info.get("caption", ""),
+                "post_url": info.get("permalink", ""),
+                "media_url": info.get("url", "") if info.get("type") in ("VIDEO", "REELS") else "",
+                "media_type": info.get("type", ""),
+            }))
         if fallback_media:
             seen_media.add(fallback_media)
+
+        sem = asyncio.Semaphore(CONCURRENCY)
+
+        async def one(comment_id: str, media_id: str, item: dict) -> dict | None:
+            async with sem:
+                try:
+                    result = await self.bridge.answer(item)
+                except Exception:
+                    logger.exception("IG poll: kommentga javob tayyorlanmadi (%s)", comment_id)
+                    await self._unclaim(comment_id)  # keyingi tekshiruvda qayta urinamiz
+                    return None
+            reply = result.get("public_reply") or ""
+            if not reply:
+                return None
+            logger.info("IG javob → %s: %r", comment_id, reply[:160])
+            return {"comment_id": comment_id, "message": reply, "media_id": media_id}
+
+        tasks = [asyncio.create_task(one(*t)) for t in todo]
+        done, pending = await asyncio.wait(tasks, timeout=ANSWER_DEADLINE_SECONDS) if tasks else (set(), set())
+        replies = [r for t in tasks if t in done and (r := t.result()) is not None]
+        if pending:
+            logger.warning("IG poll: %d ta javob muddatga ulgurmadi — keyingi tekshiruvda yuboriladi", len(pending))
+            for t in pending:
+                t.add_done_callback(self._remember_late)
+
         async with self.session_factory() as session:
             state = await self._load(session)
-            pending = state.get("pending", {})
-            if isinstance(pending, list):
-                pending = dict.fromkeys(pending, 1)
-            state["pending"] = {m: t for m, t in pending.items() if m not in seen_media}
-            for media_id, n in per_media.items():
+            late = [r for r in state.get("late", []) if r.get("comment_id") not in {x["comment_id"] for x in replies}]
+            replies = [*late, *replies]
+            state["late"] = []
+            pending_m = state.get("pending", {})
+            if isinstance(pending_m, list):
+                pending_m = dict.fromkeys(pending_m, 1)
+            state["pending"] = {m: t for m, t in pending_m.items() if m not in seen_media}
+            for r in replies:
+                media_id = r.get("media_id", "")
                 if media_id in state.get("counts", {}):
-                    state["counts"][media_id] += n  # o'zimizning javoblarimiz ham kommentlar sonini oshiradi
+                    state["counts"][media_id] += 1  # o'zimizning javoblarimiz ham kommentlar sonini oshiradi
             await self._save(session, state)
             await session.commit()
-        logger.info("IG poll comments: %d post, %d komment, %d javob", len(seen_media), len(rows), len(replies))
-        return {"replies": replies, "count": len(replies)}
+        logger.info(
+            "IG poll comments: %d post, %d komment, %d javob%s",
+            len(seen_media), len(rows), len(replies), f" (shundan kechikkan {len(late)})" if late else "",
+        )
+        out = [{"comment_id": r["comment_id"], "message": r["message"]} for r in replies]
+        return {"replies": out, "count": len(out)}
+
+    def _remember_late(self, task: asyncio.Task) -> None:
+        if task.cancelled() or task.exception() is not None or task.result() is None:
+            return
+        asyncio.create_task(self._save_late(task.result()))
+
+    async def _save_late(self, reply: dict) -> None:
+        try:
+            async with self.session_factory() as session:
+                state = await self._load(session)
+                state.setdefault("late", []).append(reply)
+                await self._save(session, state)
+                await session.commit()
+        except Exception:
+            logger.exception("IG poll: kechikkan javob saqlanmadi")
+
+    async def _unclaim(self, comment_id: str) -> None:
+        try:
+            async with self.session_factory() as session:
+                await session.execute(delete(InstagramComment).where(InstagramComment.id == comment_id))
+                await session.commit()
+        except Exception:
+            logger.exception("IG poll: komment belgisi olib tashlanmadi")
 
     async def handle(self, request: web.Request) -> web.Response:
         if not self.bridge._authorized(request):

@@ -182,7 +182,7 @@ errors="$(docker compose logs --since 1h bot 2>/dev/null | grep -E ' ERROR |Trac
 [ -z "$errors" ] && ok "xato yo'q" || { bad "xatolar bor:"; printf '%s\n' "$errors" | cut -c1-240; }
 hooks="$(docker compose logs --since 3h bot 2>/dev/null | grep -E 'webhooks/make|manychat/instagram' | tail -n 6)"
 [ -n "$hooks" ] && { note "Instagram so'rovlari (oxirgi 3 soat):"; printf '%s\n' "$hooks" | cut -c1-200; }
-sync="$(docker compose logs --since 6h bot 2>/dev/null | grep -E 'Kanal sinxronizatsiyasi|Kunlik hisobot|arxivlan|IG poll|Instagram emoji|ManyChat komment' | tail -n 6)"
+sync="$(docker compose logs --since 6h bot 2>/dev/null | grep -E 'Kanal sinxronizatsiyasi|Kunlik hisobot|arxivlan|IG poll|IG javob|Instagram emoji|ManyChat komment|tuzatildi|qayta tinglandi' | tail -n 6)"
 [ -n "$sync" ] && { ok "avtomatik kanal kuzatuvi:"; printf '%s\n' "$sync" | cut -c1-240; } || note "kanal sinxronizatsiyasi logi yo'q"
 
 # --- Ops -------------------------------------------------------------------------------------------

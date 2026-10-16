@@ -43,6 +43,7 @@ from bot.instagram.client import get_ig
 from bot.instagram.webhook import start_instagram_server
 from bot.workers.channel_sync import channel_sync_loop
 from bot.workers.daily_report import daily_report_loop
+from bot.workers.data_fixes import run_data_fixes
 from bot.workers.ig_sync import ig_sync_loop
 from bot.workers.post_watch import post_watch_loop
 from bot.workers.sale_followup import sale_followup_loop
@@ -356,6 +357,7 @@ async def _run() -> None:
 
     # LEADERBOARD LOOP MUZLATILDI - Foydalanuvchi botdan chiqdi
     # worker_lb = asyncio.create_task(leaderboard_loop(bot, session_factory))
+    await run_data_fixes(bot, session_factory)
     worker_sale = asyncio.create_task(sale_followup_loop(bot, session_factory))
     heartbeat = asyncio.create_task(_heartbeat_loop(bot))
     worker_stale = asyncio.create_task(stale_cars_loop(bot, session_factory))

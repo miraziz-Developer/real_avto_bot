@@ -186,6 +186,8 @@ Database migrations run automatically when the bot starts and are idempotent, so
 - **API:** `curl -s http://127.0.0.1:3001/health` (run on the server).
 - **Bot:** `docker compose logs -f bot` shows `Run polling` without errors. `docker compose ps` reports the bot as `healthy`, because a heartbeat is checked every 30 seconds.
 
+- **From GitHub Actions:** a push whose commit message contains `[check]` runs `scripts/server_check.sh` on the server (health check). `[report]` runs `scripts/analysis_report.sh`: what happened in the last days (cars created/changed, car events, leads and conversations, Instagram replies, the full bot log). Actions logs of a public repository are public, so the report masks phone numbers, Telegram IDs, usernames and anything that looks like a key or token, never reads names, and leaves out secret `app_meta` keys.
+
 ## 9.1 Backups and monitoring
 
 Install both scripts in the server's crontab (`crontab -e`):

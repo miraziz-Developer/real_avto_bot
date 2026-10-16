@@ -88,6 +88,7 @@ async def daily_report_loop(bot: Bot, session_factory: async_sessionmaker[AsyncS
                     text = await build_report(session, now)
                 await notify_admins_text(bot, text)
                 await _mark_sent(session_factory, day)
+                logger.info("Kunlik hisobot yuborildi (%s)", day)
         except asyncio.CancelledError:
             raise
         except Exception:

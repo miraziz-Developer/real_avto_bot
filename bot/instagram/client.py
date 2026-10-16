@@ -21,14 +21,22 @@ class IGError(RuntimeError):
     pass
 
 
-async def download_url(url: str, *, max_bytes: int) -> tuple[bytes, str]:
+async def download_url(url: str, *, max_bytes: int, timeout: aiohttp.ClientTimeout | None = None) -> tuple[bytes, str]:
     """Post videosi (CDN havolasi, token kerak emas). Juda katta bo'lsa — bo'sh."""
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as http, http.get(url) as resp:
+    timeout = timeout or aiohttp.ClientTimeout(total=90)
+    async with aiohttp.ClientSession(timeout=timeout) as http, http.get(url) as resp:
         if resp.status != 200 or (resp.content_length or 0) > max_bytes:
             return b"", ""
-        data = await resp.content.read(max_bytes + 1)
+        # content.read(n) faqat tayyor qismni qaytaradi — video oxirigacha o'qiladi (aks holda AI «invalid argument»)
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in resp.content.iter_chunked(256 * 1024):
+            size += len(chunk)
+            if size > max_bytes:
+                return b"", ""
+            chunks.append(chunk)
         mime = (resp.headers.get("Content-Type") or "video/mp4").split(";")[0].strip()
-    return (b"", "") if len(data) > max_bytes else (data, mime)
+    return b"".join(chunks), mime
 
 
 def split_text(text: str, limit: int = IG_TEXT_LIMIT) -> list[str]:
