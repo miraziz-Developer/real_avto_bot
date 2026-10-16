@@ -173,6 +173,9 @@ cars="$(psql "select status, count(*) from cars group by status order by status"
 ok "leadlar: $(psql 'select count(*) from leads' || echo '?'), foydalanuvchilar: $(psql 'select count(*) from users' || echo '?')"
 last="$(psql "select '#' || id || ' ' || coalesce(model,'?') || ' ' || coalesce(year::text,'') || ' · ' || status || ' · xabarlar ' || array_to_string(channel_message_ids, ',') || ' · tinglangan video ' || (length(raw_text) - length(replace(raw_text, '[Ovoz]', ''))) / 6 || ' · rang ' || coalesce(color,'-') from cars where source = 'channel' order by id desc limit 3" | tr '\n' ';')"
 ok "oxirgi kanal mashinalari: ${last:-yo'q}"
+fixes="$(psql "select '#' || car_id || ' ' || kind || ' ' || coalesce(data::text,'') from car_events where created_at > now() - interval '1 hour' and (kind = 'auto_fix' or data::text like '%nasiya_down_payment%' or data::text like '%merged_car%') order by id" | tr '\n' ';')"
+[ -n "$fixes" ] && note "bazadagi tuzatishlar (oxirgi 1 soat): ${fixes}"
+note "sotuvdagi kanal mashinalari: $(psql "select string_agg('#' || id || ' ' || coalesce(model,'?') || ' ' || coalesce(year::text,'') || ' $' || coalesce(price_usd::text,'-'), ', ' order by id) from cars where status = 'active'")"
 ig="$(psql "select coalesce((select left(value::jsonb->>'since', 16) || ' · postlar: ' || (select count(*) from jsonb_object_keys(value::jsonb->'counts')) || ' · kutilmoqda: ' || (case jsonb_typeof(value::jsonb->'pending') when 'object' then (select count(*) from jsonb_object_keys(value::jsonb->'pending')) when 'array' then jsonb_array_length(value::jsonb->'pending') else 0 end) from app_meta where key = 'ig_poll_state'), 'yo''q')")"
 ok "Instagram tekshiruvi: holat ${ig:-?} · javob berilgan kommentlar: $(psql 'select count(*) from instagram_comments' || echo 0)"
 
@@ -182,7 +185,7 @@ errors="$(docker compose logs --since 1h bot 2>/dev/null | grep -E ' ERROR |Trac
 [ -z "$errors" ] && ok "xato yo'q" || { bad "xatolar bor:"; printf '%s\n' "$errors" | cut -c1-240; }
 hooks="$(docker compose logs --since 3h bot 2>/dev/null | grep -E 'webhooks/make|manychat/instagram' | tail -n 6)"
 [ -n "$hooks" ] && { note "Instagram so'rovlari (oxirgi 3 soat):"; printf '%s\n' "$hooks" | cut -c1-200; }
-sync="$(docker compose logs --since 6h bot 2>/dev/null | grep -E 'Kanal sinxronizatsiyasi|Kunlik hisobot|arxivlan|IG poll|IG javob|Instagram emoji|ManyChat komment|tuzatildi|qayta tinglandi' | tail -n 6)"
+sync="$(docker compose logs --since 6h bot 2>/dev/null | grep -E 'Kanal sinxronizatsiyasi|Kunlik hisobot|arxivlan|IG poll|IG javob|Instagram emoji|ManyChat komment|tuzatildi|qayta tinglandi|Traceback' | tail -n 6)"
 [ -n "$sync" ] && { ok "avtomatik kanal kuzatuvi:"; printf '%s\n' "$sync" | cut -c1-240; } || note "kanal sinxronizatsiyasi logi yo'q"
 
 # --- Ops -------------------------------------------------------------------------------------------
