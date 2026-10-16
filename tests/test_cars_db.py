@@ -1190,9 +1190,30 @@ async def test_data_fixes_repair_analysis_mistakes(session_factory):
         fake, damas, jig, follow, matiz, dup, damas2 = [await cars.get(i) for i in ids]
         assert damas2.price_usd is None
         assert fake.status == CarStatus.ARCHIVED
-        assert damas.price_usd is None and damas.status == CarStatus.ACTIVE
+        assert damas.price_usd is None  # shubhali narx — yaratilganda ham sotuvga chiqmagan (tekshiruvda)
+        assert damas.status == CarStatus.REVIEW
         assert follow is None and 5189 in jig.channel_message_ids
         assert dup is None and matiz.price_usd == 1950
     assert len(lines) == 5
     async with session_factory() as s:
         assert await fix_cars(s) == []  # ikkinchi marta hech narsa o'zgarmaydi
+
+
+async def test_suspicious_price_keeps_car_in_review_and_daily_report_lists_it(session_factory):
+    from bot.services.price_check import market_problem
+    from bot.workers.daily_report import build_report
+
+    async with session_factory() as s:
+        cars = CarRepository(s)
+        cheap = await cars.create_from_parsed(_parsed(model="Damas", year=2021, price_usd=1000), source=CarSource.CHANNEL, raw_text="")
+        assert cheap.status == CarStatus.REVIEW  # $1000 lik 2021-yil Damas — sotuvga o'zicha chiqmaydi
+        for p in (5200, 5400, 5600):
+            await cars.create_from_parsed(_parsed(model="Damas", year=2021, price_usd=p), source=CarSource.CHANNEL, raw_text="")
+        odd = await cars.create_from_parsed(_parsed(model="Damas", year=2021, price_usd=1900), source=CarSource.CHANNEL, raw_text="")
+        nop = await cars.create_from_parsed(_parsed(model="Cobalt", year=2020, price_usd=None), source=CarSource.CHANNEL, raw_text="")
+        await s.commit()
+        assert await market_problem(s, "Damas", 2021, 1900, exclude_id=odd.id) is not None
+        assert await market_problem(s, "Damas", 2021, 5300) is None
+        report = await build_report(s, datetime.now(UTC), fixes=["🗄 test tuzatish"])
+    assert "Bot o'zi tuzatdi" in report and "test tuzatish" in report
+    assert f"#{odd.id}</code>" in report and f"#{nop.id}</code>" in report and "narxi yo'q" in report

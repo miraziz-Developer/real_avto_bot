@@ -23,6 +23,7 @@ from bot.db.cars_repo import CarRepository, same_car_model
 from bot.db.models import CarSource, CarStatus
 from bot.services.car_cards import notify_admins_text, send_car_card_to_admins
 from bot.services.car_extract import extract_car, is_roundup
+from bot.services.price_check import car_price_problem
 from bot.db.repositories import CrmRepository
 from bot.services.car_parser import (
     ParsedCar,
@@ -813,6 +814,10 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             published_at=_original_date(first),
         )
         remember_post_texts(car, messages)
+        # Narx shubhali (nasiya to'lovi, bozordan ancha arzon/qimmat) — admin tasdiqlamaguncha sotuvga chiqmaydi
+        price_warning = await car_price_problem(session, car) if car.price_usd else None
+        if price_warning and car.status == CarStatus.ACTIVE:
+            await cars.set_status(car, CarStatus.REVIEW)
         if any(m.reply_markup for m in messages):
             # Boshqa bot orqali tugmali post — o'chirilganini tekshiruv uni chetlab o'tadi (tugmasi o'chmasin)
             await cars.add_event(car, HAS_MARKUP_EVENT)
@@ -834,6 +839,8 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             header = "✏️ <b>Eski post tahrirlandi</b> — mashina bazaga qo'shildi"
         else:
             header = "🆕 <b>Kanalda yangi mashina</b>"
+        if price_warning:
+            header += f"\n💰 <b>Narx shubhali:</b> {html.escape(price_warning)}. To'g'ri narxni ✏️ Tuzatish bilan kiriting."
         header += _listen_summary(messages)
         await send_car_card_to_admins(bot, car, header=header)
         logger.info("Kanal posti → mashina #%s (%s, %s)", car.id, car.title, car.status)

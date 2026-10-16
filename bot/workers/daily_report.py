@@ -15,6 +15,8 @@ from bot.config import settings
 from bot.db.cars_repo import CarRepository
 from bot.db.models import AppMeta, Car, CarStatus, Lead, LeadStatus
 from bot.services.car_cards import notify_admins_text
+from bot.services.price_check import car_price_problem
+from bot.workers.data_fixes import fix_cars
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,32 @@ META_KEY = "daily_report_date"
 _TASHKENT = timedelta(hours=5)
 
 
-async def build_report(session: AsyncSession, now: datetime) -> str:
+ATTENTION_MAX = 12
+
+
+async def attention_lines(session: AsyncSession, now: datetime) -> list[str]:
+    """Admin ko'rib chiqishi kerak bo'lgan mashinalar: narxsiz/shubhali narxli sotuvdagilar, uzoq tekshiruvdagilar."""
+    rows = (
+        await session.execute(
+            select(Car).where(Car.status.in_((CarStatus.ACTIVE, CarStatus.REVIEW))).order_by(Car.id.desc()).limit(300)
+        )
+    ).scalars().all()
+    out: list[str] = []
+    for car in rows:
+        name = f"<code>#{car.id}</code> {html.escape(car.title)}"
+        if car.status == CarStatus.REVIEW:
+            if car.created_at is not None and now - car.created_at > timedelta(hours=12):
+                out.append(f"🟡 {name} — tekshiruvda kutib qolgan")
+            continue
+        problem = await car_price_problem(session, car) if car.price_usd else None
+        if problem:
+            out.append(f"💰 {name} — {html.escape(problem)}")
+        elif not car.price_usd:
+            out.append(f"❔ {name} — narxi yo'q")
+    return out
+
+
+async def build_report(session: AsyncSession, now: datetime, *, fixes: list[str] | None = None) -> str:
     cars = CarRepository(session)
     since = now - timedelta(days=1)
     s = await cars.stats(days=1)
@@ -50,6 +77,17 @@ async def build_report(session: AsyncSession, now: datetime) -> str:
         lines.append("")
         lines.append("🔴 Bugun sotilganlar:")
         lines.extend(f"• <code>#{c.id}</code> {html.escape(c.title)}" for c in sold_today)
+    if fixes:
+        lines.append("")
+        lines.append("🛠 Bot o'zi tuzatdi:")
+        lines.extend(fixes[:ATTENTION_MAX])
+    attention = await attention_lines(session, now)
+    if attention:
+        lines.append("")
+        lines.append("⚠️ <b>Tekshirib qo'ying</b> (✏️ Tuzatish yoki /mashina &lt;id&gt;):")
+        lines.extend(attention[:ATTENTION_MAX])
+        if len(attention) > ATTENTION_MAX:
+            lines.append(f"… va yana {len(attention) - ATTENTION_MAX} ta")
     if settings.crm_url:
         lines.append("")
         lines.append(f'📊 <a href="{html.escape(settings.crm_url)}">CRM ni ochish</a>')
@@ -85,7 +123,15 @@ async def daily_report_loop(bot: Bot, session_factory: async_sessionmaker[AsyncS
             day = local.date().isoformat()
             if local.hour >= hour and await _sent_on(session_factory) != day:
                 async with session_factory() as session:
-                    text = await build_report(session, now)
+                    # Kundalik avtomatik tuzatish: dublikatlar, e'lon bo'lmagan «mashinalar», nasiya to'lovi narx o'rnida
+                    try:
+                        fixes = await fix_cars(session, now)
+                        await session.commit()
+                    except Exception:
+                        logger.exception("Kundalik tuzatish xatosi")
+                        await session.rollback()
+                        fixes = []
+                    text = await build_report(session, now, fixes=fixes)
                 await notify_admins_text(bot, text)
                 await _mark_sent(session_factory, day)
                 logger.info("Kunlik hisobot yuborildi (%s)", day)

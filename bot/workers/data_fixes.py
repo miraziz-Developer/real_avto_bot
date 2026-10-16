@@ -1,4 +1,4 @@
-"""Bir martalik ma'lumot tuzatishlari — bot ishga tushganda (har biri AppMeta kaliti bilan bir marta).
+"""Ma'lumot tuzatishlari: bot ishga tushganda bir marta (AppMeta kaliti) va har kuni kunlik hisobotdan oldin.
 
 2026-10 tahlili (2 kunlik ish): kunlik obzor videosi + «BUGUN NASIYA SAVDOSI BOR» banneri mashina bo'lib qolgan,
 nasiya boshlang'ich to'lovi narx deb olingan, e'londan keyingi video alohida mashina bo'lib qolgan, «Daewoo Matiz»

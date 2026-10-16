@@ -93,3 +93,14 @@ def test_banner_has_no_car_facts():
     assert not _has_car_facts("BUGUN\n📆16 10.2026\nNASIYA SOVDASI BOR\n☎️Aloqa: +998974337608")
     assert not _has_car_facts("")
     assert _has_car_facts("🚘AVTOMOBIL: SPARK\n🗓️yili: 2018\n📍probeg: 90.000km")
+
+
+def test_price_problem():
+    from bot.services.price_check import price_problem
+
+    assert price_problem(1000, 2021) is not None  # Damas 2021 $1000 — boshlang'ich to'lov
+    assert price_problem(500, 1990) is None  # eski Jiguli — bo'lishi mumkin
+    assert price_problem(5150, 2024) is None
+    assert price_problem(4000, 2021, "Nasiyaga: boshlang'ich to'lov 4000 dollar") is not None
+    assert price_problem(4000, 2021, "Nasiya ham bor, boshlang'ich 1500 dollar") is None
+    assert price_problem(None, 2021) is None

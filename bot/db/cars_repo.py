@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Car, CarEvent, CarSource, CarStatus, ChannelThread
 from bot.services.car_parser import REQUIRED_FIELDS, ParsedCar, detect_brand_model, normalize_text
+from bot.services.price_check import price_problem
 
 # ParsedCar → Car ga ko'chiriladigan maydonlar
 PARSED_FIELDS = (
@@ -366,7 +367,9 @@ class CarRepository:
         published_at: datetime | None = None,
     ) -> Car:
         if status is None:
-            status = CarStatus.ACTIVE if parsed.is_complete() else CarStatus.REVIEW
+            # Shubhali narx (masalan nasiya boshlang'ich to'lovi) — admin tasdiqlamaguncha sotuvga chiqmaydi
+            ok = parsed.is_complete() and price_problem(parsed.price_usd, parsed.year, parsed.notes) is None
+            status = CarStatus.ACTIVE if ok else CarStatus.REVIEW
         car = Car(
             status=status,
             source=source,
@@ -423,7 +426,12 @@ class CarRepository:
             await self._event(car, "edited", {k: v for k, v in changes.items() if k != "price_usd"} or None)
         # Admin tekshiruvidagi mashina tahrirdan keyin to'liq bo'lib qolsa — sotuvga chiqadi
         # allow_activate=False — ma'lumot faqat ovozdan kelgan: admin tasdig'isiz sotuvga chiqarmaymiz
-        if allow_activate and car.status == CarStatus.REVIEW and all(getattr(car, f) for f in REQUIRED_FIELDS):
+        if (
+            allow_activate
+            and car.status == CarStatus.REVIEW
+            and all(getattr(car, f) for f in REQUIRED_FIELDS)
+            and price_problem(car.price_usd, car.year, car.notes) is None
+        ):
             await self.set_status(car, CarStatus.ACTIVE)
         return changes
 
