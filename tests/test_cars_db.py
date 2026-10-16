@@ -1155,7 +1155,7 @@ async def test_data_fixes_repair_analysis_mistakes(session_factory):
         fake.notes = "Postda mashina haqida ma'lumot yo'q, faqat nasiya savdosi borligi va aloqa raqamlari keltirilgan."
         damas = await cars.create_from_parsed(
             _parsed(model="Damas", year=2014, price_usd=600), source=CarSource.CHANNEL,
-            raw_text="Damas 2014. Nasiya savdoga, 600 dollar pulingiz bo'lsa, 18 oy 200 dan",
+            raw_text="Damas 2014. Nasiya savdoga, 600 dollar pulingiz bo’lsa, 18 oy 200 dan",
         )
         jig = await cars.create_from_parsed(_parsed(brand="Lada", model="2106", year=1990), source=CarSource.CHANNEL, raw_text="jiguli")
         await s.flush()
