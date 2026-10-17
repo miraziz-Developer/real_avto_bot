@@ -199,3 +199,87 @@ def test_model_names_with_uzbek_and_russian_suffixes():
         assert detect_brand_model(normalize_text(text))[1] == model, text
     # Tasodifiy so'zlar model bo'lib qolmaydi
     assert detect_brand_model(normalize_text("so'ngi narxi qancha"))[1] is None
+
+
+def test_fuel_detection():
+    # "elektropaket" so'zi yonilg'ini "elektr" deb noto'g'ri belgilamasligi kerak
+    r1 = p("Malibu 2 2019 yil, probeg 55000 km, narxi 18000$, polniy elektropaket, lyuk bor")
+    assert r1.fuel is None
+
+    # Haqiqiy elektr mashina
+    r2 = p("BYD Song Plus 2023, elektr, narxi 24000$")
+    assert r2.fuel == "elektr"
+
+    # Benzin va boshqa turlar
+    r3 = p("Cobalt 2022, benzin, 4-pozitsiya avtomat")
+    assert r3.fuel == "benzin"
+
+    r4 = p("Nexia 3 2020, metan gaz o'rnatilgan")
+    assert r4.fuel == "metan"
+
+    r5 = p("Damas 2021, propan")
+    assert r5.fuel == "propan"
+
+
+def test_is_different_car():
+    from unittest.mock import MagicMock
+    from bot.handlers.channel_watch import is_different_car
+
+    # Asl mashina: Gentra 2022, 60000 km, avtomat
+    existing = MagicMock()
+    existing.brand = "Chevrolet"
+    existing.model = "Gentra"
+    existing.year = 2022
+    existing.mileage_km = 60000
+    existing.transmission = "avtomat"
+
+    # 1. Shunchaki narx yoki qisqa izoh keldi (looks_like_car=False) -> Farq qilmaydi (update qilinadi)
+    parsed_update = MagicMock()
+    parsed_update.looks_like_car.return_value = False
+    assert not is_different_car(existing, parsed_update)
+
+    # 2. Xuddi shu mashinaning to'liq tavsifi -> Farq qilmaydi
+    parsed_same = MagicMock()
+    parsed_same.looks_like_car.return_value = True
+    parsed_same.model = "Gentra"
+    parsed_same.year = 2022
+    parsed_same.mileage_km = 61000
+    parsed_same.transmission = "avtomat"
+    assert not is_different_car(existing, parsed_same)
+
+    # 3. Model boshqa (Cobalt keldi) -> Farq qiladi (yangi mashina qilinishi shart!)
+    parsed_diff_model = MagicMock()
+    parsed_diff_model.looks_like_car.return_value = True
+    parsed_diff_model.model = "Cobalt"
+    parsed_diff_model.year = 2022
+    parsed_diff_model.mileage_km = 60000
+    parsed_diff_model.transmission = "avtomat"
+    assert is_different_car(existing, parsed_diff_model)
+
+    # 4. Yil boshqa (2019 keldi) -> Farq qiladi
+    parsed_diff_year = MagicMock()
+    parsed_diff_year.looks_like_car.return_value = True
+    parsed_diff_year.model = "Gentra"
+    parsed_diff_year.year = 2019
+    parsed_diff_year.mileage_km = 60000
+    parsed_diff_year.transmission = "avtomat"
+    assert is_different_car(existing, parsed_diff_year)
+
+    # 5. Probeg sezilarli farq qiladi (150 000 km) -> Farq qiladi
+    parsed_diff_mileage = MagicMock()
+    parsed_diff_mileage.looks_like_car.return_value = True
+    parsed_diff_mileage.model = "Gentra"
+    parsed_diff_mileage.year = 2022
+    parsed_diff_mileage.mileage_km = 150000
+    parsed_diff_mileage.transmission = "avtomat"
+    assert is_different_car(existing, parsed_diff_mileage)
+
+    # 6. Uzatma qutisi boshqa (mexanika) -> Farq qiladi
+    parsed_diff_trans = MagicMock()
+    parsed_diff_trans.looks_like_car.return_value = True
+    parsed_diff_trans.model = "Gentra"
+    parsed_diff_trans.year = 2022
+    parsed_diff_trans.mileage_km = 60000
+    parsed_diff_trans.transmission = "mexanika"
+    assert is_different_car(existing, parsed_diff_trans)
+

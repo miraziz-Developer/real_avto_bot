@@ -45,7 +45,79 @@ class AIClient(Protocol):
     async def close(self) -> None: ...
 
 
-_client: GeminiClient | GroqClient | None = None
+class ResilientAIClient:
+    """Gemini asosiy provayder, agar 429 (quota), 503 (band) yoki boshqa xato bo'lsa Groq'ga avtomatik o'tadi."""
+
+    def __init__(self, primary: GeminiClient, fallback: GroqClient | None = None) -> None:
+        self.primary = primary
+        self.fallback = fallback
+
+    @property
+    def provider(self) -> str:
+        return self.primary.provider
+
+    @property
+    def supports_video(self) -> bool:
+        return self.primary.supports_video
+
+    @property
+    def model(self) -> str:
+        return self.primary.model
+
+    @property
+    def agent_model(self) -> str:
+        return self.primary.agent_model
+
+    @property
+    def enabled(self) -> bool:
+        return self.primary.enabled or bool(self.fallback and self.fallback.enabled)
+
+    async def chat_json(self, system: str, user: str, *, temperature: float = 0.0, max_tokens: int = 800) -> dict:
+        try:
+            return await self.primary.chat_json(system, user, temperature=temperature, max_tokens=max_tokens)
+        except (AIError, Exception) as e:
+            if self.fallback and self.fallback.enabled and not isinstance(e, AIBudgetExceeded):
+                logger.warning("Gemini chat_json vaqtincha ishlamadi (%s) — Groq'ga avtomatik o'tildi", e)
+                return await self.fallback.chat_json(system, user, temperature=temperature, max_tokens=max_tokens)
+            raise
+
+    async def chat(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        model: str | None = None,
+        temperature: float = 0.3,
+        max_tokens: int = 700,
+    ) -> dict:
+        try:
+            return await self.primary.chat(
+                messages, tools=tools, model=model, temperature=temperature, max_tokens=max_tokens
+            )
+        except (AIError, Exception) as e:
+            if self.fallback and self.fallback.enabled and not isinstance(e, AIBudgetExceeded):
+                logger.warning("Gemini chat vaqtincha ishlamadi (%s) — Groq'ga avtomatik o'tildi", e)
+                return await self.fallback.chat(
+                    messages, tools=tools, model=None, temperature=temperature, max_tokens=max_tokens
+                )
+            raise
+
+    async def transcribe(self, audio: bytes, *, filename: str = "audio.ogg", mime_type: str | None = None) -> str:
+        try:
+            return await self.primary.transcribe(audio, filename=filename, mime_type=mime_type)
+        except (AIError, Exception) as e:
+            if self.fallback and self.fallback.enabled and not isinstance(e, AIBudgetExceeded):
+                logger.warning("Gemini transcribe vaqtincha ishlamadi (%s) — Groq'ga avtomatik o'tildi", e)
+                return await self.fallback.transcribe(audio, filename=filename, mime_type=mime_type)
+            raise
+
+    async def close(self) -> None:
+        await self.primary.close()
+        if self.fallback is not None:
+            await self.fallback.close()
+
+
+_client: AIClient | None = None
 _budget: AIBudget | None = None
 
 
@@ -79,14 +151,14 @@ def resolve_provider(provider: str, *, gemini_key: str, groq_key: str) -> str:
     return "groq"
 
 
-def get_ai() -> GeminiClient | GroqClient:
+def get_ai() -> AIClient:
     global _client
     if _client is None:
         provider = resolve_provider(
             settings.ai_provider, gemini_key=settings.gemini_api_key, groq_key=settings.groq_api_key
         )
         if provider == "gemini":
-            _client = GeminiClient(
+            gemini = GeminiClient(
                 settings.gemini_api_key,
                 model=settings.gemini_model,
                 agent_model=settings.gemini_agent_model,
@@ -95,6 +167,17 @@ def get_ai() -> GeminiClient | GroqClient:
                 budget=get_budget(),
                 prices=_prices(GEMINI_PRICES),
             )
+            groq = None
+            if settings.groq_api_key:
+                groq = GroqClient(
+                    settings.groq_api_key,
+                    model=settings.groq_model,
+                    stt_model=settings.groq_stt_model,
+                    agent_model=settings.agent_model,
+                    budget=get_budget(),
+                    prices=_prices(GROQ_PRICES),
+                )
+            _client = ResilientAIClient(gemini, fallback=groq) if groq else gemini
         else:
             _client = GroqClient(
                 settings.groq_api_key,
@@ -128,6 +211,7 @@ __all__ = [
     "AIError",
     "GeminiClient",
     "GroqClient",
+    "ResilientAIClient",
     "close_ai",
     "get_ai",
     "get_budget",

@@ -400,11 +400,18 @@ _TRANSMISSION = (
     (re.compile(r"mexanika|механика|мкпп|mkpp", re.IGNORECASE), "mexanika"),
 )
 _FUEL = (
-    (re.compile(r"elektr|электро|electric", re.IGNORECASE), "elektr"),
-    (re.compile(r"gibrid|гибрид|hybrid", re.IGNORECASE), "gibrid"),
-    (re.compile(r"metan|метан", re.IGNORECASE), "metan"),
-    (re.compile(r"propan|пропан", re.IGNORECASE), "propan"),
-    (re.compile(r"dizel|дизел", re.IGNORECASE), "dizel"),
+    (
+        re.compile(
+            r"\b(?:elektr(?:da|ga)?|электро(?:тяге)?|electric|elektromobil|электромобиль|elektrokar|электрокар)\b",
+            re.IGNORECASE,
+        ),
+        "elektr",
+    ),
+    (re.compile(r"\b(?:gibrid|гибрид|hybrid)\b", re.IGNORECASE), "gibrid"),
+    (re.compile(r"\b(?:metan|метан)\b", re.IGNORECASE), "metan"),
+    (re.compile(r"\b(?:propan|пропан)\b", re.IGNORECASE), "propan"),
+    (re.compile(r"\b(?:benzin|бензин|petrol|gasoline)\b", re.IGNORECASE), "benzin"),
+    (re.compile(r"\b(?:dizel|дизел|diesel)\b", re.IGNORECASE), "dizel"),
 )
 _COLORS = {
     "oq": "oq", "белый": "oq", "white": "oq",

@@ -101,6 +101,38 @@ def _same_post(new_text: str, old_text: str) -> bool:
     return sum(w in old_words for w in words) / len(words) >= 0.7
 
 
+def is_different_car(existing_car: Any, parsed: Any) -> bool:
+    """Tekshirish: reply yoki keyingi xabar mavjud mashinaga ziddiyatlimi (boshqa yangi mashinami).
+
+    Foydalanuvchi talabi: Yili, modeli, probegi kabi o'zgarmas parametrlari mos kelsa
+    yangilaydi, boshqa bo'lsa yangi mashina qilishi shart.
+    """
+    if parsed is None or not getattr(parsed, "looks_like_car", lambda: False)():
+        return False  # Shunchaki qisqa qo'shimcha (masalan «narxi 8500$», «sotildi», «kraskasi toza»)
+
+    # 1. Model farqi (masalan Gentra vs Cobalt, Damas vs Spark)
+    if existing_car.model and parsed.model:
+        if not same_car_model(parsed.model, existing_car.model):
+            return True
+
+    # 2. Ishlab chiqarilgan yil farqi (masalan 2020 vs 2023)
+    if existing_car.year and parsed.year:
+        if existing_car.year != parsed.year:
+            return True
+
+    # 3. Probeg sezilarli farq qilsa (> 10 000 km, kichik xatolik/yaxlitlashga ruxsat)
+    if existing_car.mileage_km and parsed.mileage_km:
+        if abs(existing_car.mileage_km - parsed.mileage_km) > 10000:
+            return True
+
+    # 4. Uzatma qutisi (avtomat vs mexanika)
+    if existing_car.transmission and parsed.transmission:
+        if existing_car.transmission.lower() != parsed.transmission.lower():
+            return True
+
+    return False
+
+
 def _original_date(m: Message):
     """Forward qilingan postda — asl post sanasi (statistika «necha kunda sotildi» to'g'ri bo'lishi uchun)."""
     origin_date = getattr(m.forward_origin, "date", None) if m.forward_origin else None
@@ -213,6 +245,12 @@ async def _apply_reply_to_car(
         if car.model and parsed.model and same_car_model(parsed.model, car.model):
             # «Lacetti» deb eshitildi, kanalda «Gentra» — mavjud nomni saqlaymiz
             parsed.brand, parsed.model = car.brand, car.model
+        elif car.model and parsed.model and not same_car_model(parsed.model, car.model):
+            # Reply'dagi boshqa model (masalan barter haqida aytilgan) mavjud mashina modelini buzmasin
+            parsed.model = car.model
+            parsed.brand = car.brand
+        if car.year and parsed.year and car.year != parsed.year:
+            parsed.year = car.year
         # Faqat ovoz (matnsiz video) — tekshiruvdagi mashinani o'zicha sotuvga chiqarmaydi
         changes = await cars.apply_parsed(
             car, parsed, raw_text=f"{car.raw_text}\n{full}".strip(), allow_activate=bool(text)
@@ -439,14 +477,34 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             _forget_orphan(chat_id, [reply_to.message_id])
             replied_car = await cars.find_by_channel_message(chat_id, reply_to.message_id)
             if replied_car is not None:
-                # Masalan: dumaloq video ostiga «narxi 8500$» deb reply — shu mashinani to'ldiramiz
-                await _apply_reply_to_car(bot, cars, replied_car, messages, text)
-                return
-            # Asl post (ko'pincha matnsiz dumaloq video) bazada yo'q — reply bilan birga bitta e'lon qilamiz
-            messages = [reply_to, *messages]
-            first = reply_to
-            msg_ids = [m.message_id for m in messages]
-            text = "\n".join(t for t in (_message_text(m) for m in messages) if t)
+                # Masalan: dumaloq video ostiga «narxi 8500$» deb reply — shu mashinani to'ldiramiz.
+                # Lekin agar bu reply umuman boshqa yangi mashina bo'lsa (model, yil, probeg farq qilsa) —
+                # uni eski mashinaga yopishtirmasdan, yangi alohida mashina deb qaraymiz!
+                reply_transcripts = await _transcribe_media(bot, messages) if any(_has_av(m) for m in messages) else []
+                reply_full = "\n".join([text, *[f"[Ovoz]: {t}" for t in reply_transcripts]]).strip()
+                reply_parsed = (
+                    await extract_car(reply_full, ai=get_ai(), usd_rate_uzs=settings.usd_rate_uzs)
+                    if reply_full
+                    else None
+                )
+                if reply_parsed and is_different_car(replied_car, reply_parsed):
+                    logger.info(
+                        "Reply xabar (msg %s) asl mashina #%s (%s %s) dan farq qiladi -> yangi mashina sifatida ishlanadi",
+                        msg_ids[0],
+                        replied_car.id,
+                        replied_car.model,
+                        replied_car.year,
+                    )
+                    reply_to = None
+                else:
+                    await _apply_reply_to_car(bot, cars, replied_car, messages, text)
+                    return
+            if reply_to is not None:
+                # Asl post (ko'pincha matnsiz dumaloq video) bazada yo'q — reply bilan birga bitta e'lon qilamiz
+                messages = [reply_to, *messages]
+                first = reply_to
+                msg_ids = [m.message_id for m in messages]
+                text = "\n".join(t for t in (_message_text(m) for m in messages) if t)
 
         if await cars.find_by_channel_message(chat_id, msg_ids[0]) is not None:
             return  # takroriy update
@@ -466,14 +524,13 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             recent_car = await cars.get(recent_car_id) if recent_car_id else None
             if recent_car is not None:
                 heard = parse_car_text(" ".join(await _transcribe_media(bot, messages)), usd_rate_uzs=settings.usd_rate_uzs)
-                other_model = bool(heard.model and recent_car.model) and not same_car_model(heard.model, recent_car.model)
-                if not other_model:
+                if not is_different_car(recent_car, heard):
                     await _apply_reply_to_car(
                         bot, cars, recent_car, messages, "", header="🎥 <b>Shu mashinaga yana video qo'shildi</b>"
                     )
                     _recent_media_car[chat_id] = (time.monotonic(), recent_car.id)  # oyna uzayadi
                     return
-                _recent_media_car.pop(chat_id, None)  # boshqa model — yangi mashina
+                _recent_media_car.pop(chat_id, None)  # boshqa model/mashina — yangi mashina
             orphan = _take_orphan_media(chat_id)
             if orphan:
                 # Oldingi matnsiz media bilan birga ko'rib chiqamiz (2 ta video — bitta mashina)
@@ -504,15 +561,26 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             return
 
         if not has_media and reply_to is None:
-            recent_car_id = _take_recent_media_car(chat_id)
+            recent_car_id = _peek_recent_media_car(chat_id)
             recent_car = await cars.get(recent_car_id) if recent_car_id else None
             if recent_car is not None:
-                # Tavsif o'zidan oldingi (gapirilgan) videodan yaratilgan mashinaga tegishli
-                _orphan_media.pop(chat_id, None)
-                await _apply_reply_to_car(
-                    bot, cars, recent_car, messages, text, header="📝 <b>Videodan keyingi tavsif posti qo'shildi</b>"
-                )
-                return
+                if is_different_car(recent_car, parsed):
+                    logger.info(
+                        "Tavsif posti (msg %s) oldingi video mashina #%s (%s %s) dan farq qiladi -> alohida yangi mashina",
+                        msg_ids[0],
+                        recent_car.id,
+                        recent_car.model,
+                        recent_car.year,
+                    )
+                    _recent_media_car.pop(chat_id, None)
+                else:
+                    _take_recent_media_car(chat_id)
+                    # Tavsif o'zidan oldingi (gapirilgan) videodan yaratilgan mashinaga tegishli
+                    _orphan_media.pop(chat_id, None)
+                    await _apply_reply_to_car(
+                        bot, cars, recent_car, messages, text, header="📝 <b>Videodan keyingi tavsif posti qo'shildi</b>"
+                    )
+                    return
             orphan = _take_orphan_media(chat_id)
             if orphan:
                 # Tavsif o'zidan oldingi matnsiz video/rasmga tegishli — bitta e'lon

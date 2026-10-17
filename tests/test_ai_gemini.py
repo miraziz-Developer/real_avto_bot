@@ -254,3 +254,47 @@ async def test_auth_header_per_endpoint(monkeypatch):
     await c._request("POST", "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent")
     assert seen[0][1] == {"Authorization": "Bearer KEY"}
     assert seen[1][1] == {"x-goog-api-key": "KEY"}
+
+
+async def test_resilient_ai_client_failover():
+    from unittest.mock import AsyncMock, MagicMock
+    from bot.ai import ResilientAIClient
+
+    primary = MagicMock()
+    primary.enabled = True
+    primary.provider = "gemini"
+    primary.model = "gemini-2.5-flash"
+    primary.agent_model = "gemini-2.5-flash"
+    primary.supports_video = True
+    primary.chat_json = AsyncMock(side_effect=AIError("429 Resource has been exhausted"))
+    primary.chat = AsyncMock(side_effect=AIError("503 Service Unavailable"))
+    primary.transcribe = AsyncMock(side_effect=AIError("Timeout"))
+
+    fallback = MagicMock()
+    fallback.enabled = True
+    fallback.chat_json = AsyncMock(return_value={"brand": "Chevrolet", "model": "Cobalt"})
+    fallback.chat = AsyncMock(return_value={"role": "assistant", "content": "Salom, Cobalt sotuvda bor"})
+    fallback.transcribe = AsyncMock(return_value="Damas 2022")
+
+    resilient = ResilientAIClient(primary, fallback)
+
+    # 1. chat_json failover
+    result_json = await resilient.chat_json("system", "user")
+    assert result_json == {"brand": "Chevrolet", "model": "Cobalt"}
+    fallback.chat_json.assert_awaited_once_with("system", "user", temperature=0.0, max_tokens=800)
+
+    # 2. chat failover
+    result_chat = await resilient.chat([{"role": "user", "content": "Cobalt bormi?"}])
+    assert result_chat["content"] == "Salom, Cobalt sotuvda bor"
+    fallback.chat.assert_awaited_once()
+
+    # 3. transcribe failover
+    result_tr = await resilient.transcribe(b"bytes", filename="test.ogg")
+    assert result_tr == "Damas 2022"
+    fallback.transcribe.assert_awaited_once()
+
+    # 4. AIBudgetExceeded bo'lsa fallback'ga o'tmasligi kerak (byudjet chegarasini hurmat qiladi)
+    primary.chat_json = AsyncMock(side_effect=AIBudgetExceeded("Limit tugadi"))
+    with pytest.raises(AIBudgetExceeded):
+        await resilient.chat_json("system", "user")
+
