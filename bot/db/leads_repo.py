@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import OPEN_LEAD_STATUSES, AgentMessage, BusinessConnection, Lead, LeadRelay, LeadStatus
@@ -44,6 +44,10 @@ class LeadRepository:
         client_id: int | None = None,
         channel: str = "bot",
     ) -> tuple[Lead, bool]:
+        # Mijoz ketma-ket ikki xabar yuborsa (aiogram ularni parallel ishlaydi) — ikkita lead ochilmasin
+        await self.session.execute(
+            text("select pg_advisory_xact_lock(:ns, hashtext(:id))"), {"ns": 0x4C45, "id": str(telegram_id)}
+        )
         lead = await self.get_open(telegram_id)
         if lead is not None:
             idle = lead.last_message_at and _now() - lead.last_message_at > LEAD_IDLE_RESET
@@ -96,6 +100,9 @@ class LeadRepository:
 
     async def take(self, lead: Lead, admin_id: int) -> bool:
         """Admin «Oldim» — AI jim turadi. Boshqa admin oldin olgan bo'lsa False."""
+        # Qatorni qulflab yangilaymiz: ikki admin bir vaqtda bossa ikkinchisi birinchisining natijasini ko'radi
+        await self.session.flush()
+        await self.session.refresh(lead, with_for_update=True)
         if lead.assigned_admin_id and lead.assigned_admin_id != admin_id and lead.human_mode:
             return False
         lead.assigned_admin_id = admin_id

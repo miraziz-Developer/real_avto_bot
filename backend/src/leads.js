@@ -1,7 +1,7 @@
 import express from "express";
 import { pool } from "./db.js";
 import { requireRole } from "./middleware.js";
-import { asyncHandler, getPagination } from "./utils.js";
+import { asyncHandler, getPagination, parseId } from "./utils.js";
 
 /** AI savdo agenti leadlari (bot yaratadigan `leads` / `agent_messages` jadvallari). */
 export const leadsRouter = express.Router();
@@ -78,8 +78,8 @@ leadsRouter.get("/stats", asyncHandler(async (req, res) => {
 }));
 
 leadsRouter.get("/:id", asyncHandler(async (req, res) => {
-  const id = Number.parseInt(String(req.params.id), 10);
-  if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: "invalid_id" });
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
   try {
     const l = await pool.query(`select ${LIST_COLUMNS} from leads l left join cars c on c.id = l.car_id where l.id=$1`, [id]);
     if (!l.rows[0]) return res.status(404).json({ error: "not_found" });
@@ -94,8 +94,8 @@ leadsRouter.get("/:id", asyncHandler(async (req, res) => {
 }));
 
 leadsRouter.patch("/:id", requireRole("admin", "manager"), asyncHandler(async (req, res) => {
-  const id = Number.parseInt(String(req.params.id), 10);
-  if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: "invalid_id" });
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
   const status = String((req.body || {}).status || "");
   if (!["won", "lost"].includes(status)) return res.status(400).json({ error: "invalid_status" });
   const r = await pool.query(

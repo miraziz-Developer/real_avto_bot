@@ -17,7 +17,14 @@ from bot.db.cars_repo import CarRepository
 from bot.db.leads_repo import LeadRepository
 from bot.db.models import Lead, LeadStatus
 from bot.instagram.client import IGError, get_ig
-from bot.services.lead_cards import HOT_SCORE, LEAD_STATUS_LABELS, lead_admin_kb, lead_card_html, send_lead_card
+from bot.services.lead_cards import (
+    HOT_SCORE,
+    LEAD_STATUS_LABELS,
+    lead_admin_kb,
+    lead_card_html,
+    send_lead_card,
+)
+from bot.utils.numbers import parse_db_id
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +95,11 @@ async def lead_action(cq: CallbackQuery, bot: Bot, leads: LeadRepository, cars: 
         await cq.answer("Ruxsat yo'q", show_alert=True)
         return
     parts = (cq.data or "").split(":")
-    if len(parts) != 3 or not parts[2].isdigit():
+    lead_id = parse_db_id(parts[2]) if len(parts) == 3 else None
+    if lead_id is None:
         await cq.answer("Noto'g'ri tugma", show_alert=True)
         return
-    action, lead_id = parts[1], int(parts[2])
+    action = parts[1]
     lead = await leads.get(lead_id)
     if lead is None:
         await cq.answer("Lead topilmadi", show_alert=True)
@@ -196,8 +204,8 @@ async def cmd_open_leads(message: Message, leads: LeadRepository) -> None:
 async def cmd_lead(message: Message, command: CommandObject, bot: Bot, leads: LeadRepository, cars: CarRepository) -> None:
     if message.from_user is None or not is_admin(message.from_user.id):
         return
-    arg = (command.args or "").strip().lstrip("#")
-    lead = await leads.get(int(arg)) if arg.isdigit() else None
+    lead_id = parse_db_id(command.args)
+    lead = await leads.get(lead_id) if lead_id else None
     if lead is None:
         await message.answer("Foydalanish: <code>/lead 12</code>", parse_mode=ParseMode.HTML)
         return

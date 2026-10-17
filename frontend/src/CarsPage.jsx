@@ -15,6 +15,12 @@ const EVENT_LABEL = {
   price_changed: "Narx o'zgardi",
   status_changed: "Holat o'zgardi",
   edited: "Tahrirlandi",
+  reposted: "Kanalga qayta joylandi",
+  old_post_imported: "Eski postdan tiklandi",
+  sold_announcement: "Kanalda «sotildi» posti",
+  post_deleted: "Kanal posti o'chirildi",
+  post_has_markup: "Tugmali post",
+  wishlist_notified: "Kutayotganlarga xabar",
 };
 
 const CHIPS = [
@@ -63,6 +69,8 @@ function eventText(e) {
   if (e.kind === "price_changed") return `${usd(d.old)} → ${usd(d.new)}`;
   if (e.kind === "status_changed") return `${STATUS[d.old]?.label || d.old || "—"} → ${STATUS[d.new]?.label || d.new}`;
   if (e.kind === "created") return `${SOURCE[d.source] || d.source || ""}${d.price_usd ? ` · ${usd(d.price_usd)}` : ""}`;
+  if (d.message_ids) return `post: ${d.message_ids.join(", ")}`;
+  if (d.message_id) return `post: ${d.message_id}`;
   const keys = Object.keys(d).filter((k) => k !== "actor");
   return keys.length ? keys.join(", ") : "";
 }

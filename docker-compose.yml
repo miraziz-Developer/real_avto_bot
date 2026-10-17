@@ -31,7 +31,10 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # FSM (e'lon formasi) ma'lumotlari o'chib ketmasligi uchun: noeviction + AOF.
+    command: redis-server --maxmemory 256mb --maxmemory-policy noeviction --appendonly yes
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -58,7 +61,7 @@ services:
       BUSINESS_HOURS: ${BUSINESS_HOURS:-}
       REAL_AVTO_MAP_URL: ${REAL_AVTO_MAP_URL:-}
       USD_RATE_UZS: ${USD_RATE_UZS:-}
-      CAR_STALE_DAYS: ${CAR_STALE_DAYS:-14}
+      CAR_STALE_DAYS: ${CAR_STALE_DAYS:-7}
     init: true
     depends_on:
       db:
@@ -73,8 +76,9 @@ services:
       timeout: 5s
       retries: 5
       start_period: 25s
+    # Faqat server ichidan (CRM/katalog nginx va host'dagi Caddy orqali). Internetga ochilmaydi.
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     restart: unless-stopped
     stop_grace_period: 25s
     logging: *default-logging
@@ -135,7 +139,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"from bot.config import settings; assert settings.bot_token and settings.database_url\"",
+          "python -c \"import os,sys,time; p='/tmp/bot_heartbeat'; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < 180 else 1)\"",
         ]
       interval: 30s
       timeout: 15s
@@ -147,3 +151,4 @@ services:
 
 volumes:
   pg_data:
+  redis_data:

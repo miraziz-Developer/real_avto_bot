@@ -39,6 +39,19 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Bir xil mashina, turli nom: Gentra — Lacetti'ning yangi nomi (video ovozida ham, AI ham ikkalasini aytadi)
+SAME_CAR_MODELS: dict[str, tuple[str, ...]] = {
+    "gentra": ("Gentra", "Lacetti"),
+    "lacetti": ("Lacetti", "Gentra"),
+}
+
+
+def same_car_model(a: str, b: str) -> bool:
+    """«Gentra» va «Lacetti», «Matiz» va «Matiz Best» — bitta mashina."""
+    x, y = a.split()[0].lower(), b.split()[0].lower()
+    return x == y or y.capitalize() in SAME_CAR_MODELS.get(x, ())
+
+
 class CarRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -83,6 +96,15 @@ class CarRepository:
         ).first()
         return (int(row[0]), int(row[1])) if row else None
 
+    async def is_discussion_group(self, group_chat_id: int) -> bool:
+        """Shu guruhga asosiy kanal postlari avto-forward bo'lganmi (ya'ni kanalning muhokama guruhimi)."""
+        row = (
+            await self.session.execute(
+                select(ChannelThread.id).where(ChannelThread.group_chat_id == group_chat_id).limit(1)
+            )
+        ).first()
+        return row is not None
+
     async def get(self, car_id: int) -> Car | None:
         return await self.session.get(Car, car_id)
 
@@ -94,6 +116,67 @@ class CarRepository:
             .limit(1)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def find_repost_candidate(self, parsed: ParsedCar, *, within_days: int = 90) -> Car | None:
+        """Kanalga qayta tashlangan (yoki bot e'loni qo'lda qayta joylangan) o'sha mashina.
+
+        Moslik: marka + model + yil bir xil VA probeg bir xil (probeg yo'q bo'lsa — narx bir xil).
+        Faqat sotuvdagi/bron/tekshiruvdagi mashinalar — sotilgani qayta sotuvga chiqqan bo'lsa yangi yozuv.
+        """
+        if not (parsed.model and parsed.year):
+            return None
+        conds = [
+            Car.status.in_((CarStatus.ACTIVE, CarStatus.RESERVED, CarStatus.REVIEW)),
+            Car.year == parsed.year,
+            func.lower(Car.model) == parsed.model.lower(),
+            Car.created_at >= _now() - timedelta(days=within_days),
+        ]
+        if parsed.brand:
+            conds.append(or_(Car.brand.is_(None), func.lower(Car.brand) == parsed.brand.lower()))
+        if parsed.mileage_km is not None:
+            conds.append(Car.mileage_km == parsed.mileage_km)
+        elif parsed.price_usd is not None:
+            conds.append(and_(Car.mileage_km.is_(None), Car.price_usd == parsed.price_usd))
+        else:
+            return None
+        stmt = select(Car).where(*conds).order_by(Car.id.desc()).limit(1)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def find_sold_candidates(self, parsed: ParsedCar, *, limit: int = 5) -> list[Car]:
+        """«Sotildi»/tabrik posti (ko'pincha faqat model aytilgan) qaysi sotuvdagi mashinaga tegishli bo'lishi mumkin.
+
+        Moslik yumshoqroq: model (+ yil, rang — aytilgan bo'lsa). Chaqiruvchi 1 ta topilsagina avtomatik belgilaydi.
+        """
+        if not parsed.model:
+            return []
+        base = parsed.model.split()[0]
+        names = SAME_CAR_MODELS.get(base.lower(), (base,))
+        conds = [
+            Car.status.in_((CarStatus.ACTIVE, CarStatus.RESERVED, CarStatus.REVIEW)),
+            or_(*[Car.model.ilike(f"%{n}%") for n in names]),
+        ]
+        if parsed.year:
+            conds.append(Car.year == parsed.year)
+        if parsed.brand:
+            conds.append(or_(Car.brand.is_(None), func.lower(Car.brand) == parsed.brand.lower()))
+        if parsed.color:
+            conds.append(or_(Car.color.is_(None), Car.color.ilike(f"%{parsed.color.split()[0]}%")))
+        stmt = select(Car).where(*conds).order_by(Car.status.asc(), Car.id.desc()).limit(limit)
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def cars_with_live_posts(self, *, limit: int = 1000) -> list[Car]:
+        """Kanal posti bor va hali sotuvdagi/bron/tekshiruvdagi mashinalar — post o'chirilganini tekshirish uchun."""
+        stmt = (
+            select(Car)
+            .where(
+                Car.status.in_((CarStatus.ACTIVE, CarStatus.RESERVED, CarStatus.REVIEW)),
+                Car.channel_chat_id.is_not(None),
+                func.cardinality(Car.channel_message_ids) > 0,
+            )
+            .order_by(Car.id)
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     async def find_by_listing(self, listing_id: int) -> Car | None:
         stmt = select(Car).where(Car.listing_submission_id == listing_id).limit(1)

@@ -181,3 +181,21 @@ def test_real_avto_channel_template_without_price():
     assert r.is_complete()  # narx majburiy emas
     r = p("🚘Avtomobil: SPARK MEXANIKA 1,25 MATOR 🗓️yili: 2012 📍probeg: 406.000km  📞Aloqa: +998 (88) 539 48 55")
     assert (r.model, r.year, r.mileage_km, r.transmission) == ("Spark", 2012, 406000, "mexanika")
+
+
+def test_model_names_with_uzbek_and_russian_suffixes():
+    from bot.services.car_parser import detect_brand_model, normalize_text
+
+    cases = {
+        "Gentrangiz hali sotuvdami?": "Gentra",
+        "kobaltingiz bormi": "Cobalt",
+        "nexiyani narxi": "Nexia",
+        "damasni ko'rsam bo'ladimi": "Damas",
+        "malibuni": "Malibu",
+        "кобальтингиз борми": "Cobalt",
+        "кобальта цена": "Cobalt",
+    }
+    for text, model in cases.items():
+        assert detect_brand_model(normalize_text(text))[1] == model, text
+    # Tasodifiy so'zlar model bo'lib qolmaydi
+    assert detect_brand_model(normalize_text("so'ngi narxi qancha"))[1] is None

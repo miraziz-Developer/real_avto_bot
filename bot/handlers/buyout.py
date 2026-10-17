@@ -30,6 +30,7 @@ from bot.services.car_cards import car_admin_kb, car_card_html, notify_admins_te
 from bot.services.car_parser import parse_price_usd
 from bot.services.listing_publish import PublishError, publish_listing
 from bot.utils.currency import fmt_usd
+from bot.utils.numbers import parse_db_id
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +45,11 @@ class BuyoutStates(StatesGroup):
 
 
 def _lid(data: str | None) -> int | None:
-    tail = (data or "").rsplit(":", 1)[-1]
-    return int(tail) if tail.isdigit() else None
+    return parse_db_id((data or "").rsplit(":", 1)[-1])
+
+
+# Narx «110 mln» kabi so'mda ham yozilishi mumkin — natija USD da; aql bovar qilmaydigan qiymatni rad etamiz
+BUYOUT_PRICE_MAX_USD = 1_000_000
 
 
 def _title(sub: ListingSubmission) -> str:
@@ -117,6 +121,8 @@ async def buyout_price(message: Message, state: FSMContext, bot: Bot, crm: CrmRe
         await state.clear()
         return
     price = parse_price_usd(f"narx {message.text}", settings.usd_rate_uzs)
+    if price is not None and not (0 < price <= BUYOUT_PRICE_MAX_USD):
+        price = None
     if price is None:
         await message.answer(
             "Narxni tushunmadim. Masalan: <code>8500</code> yoki <code>110 mln</code>", parse_mode=ParseMode.HTML
@@ -124,7 +130,8 @@ async def buyout_price(message: Message, state: FSMContext, bot: Bot, crm: CrmRe
         return
     data = await state.get_data()
     await state.clear()
-    sub = await crm.get_listing_submission(int(data.get("buyout_lid") or 0))
+    # Qulf: shu paytda muzlatish worker'i e'lonni kanalga chiqarib yubormasin (yoki aksincha)
+    sub = await crm.get_listing_submission(parse_db_id(str(data.get("buyout_lid") or "")) or 0, for_update=True)
     if sub is None or sub.status != ListingSubmissionStatus.PENDING:
         await message.answer("Bu e'lon endi hal qilingan.")
         return
@@ -168,11 +175,13 @@ async def buyout_price(message: Message, state: FSMContext, bot: Bot, crm: CrmRe
 @router.callback_query(F.data.startswith("lbo:"))
 async def seller_answer(cq: CallbackQuery, bot: Bot, crm: CrmRepository, cars: CarRepository) -> None:
     parts = (cq.data or "").split(":")
-    if len(parts) != 3 or not parts[2].isdigit() or cq.from_user is None:
+    lid = parse_db_id(parts[2]) if len(parts) == 3 else None
+    if lid is None or cq.from_user is None:
         await cq.answer()
         return
-    action, lid = parts[1], int(parts[2])
-    sub = await crm.get_listing_submission(lid)
+    action = parts[1]
+    # Qulf: «Roziman» va «Yo'q» ni ketma-ket tez bosish ikkala oqimni ham ishga tushirmasin
+    sub = await crm.get_listing_submission(lid, for_update=True)
     if sub is None or sub.user_telegram_id != cq.from_user.id:
         await cq.answer("Bu taklif sizga tegishli emas", show_alert=True)
         return

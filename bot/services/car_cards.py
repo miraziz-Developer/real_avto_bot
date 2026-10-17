@@ -232,4 +232,6 @@ async def car_from_approved_listing(
         channel_message_ids=channel_message_ids,
         listing_submission_id=sub.id,
         status=CarStatus.ACTIVE,
+        # «Necha kundan beri sotuvda» statistikasi tasdiq sanasidan hisoblansin
+        published_at=sub.listing_approved_at,
     )

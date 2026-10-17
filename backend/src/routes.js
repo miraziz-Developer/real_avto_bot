@@ -1,8 +1,11 @@
+import crypto from "crypto";
 import express from "express";
 import { pool } from "./db.js";
 import { signAccessToken } from "./auth.js";
 import { requireAuth, requireRole } from "./middleware.js";
-import { asyncHandler, getPagination, verifyPassword } from "./utils.js";
+import { burnPasswordCheck, hashPassword, isLegacyHash, verifyPassword } from "./password.js";
+import { loginBlockedFor, recordLoginFailure, recordLoginSuccess } from "./loginLimiter.js";
+import { asyncHandler, getPagination, parseId } from "./utils.js";
 import { carsRouter } from "./cars.js";
 import { leadsRouter } from "./leads.js";
 import { publicRouter, verifyInitData } from "./public.js";
@@ -22,7 +25,8 @@ async function scalarCount(sql, params = []) {
 router.get('/health', (_req, res) => res.json({ ok: true }));
 
 router.get('/login', (req, res) => {
-  const host = req.headers.host?.replace(/:\d+$/, '') || '167.172.80.246';
+  const host = String(req.hostname || '').trim();
+  if (!host || !/^[a-z0-9.-]+$/i.test(host)) return res.status(404).json({ error: 'not_found' });
   res.redirect(`http://${host}:3000/login`);
 });
 
@@ -31,17 +35,42 @@ router.get('/', (_req, res) => {
 });
 
 router.post('/auth/login', asyncHandler(async (req, res) => {
+  const body = req.body || {};
+  const username = typeof body.username === 'string' ? body.username.trim().slice(0, 80) : '';
+  const password = typeof body.password === 'string' ? body.password.slice(0, 256) : '';
+  const ip = req.ip || 'unknown';
 
-  const { username, password } = req.body || {};
+  const retryAfter = loginBlockedFor(ip, username);
+  if (retryAfter > 0) {
+    res.setHeader('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: 'too_many_attempts', retry_after: retryAfter });
+  }
+  if (!username || !password) {
+    recordLoginFailure(ip, username);
+    return res.status(401).json({ error: 'invalid_credentials' });
+  }
+
   const r = await pool.query(
     "select id, username, role, password_hash, is_active from crm_users where username=$1 limit 1",
     [username],
   );
   const u = r.rows[0];
-  if (!u || !u.is_active || !verifyPassword(password, u.password_hash)) {
+  if (!u) {
+    await burnPasswordCheck(password);
+    recordLoginFailure(ip, username);
     return res.status(401).json({ error: 'invalid_credentials' });
   }
-  return res.json({ token: signAccessToken({ id: u.id, username: u.username, role: u.role }), user: { id: u.id, username: u.username, role: u.role } });
+  const ok = await verifyPassword(password, u.password_hash);
+  if (!ok || !u.is_active) {
+    recordLoginFailure(ip, username);
+    return res.status(401).json({ error: 'invalid_credentials' });
+  }
+  recordLoginSuccess(ip, username);
+  if (isLegacyHash(u.password_hash)) {
+    await pool.query('update crm_users set password_hash=$1 where id=$2', [await hashPassword(password), u.id]);
+  }
+  const user = { id: u.id, username: u.username, role: u.role };
+  return res.json({ token: signAccessToken(user), user });
 }));
 
 /**
@@ -122,9 +151,19 @@ router.get('/clients', asyncHandler(async (req, res) => {
   res.json({ items: r.rows, total, page, limit });
 }));
 
+const CLIENT_STATUSES = new Set(['new', 'active', 'vip', 'blocked']);
+const NOTES_MAX = 5000;
+
 router.patch('/clients/:id', requireRole('admin', 'manager'), asyncHandler(async (req, res) => {
-  const { id } = req.params;
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { status, notes } = req.body || {};
+  if (status != null && (typeof status !== 'string' || !CLIENT_STATUSES.has(status))) {
+    return res.status(400).json({ error: 'invalid_status' });
+  }
+  if (notes != null && (typeof notes !== 'string' || notes.length > NOTES_MAX)) {
+    return res.status(400).json({ error: 'invalid_notes' });
+  }
   const r = await pool.query(
     'update clients set status=coalesce($1,status), notes=coalesce($2,notes), updated_at=now() where id=$3 returning *',
     [status ?? null, notes ?? null, id],
@@ -134,8 +173,8 @@ router.patch('/clients/:id', requireRole('admin', 'manager'), asyncHandler(async
 }));
 
 router.get('/clients/:id/detail', asyncHandler(async (req, res) => {
-  const id = Number.parseInt(String(req.params.id), 10);
-  if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: 'invalid_id' });
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'invalid_id' });
   const c = await pool.query('select * from clients where id = $1', [id]);
   if (!c.rows[0]) return res.status(404).json({ error: 'not_found' });
   const client = c.rows[0];
@@ -216,25 +255,69 @@ router.get('/contest/history', asyncHandler(async (_req, res) => {
 }));
 
 router.post('/contest', requireRole('admin'), asyncHandler(async (req, res) => {
-  const { title, prize, end_date } = req.body || {};
-  if (!title || !prize || !end_date) return res.status(400).json({ error: 'missing_fields' });
-  await pool.query('update contests set is_active=false where is_active=true');
-  const r = await pool.query(
-    `insert into contests(title, prize, start_date, end_date, is_active)
-     values($1,$2,now(),$3,true) returning *`,
-    [title, prize, end_date],
-  );
-  res.status(201).json(r.rows[0]);
+  const body = req.body || {};
+  const title = typeof body.title === 'string' ? body.title.trim() : '';
+  const prize = typeof body.prize === 'string' ? body.prize.trim() : '';
+  const endDate = new Date(String(body.end_date || ''));
+  if (!title || !prize || !body.end_date) return res.status(400).json({ error: 'missing_fields' });
+  if (title.length > 255 || prize.length > 255) return res.status(400).json({ error: 'too_long' });
+  if (Number.isNaN(endDate.getTime()) || endDate.getTime() <= Date.now()) {
+    return res.status(400).json({ error: 'invalid_end_date' });
+  }
+  const db = await pool.connect();
+  try {
+    await db.query('begin');
+    await db.query('update contests set is_active=false where is_active=true');
+    const r = await db.query(
+      `insert into contests(title, prize, start_date, end_date, is_active)
+       values($1,$2,now(),$3,true) returning *`,
+      [title, prize, endDate.toISOString()],
+    );
+    await db.query('commit');
+    res.status(201).json(r.rows[0]);
+  } catch (e) {
+    await db.query('rollback').catch(() => {});
+    throw e;
+  } finally {
+    db.release();
+  }
 }));
 
 router.post('/contest/:id/pick-winner', requireRole('admin'), asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const participants = await pool.query('select * from contest_participants where contest_id=$1', [id]);
-  if (!participants.rows.length) return res.status(400).json({ error: 'no_participants' });
-  const winner = participants.rows[Math.floor(Math.random() * participants.rows.length)];
-  await pool.query('update contest_participants set is_winner=(id=$1) where contest_id=$2', [winner.id, id]);
-  const updated = await pool.query('update contests set winner_client_id=$1, is_active=false where id=$2 returning *', [winner.client_id, id]);
-  res.json({ contest: updated.rows[0], winner });
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'invalid_id' });
+  const db = await pool.connect();
+  try {
+    await db.query('begin');
+    // Bir vaqtda ikki marta bosilsa ham g'olib bitta bo'lishi uchun konkurs qatori qulflanadi.
+    const c = await db.query('select id, winner_client_id from contests where id=$1 for update', [id]);
+    if (!c.rows[0]) {
+      await db.query('rollback');
+      return res.status(404).json({ error: 'not_found' });
+    }
+    if (c.rows[0].winner_client_id != null) {
+      await db.query('rollback');
+      return res.status(409).json({ error: 'winner_already_picked' });
+    }
+    const participants = await db.query('select * from contest_participants where contest_id=$1 order by id', [id]);
+    if (!participants.rows.length) {
+      await db.query('rollback');
+      return res.status(400).json({ error: 'no_participants' });
+    }
+    const winner = participants.rows[crypto.randomInt(participants.rows.length)];
+    await db.query('update contest_participants set is_winner=(id=$1) where contest_id=$2', [winner.id, id]);
+    const updated = await db.query(
+      'update contests set winner_client_id=$1, is_active=false where id=$2 returning *',
+      [winner.client_id, id],
+    );
+    await db.query('commit');
+    res.json({ contest: updated.rows[0], winner });
+  } catch (e) {
+    await db.query('rollback').catch(() => {});
+    throw e;
+  } finally {
+    db.release();
+  }
 }));
 
 router.get('/listings', asyncHandler(async (req, res) => {
@@ -266,8 +349,8 @@ router.get('/listings', asyncHandler(async (req, res) => {
 }));
 
 router.get('/listings/:id', asyncHandler(async (req, res) => {
-  const id = Number.parseInt(String(req.params.id), 10);
-  if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: 'invalid_id' });
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'invalid_id' });
   try {
     const r = await pool.query(
       `select ls.*, cl.full_name as client_name, cl.phone as client_phone, cl.telegram_id as client_telegram_id, cl.id as client_db_id

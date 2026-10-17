@@ -335,3 +335,26 @@ async def test_send_media_includes_round_video_notes(session_factory):
         assert out["sent"] == 1
         assert ("video_note", CUSTOMER_ID, "round1") in bot.sent  # dumaloq video dumaloq bo'lib ketadi
         assert any(k == "text" and "Damas" in t for k, _, t in bot.sent)  # nomi va narxi alohida
+
+
+async def test_bad_ai_numbers_do_not_break_the_session(session_factory, monkeypatch):
+    """AI juda katta / g'alati son yuborsa — asbob xato qaytaradi, keyingi asboblar ishlashda davom etadi."""
+    async with session_factory() as s:
+        ids = await _seed(s)
+        ctx = await _ctx(s, FakeBot())
+        for bad in (99_999_999_999, "inf", "nan", -5, "abc"):
+            out = json.loads(await ctx.execute("get_car_details", {"car_id": bad}))
+            assert out == {"error": "bunday mashina yo'q"}
+        out = json.loads(await ctx.execute("search_cars", {"model": "kobalt", "year_min": 99_999_999_999}))
+        assert ids["cobalt"] in [c["id"] for c in out["cars"]]
+
+        # Asbob ichida haqiqiy DB xatosi — savepoint qaytariladi, sessiya tirik qoladi
+        async def broken(a):
+            await s.execute(text("select 1/0"))
+
+        monkeypatch.setattr(ctx, "_tool_get_car_details", broken)
+        out = json.loads(await ctx.execute("get_car_details", {"car_id": ids["cobalt"]}))
+        assert "error" in out
+        out = json.loads(await ctx.execute("search_cars", {"model": "Gentra"}))
+        assert [c["id"] for c in out["cars"]] == [ids["gentra"]]
+        await s.commit()

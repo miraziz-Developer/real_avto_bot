@@ -36,7 +36,7 @@ async def _fallback_reply(ctx: AgentContext, text: str) -> tuple[str, InlineKeyb
     p = parse_car_text(text, usd_rate_uzs=settings.usd_rate_uzs)
     if not (p.brand or p.model or p.price_usd):
         return (
-            "Assalomu alaykum! Qanday mashina qidiryapsiz? Model va byudjetni yozing, masalan: "
+            "Qanday mashina qidiryapsiz? Model va byudjetni yozing, masalan: "
             "«Cobalt 2020, 10 000$ gacha». Yoki menejer bilan bog'laning 👇",
             fallback_kb(),
         )

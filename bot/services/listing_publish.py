@@ -13,7 +13,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, InputMedia
 
 from bot.config import settings
 from bot.db.cars_repo import CarRepository
-from bot.db.models import ListingSubmission, ListingSubmissionStatus
+from bot.db.models import ListingSubmission
 from bot.db.repositories import CrmRepository
 from bot.handlers.ad_listing import listing_caption_from_sub_public, truncate_caption_html
 from bot.services.car_cards import car_from_approved_listing
@@ -38,9 +38,15 @@ async def publish_listing(
     *,
     auto: bool = False,
 ) -> list[Message] | None:
-    """E'lonni kanalga joylaydi. Allaqachon hal qilingan bo'lsa None. Kanal xatosida PublishError."""
-    if sub.status != ListingSubmissionStatus.PENDING:
+    """E'lonni kanalga joylaydi. Allaqachon hal qilingan bo'lsa None. Kanal xatosida PublishError.
+
+    Qatorni qulflaydi (SELECT ... FOR UPDATE): ikki admin, admin + muzlatish worker'i yoki sotib olish oqimi
+    bir vaqtda chaqirsa, ikkinchisi birinchisi tugashini kutadi va None oladi — e'lon kanalga ikki marta chiqmaydi.
+    """
+    locked = await crm.lock_pending_listing(sub.id)
+    if locked is None:
         return None
+    sub = locked
     lid = sub.id
     photos = list(sub.photo_file_ids or [])
     if not photos:
@@ -76,6 +82,9 @@ async def publish_listing(
         return None
     updated.frozen_until = None
     updated.auto_published = auto
+    # Tasdiqni darhol saqlaymiz (qulf bo'shaydi); keyingi Telegram so'rovlari xato bersa ham
+    # bazadagi holat kanal bilan mos qoladi.
+    await crm.session.commit()
 
     bot_un = ""
     try:
@@ -128,5 +137,8 @@ async def publish_listing(
     except Exception:
         logger.exception("Tasdiqlangan e'lon #%s mashinalar bazasiga yozilmadi", lid)
 
-    await notify_wishlist_matches(bot, crm, updated)
+    try:
+        await notify_wishlist_matches(bot, crm, updated)
+    except Exception:
+        logger.exception("Wishlist xabarnomalari (e'lon #%s)", lid)
     return msgs

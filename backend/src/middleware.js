@@ -1,5 +1,13 @@
 import { verifyAccessToken } from "./auth.js";
 
+export function securityHeaders(_req, res, next) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Cache-Control", "no-store");
+  next();
+}
+
 export function requireAuth(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
@@ -22,6 +30,12 @@ export function requireRole(...roles) {
 }
 
 export function errorHandler(err, _req, res, _next) {
+  if (err?.type === "entity.parse.failed") {
+    return res.status(400).json({ error: "invalid_json" });
+  }
+  if (err?.type === "entity.too.large") {
+    return res.status(413).json({ error: "payload_too_large" });
+  }
   console.error(err);
-  res.status(500).json({ error: "internal_error" });
+  return res.status(500).json({ error: "internal_error" });
 }

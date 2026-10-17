@@ -26,7 +26,7 @@ from aiogram.types import (
 from bot.agent.fallback import HANDOFF_CB
 from bot.agent.service import generate_agent_reply
 from bot.agent.tools import AgentContext, _normalize_phone, car_for_agent, send_car_media
-from bot.ai import AIError, get_ai
+from bot.ai import AIError, get_ai, get_budget
 from bot.config import settings
 from bot.db.cars_repo import CarRepository
 from bot.db.leads_repo import LeadRepository
@@ -191,13 +191,17 @@ async def on_customer_voice(
         return
     ai = get_ai()
     media = message.voice or message.video_note
-    if not ai.enabled or media is None:
+    if not ai.enabled or media is None or not await get_budget().allow_user(f"tg:{message.from_user.id}"):
         await message.answer("Iltimos, savolingizni matn bilan yozing 🙏", parse_mode=None)
         return
     try:
         f = await bot.get_file(media.file_id)
         buf = await bot.download_file(f.file_path)
-        text = await ai.transcribe(buf.read() if buf else b"", filename="audio.ogg" if message.voice else "video.mp4")
+        text = await ai.transcribe(
+            buf.read() if buf else b"",
+            filename="audio.ogg" if message.voice else "video.mp4",
+            mime_type=(media.mime_type if message.voice else None) or ("audio/ogg" if message.voice else "video/mp4"),
+        )
     except (AIError, TelegramBadRequest) as e:
         logger.warning("Mijoz ovozini o'qib bo'lmadi: %s", e)
         text = ""
@@ -207,18 +211,52 @@ async def on_customer_voice(
     await handle_customer_text(message, bot, text, leads=leads, cars=cars, crm=crm)
 
 
+# Telegram bot faqat 20 MB gacha faylni yuklab bera oladi
+_VIDEO_ANALYZE_MAX_BYTES = 19 * 1024 * 1024
+
+
+async def _analyze_customer_video(message: Message, bot: Bot) -> str:
+    """Gemini videoni ko'radi va eshitadi. Groq/AI yo'q, limit yoki katta fayl — bo'sh satr."""
+    video = message.video
+    ai = get_ai()
+    if video is None or not ai.enabled or not getattr(ai, "supports_video", False):
+        return ""
+    if (video.file_size or 0) > _VIDEO_ANALYZE_MAX_BYTES:
+        return ""
+    if message.from_user is None or not await get_budget().allow_user(f"tg:{message.from_user.id}"):
+        return ""
+    try:
+        f = await bot.get_file(video.file_id)
+        buf = await bot.download_file(f.file_path)
+        return await ai.transcribe(
+            buf.read() if buf else b"", filename="video.mp4", mime_type=video.mime_type or "video/mp4"
+        )
+    except (AIError, TelegramBadRequest) as e:
+        logger.warning("Mijoz videosini tahlil qilib bo'lmadi: %s", e)
+        return ""
+
+
 @router.message(StateFilter(None), F.photo | F.video | F.document)
-async def on_customer_media(message: Message, bot: Bot, leads: LeadRepository, crm: CrmRepository) -> None:
+async def on_customer_media(
+    message: Message, bot: Bot, leads: LeadRepository, cars: CarRepository, crm: CrmRepository
+) -> None:
     if not settings.agent_enabled or message.from_user is None:
         return
     lead = await open_lead(message.from_user, leads, crm)
-    note = message.caption or "[rasm/fayl]"
-    await leads.add_message(lead, "user", note)
-    # AI rasmni ko'rmaydi — menejerga uzatamiz (masalan trade-in uchun mijoz o'z mashinasi rasmini yuborgan)
+    # Media har doim menejerga ham boradi (masalan trade-in uchun mijoz o'z mashinasini ko'rsatgan)
     await _forward_to_manager(bot, leads, lead, message, None)
+    if message.video is not None and not leads.is_human(lead):
+        seen = await _analyze_customer_video(message, bot)
+        if seen:
+            # Video ichidagi savol/ma'lumot — ovozli xabar kabi agentga
+            text = "\n".join(t for t in (message.caption or "", f"[Video]: {seen}") if t)
+            await handle_customer_text(message, bot, text, leads=leads, cars=cars, crm=crm)
+            return
+    note = message.caption or ("[video]" if message.video else "[rasm/fayl]")
+    await leads.add_message(lead, "user", note)
     if not leads.is_human(lead):
         await message.answer(
-            "Rasm uchun rahmat! Menejerimiz ko'rib chiqadi. Savolingiz bo'lsa yozing 🙂", parse_mode=None
+            "Rahmat! Menejerimiz ko'rib chiqadi. Savolingiz bo'lsa yozing 🙂", parse_mode=None
         )
 
 

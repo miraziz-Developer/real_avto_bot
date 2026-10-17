@@ -32,7 +32,8 @@ from bot.data.car_catalog import (
 from bot.db.models import ListingSubmissionStatus
 from bot.db.repositories import CrmRepository
 from bot.handlers.ad_listing import listing_caption_from_sub_public, truncate_caption_html
-from bot.handlers.form_limits import CAR_YEAR_MAX, CAR_YEAR_MIN
+from bot.handlers.form_limits import BUDGET_USD_MAX, BUDGET_USD_MIN, CAR_YEAR_MAX, CAR_YEAR_MIN
+from bot.utils.numbers import parse_int, parse_int_in_range
 from bot.utils import messages as msg
 from bot.utils.contact_html import sales_phones_links_html
 from bot.utils.currency import fmt_usd
@@ -602,13 +603,9 @@ async def wl_delete(cq: CallbackQuery, state: FSMContext, crm: CrmRepository) ->
 
 @router.message(StateFilter(WishlistStates.year_min), F.text)
 async def wl_year_min(message: Message, state: FSMContext) -> None:
-    raw = (message.text or "").strip()
-    if not raw.isdigit():
-        await message.answer("Yil faqat raqam.")
-        return
-    y = int(raw)
-    if y < CAR_YEAR_MIN or y > CAR_YEAR_MAX:
-        await message.answer(f"Yil {CAR_YEAR_MIN}–{CAR_YEAR_MAX} orasida bo'lsin.")
+    y = parse_int_in_range(message.text, CAR_YEAR_MIN, CAR_YEAR_MAX, allow_separators=False)
+    if y is None:
+        await message.answer(f"Yil raqam bilan, {CAR_YEAR_MIN}–{CAR_YEAR_MAX} orasida bo'lsin.")
         return
     await state.update_data(year_min=y)
     await state.set_state(WishlistStates.year_max)
@@ -617,14 +614,10 @@ async def wl_year_min(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(WishlistStates.year_max), F.text)
 async def wl_year_max(message: Message, state: FSMContext) -> None:
-    raw = (message.text or "").strip()
-    if not raw.isdigit():
-        await message.answer("Yil faqat raqam.")
-        return
-    y = int(raw)
+    y = parse_int_in_range(message.text, CAR_YEAR_MIN, CAR_YEAR_MAX, allow_separators=False)
     data = await state.get_data()
     y_min = int(data.get("year_min") or 0)
-    if y < CAR_YEAR_MIN or y > CAR_YEAR_MAX or y < y_min:
+    if y is None or y < y_min:
         await message.answer("Yuqori yil pastki yildan kichik bo'lmasin va oralig'ta bo'lsin.")
         return
     await state.update_data(year_max=y)
@@ -637,13 +630,15 @@ async def wl_year_max(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(WishlistStates.budget_max), F.text)
 async def wl_budget_max(message: Message, state: FSMContext) -> None:
-    raw = (message.text or "").replace(" ", "").replace(",", "").strip()
-    if not raw.isdigit():
+    v = parse_int(message.text)
+    if v is None:
         await message.answer("Byudjet: faqat musbat butun son (USD).")
         return
-    v = int(raw)
-    if v < 500:
+    if v < BUDGET_USD_MIN:
         await message.answer("Juda kichik. Masalan: 5000 ($5,000) yoki undan yuqori.")
+        return
+    if v > BUDGET_USD_MAX:
+        await message.answer(f"Juda katta. Ko'pi bilan {BUDGET_USD_MAX:,} USD.")
         return
     await state.update_data(budget_max_usd=v)
     await state.set_state(WishlistStates.budget_min)
@@ -656,11 +651,10 @@ async def wl_budget_max(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(WishlistStates.budget_min), F.text)
 async def wl_budget_min(message: Message, state: FSMContext) -> None:
-    raw = (message.text or "").replace(" ", "").replace(",", "").strip()
-    if not raw.isdigit():
+    v = parse_int(message.text)
+    if v is None:
         await message.answer("0 yoki musbat butun son (USD).")
         return
-    v = int(raw)
     data = await state.get_data()
     mx = int(data.get("budget_max_usd") or 0)
     if v > 0 and v > mx:
