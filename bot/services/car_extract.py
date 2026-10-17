@@ -6,7 +6,14 @@ import logging
 from datetime import datetime
 
 from bot.ai import AIClient, AIError
-from bot.services.car_parser import MILEAGE_MAX_KM, ParsedCar, parse_car_text
+from bot.services.car_parser import (
+    MILEAGE_MAX_KM,
+    ParsedCar,
+    down_payment_amounts,
+    mentioned_models,
+    parse_car_text,
+    possessive_models,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +23,18 @@ Post o'zbek (lotin/kirill), rus yoki aralash tilda, slang bilan yozilgan bo'lish
 
 Faqat postda YOZILGAN ma'lumotni ol. Topilmagan maydon uchun null qo'y. Hech narsani o'ylab topma.
 "[Ovoz]:" bilan boshlangan qism — videodagi gapning avtomatik transkripsiyasi, unda xatolar bo'lishi mumkin.
+"[Videoda ko'rinadi]:" — AI videodan taxmin qilgan ko'rinish (kechasi, garajda, dumaloq videoda ko'pincha xato).
+RANG (color) va kraska holatini FAQAT post matni yoki aytilgan gapdan ol; faqat videodagi ko'rinishda bo'lsa — null.
 
 NARX bilan ehtiyot bo'l: price_amount — faqat mashinaning TO'LIQ narxi.
 Nasiya / bo'lib to'lash uchun boshlang'ich to'lov ("500 dollar pul bo'lsa nasiyaga beramiz", "oldindan 30%",
 "boshlang'ich to'lov", "qolganini bo'lib to'laysiz") — bu narx EMAS: price_amount = null, buni notes ga yoz
 (masalan: "Nasiyaga: boshlang'ich to'lov $500"). Shubha bo'lsa ham price_amount = null.
+
+BIR NECHTA MASHINA: postda/ovozda bir nechta turli mashina sanab o'tilsa (kunlik obzor: «Malibumiz 18 mingga,
+Oniximiz 9100, Sparkimiz 7300...», «bugun nasiya savdosi bor» e'lon-banneri, salondagi mashinalar videosi) — bu
+bitta mashina e'loni EMAS: is_car_listing = false, cars_mentioned = sanab o'tilgan mashinalar soni. Ro'yxat
+qaytarma — har doim bitta JSON obyekt.
 
 Faqat quyidagi JSON obyektni qaytar:
 {
@@ -39,8 +53,14 @@ Faqat quyidagi JSON obyektni qaytar:
   "has_accident": true/false/null,
   "location": string|null,
   "notes": string|null,                // holat, kamchilik va afzalliklar haqida 1-2 gapli qisqa xulosa, o'zbekcha (telefon raqami YOZILMAYDI)
+  "cars_mentioned": int,               // postda nechta turli mashina haqida gap bor (odatda 1)
   "confidence": number                 // 0..1 — ma'lumotni qanchalik aniq ajratganing
 }"""
+
+# Bitta mashina e'loni emas (kunlik obzor): «...imiz» bilan ataladigan 2+ turli model yoki jami 4+ turli model.
+# (Bitta e'londa ham boshqa model tilga olinadi: «Malibu bar Damasga moslashgan»)
+ROUNDUP_POSSESSIVE_MODELS = 2
+ROUNDUP_MIN_MODELS = 4
 
 
 def _as_int(v: object) -> int | None:
@@ -112,8 +132,24 @@ def ai_dict_to_parsed(data: dict, *, usd_rate_uzs: int) -> ParsedCar:
     )
 
 
+def is_roundup(text: str) -> bool:
+    """Bir nechta turli mashina sanab o'tilgan post/ovoz (kunlik obzor) — bitta mashina e'loni emas."""
+    return len(possessive_models(text)) >= ROUNDUP_POSSESSIVE_MODELS or len(mentioned_models(text)) >= ROUNDUP_MIN_MODELS
+
+
+def _price_is_down_payment(price: int, notes: str | None) -> bool:
+    """AI izohida aynan shu summa boshlang'ich/oylik to'lov sifatida yozilgan («boshlang'ich to'lov 600 dollar»).
+
+    Faqat summa to'lov so'zi yonida bo'lsa — «Nasiya bor. Narxi 5150 dollar» dagi haqiqiy narx tegilmaydi.
+    """
+    return bool(notes) and price in down_payment_amounts(notes)
+
+
 async def extract_car(text: str, *, ai: AIClient | None, usd_rate_uzs: int) -> ParsedCar:
     parsed = parse_car_text(text, usd_rate_uzs=usd_rate_uzs)
+    roundup = is_roundup(text)
+    if roundup:
+        parsed.is_car_listing = False
     if ai is None or not ai.enabled or not text.strip():
         parsed.confidence = 0.9 if parsed.is_complete() else 0.4
         return parsed
@@ -124,6 +160,11 @@ async def extract_car(text: str, *, ai: AIClient | None, usd_rate_uzs: int) -> P
         parsed.confidence = 0.9 if parsed.is_complete() else 0.4
         return parsed
     ai_parsed = ai_dict_to_parsed(data, usd_rate_uzs=usd_rate_uzs)
+    mentioned = _as_int(data.get("cars_mentioned")) or 1
+    if roundup or mentioned > 1 or (_as_int(data.get("_items_count")) or 1) > 1:
+        ai_parsed.is_car_listing = False
+    if parsed.price_usd and ai_parsed.price_usd is None and _price_is_down_payment(parsed.price_usd, ai_parsed.notes):
+        parsed.price_usd = None  # «600 dollar pulingiz bo'lsa nasiyaga» — narx emas
     parsed.merge_missing(ai_parsed)
     parsed.is_car_listing = ai_parsed.is_car_listing
     parsed.notes = ai_parsed.notes

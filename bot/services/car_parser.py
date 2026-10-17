@@ -16,7 +16,10 @@ from bot.data.car_catalog import BRAND_MODELS
 
 # «sotiladi» (sotuvda) ni «sotildi» deb adashtirmaslik uchun aniq so'zlar.
 _SOLD_RE = re.compile(
-    r"(?<![\w])(sotildi|sotilgan|сотилди|сотилган|продан[оа]?|sold\s*out|sold)(?![\w])",
+    # «sotildi» va kanaldagi xato yozilishlari («SOTiIDi»); «sotiladi» (sotuvda) bunga tushmaydi.
+    # «BARAKA BO'LDI» (BOLDI, BÕLDI, BO'lLDI) — kanal sotilgan mashina uchun shunday yozadi
+    r"(?<![\w])(sot[il]{2,3}di|sotilgan|сотилди|сотилган|продан[оа]?|sold\s*out|sold|baraka\s+bo'?l+di|"
+    r"барака\s+бўлди|барака\s+булди)(?![\w])",
     re.IGNORECASE,
 )
 
@@ -99,7 +102,10 @@ def has_phone(text: str | None) -> bool:
 
 # --- Matnni tozalash -------------------------------------------------------------
 
-_APOSTROPHES = str.maketrans({"‘": "'", "’": "'", "ʻ": "'", "ʼ": "'", "`": "'"})
+_APOSTROPHES = str.maketrans(
+    # «Õ», «Ô» — ba'zi yozuvchilar «O'» o'rniga ishlatadi (BÕLDI, NEKSIYA BÔLDI)
+    {"‘": "'", "’": "'", "ʻ": "'", "ʼ": "'", "`": "'", "õ": "o'", "ô": "o'", "Õ": "O'", "Ô": "O'"}
+)
 
 
 def normalize_text(text: str) -> str:
@@ -146,6 +152,7 @@ _MODEL_ALIASES: dict[str, tuple[str, str]] = {
     "малибу": ("Chevrolet", "Malibu"),
     "tracker": ("Chevrolet", "Tracker"),
     "trekker": ("Chevrolet", "Tracker"),
+    "treker": ("Chevrolet", "Tracker"),
     "трекер": ("Chevrolet", "Tracker"),
     "captiva": ("Chevrolet", "Captiva"),
     "kaptiva": ("Chevrolet", "Captiva"),
@@ -156,6 +163,32 @@ _MODEL_ALIASES: dict[str, tuple[str, str]] = {
     "equinox": ("Chevrolet", "Equinox"),
     "cruze": ("Chevrolet", "Cruze"),
     "epica": ("Chevrolet", "Epica"),
+    "epika": ("Chevrolet", "Epica"),
+    "эпика": ("Chevrolet", "Epica"),
+    "tiida": ("Nissan", "Tiida"),
+    # Kanalda uchraydigan eski/yuk mashinalari
+    "vaz 2101": ("Lada", "2101"),
+    "vaz 21 01": ("Lada", "2101"),
+    "vaz 2106": ("Lada", "2106"),
+    "vaz 21 06": ("Lada", "2106"),
+    "vaz 2107": ("Lada", "2107"),
+    "vaz 21 07": ("Lada", "2107"),
+    "jiguli": ("Lada", "Jiguli"),
+    "juguli": ("Lada", "Jiguli"),
+    "jiguli 2101": ("Lada", "2101"),
+    "jiguli 2106": ("Lada", "2106"),
+    "juguli 2106": ("Lada", "2106"),
+    "jiguli 2107": ("Lada", "2107"),
+    "juguli 2107": ("Lada", "2107"),
+    "lada 2106": ("Lada", "2106"),
+    "lada 2107": ("Lada", "2107"),
+    "жигули": ("Lada", "Jiguli"),
+    "uvaz": ("UAZ", "UAZ"),
+    "uaz": ("UAZ", "UAZ"),
+    "bongo": ("Kia", "Bongo"),
+    "neksiya3": ("Chevrolet", "Nexia 3"),
+    "neksiya 3": ("Chevrolet", "Nexia 3"),
+    "tida": ("Nissan", "Tiida"),
     "orlando": ("Chevrolet", "Orlando"),
     "tico": ("Daewoo", "Tico"),
     "тико": ("Daewoo", "Tico"),
@@ -184,6 +217,7 @@ _BRAND_ALIASES: dict[str, str] = {
     "skoda": "Skoda",
     "mazda": "Mazda",
     "jac": "JAC",
+    "jak": "JAC",
     "changan": "Changan",
     "jetour": "Jetour",
     "kaiyi": "Kaiyi",
@@ -257,17 +291,46 @@ def detect_brand_model(text: str) -> tuple[str | None, str | None]:
         model = None
         if tok and tok.start() - end <= 2:
             cand = tok.group(0)
-            if not re.fullmatch(r"\d{4,}", cand):  # yil yoki narx emas (BMW 318, Peugeot 406 — model)
+            known = {m.split()[0].lower(): m for m in BRAND_MODELS.get(brand, [])}
+            # Faqat model ko'rinishidagi so'z: raqamli (BMW 318, JAC J7, CX-5) yoki katalogdagi model.
+            # Oddiy so'z model emas: «BMW nasib bo'lsa», «BMW avtomobili»
+            if cand.lower() in known:
+                model = known[cand.lower()]
+            elif re.search(r"\d", cand) and not re.fullmatch(r"\d{4,}", cand):  # yil yoki narx emas
                 model = cand.upper() if len(cand) <= 3 else cand.capitalize()
         return brand, model
     return None, None
 
 
+def mentioned_models(text: str) -> set[str]:
+    """Matnda tilga olingan turli modellar («Malibu 18 ming, Onix 9100, Spark 7300...» — kunlik obzor)."""
+    t = normalize_text(text)
+    return {model for pat, (_brand, model) in _MODEL_PATTERNS if pat.search(t)}
+
+
+# «Malibumiz», «Oniksimiz», «Damasimiz» — salon o'z mashinasini shunday ataydi
+_POSSESSIVE_RE = re.compile(r"\b([A-Za-z']{3,12}?)(?:i|y)?miz(?:ni|ga|da|dan|ning)?\b", re.IGNORECASE)
+_STEM_FIXES = {"oniks": "onix", "jigul": "jiguli", "kobolt": "cobalt"}
+
+
+def possessive_models(text: str) -> set[str]:
+    """«...imiz» qo'shimchali turli modellar: «Malibumiz 18 mingga, Oniximiz 9100» — bir nechta mashina obzori."""
+    out: set[str] = set()
+    for m in _POSSESSIVE_RE.finditer(normalize_text(text)):
+        stem = m.group(1).lower()
+        stem = _STEM_FIXES.get(stem, stem)
+        _brand, model = detect_brand_model(stem)
+        if model:
+            out.add(model)
+    return out
+
+
 # --- Raqamlar ---------------------------------------------------------------------
 
 _YEAR = r"(19[89]\d|20[0-4]\d)"
+# «yili: 1978» (UAZ, Jiguli) — belgilangan yil eskiroq bo'lishi ham mumkin
 _YEAR_LABELED_RE = re.compile(
-    r"(?:yili|yil|год|year|ishlab\s+chiqarilgan)\s*[:\-–]?\s*" + _YEAR + r"(?!\d)",
+    r"(?:yili|yil|год|year|ishlab\s+chiqarilgan)\s*[:\-–]?\s*(19[6-9]\d|20[0-4]\d)(?!\d)",
     re.IGNORECASE,
 )
 _YEAR_SUFFIX_RE = re.compile(r"(?<!\d)" + _YEAR + r"\s*-?\s*(?:yil|y\.|год|г\.)", re.IGNORECASE)
@@ -321,13 +384,13 @@ def parse_year(text: str) -> int | None:
         m = rx.search(text)
         if m:
             y = int(m.group(1))
-            if 1980 <= y <= max_year:
+            if (1960 if rx is _YEAR_LABELED_RE else 1980) <= y <= max_year:
                 return y
     return None
 
 
 # Undan katta probeg — deyarli har doim noto'g'ri eshitilgan/yozilgan raqam («905 ming»)
-MILEAGE_MAX_KM = 700_000
+MILEAGE_MAX_KM = 800_000  # Damas 735 ming ham yuradi; 905 ming — xato eshitilgan
 
 
 def parse_mileage(text: str) -> int | None:
@@ -339,6 +402,8 @@ def parse_mileage(text: str) -> int | None:
         if val is None:
             continue
         km = int(_apply_multiplier(val, m.group(2)))
+        if km == 0 and "?" in text[max(0, m.start() - 8) : m.end()]:
+            continue  # «probeg: ???.000km» — noma'lum, 0 emas
         if 0 <= km <= MILEAGE_MAX_KM:
             return km
     return None
@@ -360,9 +425,42 @@ def _guess_currency(amount: float, explicit: str | None) -> str:
     return "UZS" if amount >= 1_000_000 else "USD"
 
 
+# Nasiya: «1000 dollar pulingiz bo'lsa», «boshlang'ich to'lov 600$», «oyiga 200$», «18 oy 200 dan» — bu narx emas
+_DOWN_PAYMENT_AFTER_RE = re.compile(
+    r"^[\s,.:;\-–$]*(?:dollar|доллар|usd|\$|so'm|сўм|сум)?[\s,.]*"
+    r"(?:pul(?:ingiz|ingizlar|ing|ni)?\s+bo'?l(?:sa|ganda)|пул(?:ингиз)?\s+бўлса|boshlang|бошланғ|oldindan|олдиндан"
+    r"|oyiga|ойига|dan\s+(?:oyiga|bo'lib))",
+    re.IGNORECASE,
+)
+_DOWN_PAYMENT_BEFORE_RE = re.compile(
+    r"(?:boshlang'?ich(?:\s+to'lov(?:i)?)?|бошланғич|oldindan|олдиндан|oyiga|ойига|первоначальн\w*|взнос|"
+    r"nasiya(?:ga|\s+savdo(?:ga|si)?)?|насия(?:га)?|\d+\s*oy(?:ga)?|\d+\s*ой(?:га)?)[\s:,\-–]*\$?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_down_payment(text: str, start: int, end: int) -> bool:
+    return bool(_DOWN_PAYMENT_AFTER_RE.search(text[end : end + 40]) or _DOWN_PAYMENT_BEFORE_RE.search(text[max(0, start - 40) : start]))
+
+
+def down_payment_amounts(text: str) -> set[int]:
+    """Nasiya boshlang'ich to'lovi/oylik to'lov sifatida aytilgan dollar summalari («1000 dollar pulingiz bo'lsa»)."""
+    t = normalize_text(text)
+    out: set[int] = set()
+    for rx in (_PRICE_LABELED_RE, _PRICE_DOLLAR_BEFORE_RE, _PRICE_DOLLAR_AFTER_RE):
+        for m in rx.finditer(t):
+            if not _is_down_payment(t, m.start(), m.end()):
+                continue
+            val = _to_number(m.group(2) if rx is _PRICE_LABELED_RE else m.group(1))
+            if val is not None:
+                out.add(int(round(val)))
+    return out
+
+
 def parse_price_usd(text: str, usd_rate_uzs: int) -> int | None:
-    m = _PRICE_LABELED_RE.search(text)
-    if m:
+    for m in _PRICE_LABELED_RE.finditer(text):
+        if _is_down_payment(text, m.start(), m.end()):
+            continue
         val = _to_number(m.group(2))
         if val is not None:
             amount = _apply_multiplier(val, m.group(3))
@@ -373,15 +471,17 @@ def parse_price_usd(text: str, usd_rate_uzs: int) -> int | None:
             if usd:
                 return usd
     for rx in (_PRICE_DOLLAR_BEFORE_RE, _PRICE_DOLLAR_AFTER_RE):
-        m = rx.search(text)
-        if m:
+        for m in rx.finditer(text):
+            if _is_down_payment(text, m.start(), m.end()):
+                continue
             val = _to_number(m.group(1))
             if val is not None:
                 usd = _usd(_apply_multiplier(val, m.group(2)), "USD", usd_rate_uzs)
                 if usd:
                     return usd
-    m = _PRICE_UZS_RE.search(text)
-    if m:
+    for m in _PRICE_UZS_RE.finditer(text):
+        if _is_down_payment(text, m.start(), m.end()):
+            continue
         raw, mult = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
         val = _to_number(raw)
         if val is not None:
@@ -433,13 +533,18 @@ _COLOR_RE = re.compile(
 _PAINT_RE = re.compile(
     r"(?<![\w])(?:kraskasi|kraska|краскаси|краска|покраска)(?![\w'])\s*[:\-–]?\s*([^\n,;]{2,80})", re.IGNORECASE
 )
+# «Kraska: ...» — ajratgich bilan yozilgan qiymat har doim olinadi
+_PAINT_LABELLED_RE = re.compile(r"(?:kraskasi|kraska|краскаси|краска|покраска)\s*[:\-–]", re.IGNORECASE)
 # Ajratgichsiz (ko'pincha ovozdan) qiymat faqat shu so'zlar bilan boshlansa olinadi — «kraska ikkilaydigan bo'lsak» emas
 _PAINT_VALUE_OK_RE = re.compile(
     r"^\s*(?:\d|(?:toza|chistiy|чистый|чист|тоза|yo'q|йўқ|нет|bor|бор|ideal|zavod|завод|bir|ikki|uch|to'rt|besh|"
     r"bez|без|minimal|ozgina|kam|kamroq)(?![\w'])|element\w*|joy\w*|детал\w*|qism\w*)",
     re.IGNORECASE,
 )
-_LOCATION_RE = re.compile(r"(?:📍|manzil|lokatsiya|адрес)\s*[:\-–]?\s*([^\n]{2,80})", re.IGNORECASE)
+# So'z chegarasi bilan: «Instagram manzili ko'rinadi» → «i ko'rinadi» joylashuv bo'lib qolmasin
+_LOCATION_RE = re.compile(
+    r"(?:📍|(?<![\w])(?:manzil|lokatsiya|адрес)(?![\w']))\s*[:\-–]?\s*([^\n]{2,80})", re.IGNORECASE
+)
 # 📍 ba'zi postlarda boshqa maydonlar oldidan ham qo'yiladi («📍 probeg: 76.000km») — bunday qatorlar lokatsiya emas
 _NOT_LOCATION_RE = re.compile(r"probeg|пробег|yili|narx|цена|\d\s*(?:km|км)|\$", re.IGNORECASE)
 _ACCIDENT_NO_RE = re.compile(r"(?:dtp|дтп|avariya)\w*\s*[:\-–]?\s*(?:yo'q|йўқ|нет|net|bo'lmagan)", re.IGNORECASE)
@@ -502,9 +607,8 @@ def parse_car_text(text: str, *, usd_rate_uzs: int) -> ParsedCar:
     pos = _POSITION_RE.search(t) or _POSITION_RE2.search(t)
     color_m = _COLOR_RE.search(t)
     paint_m = _PAINT_RE.search(t)
-    if paint_m and not re.search(r"(?:kraskasi|kraska|краскаси|краска|покраска)\s*[:\-–]", paint_m.group(0), re.IGNORECASE):
-        if not _PAINT_VALUE_OK_RE.match(paint_m.group(1)):
-            paint_m = None
+    if paint_m and not _PAINT_LABELLED_RE.match(paint_m.group(0)) and not _PAINT_VALUE_OK_RE.match(paint_m.group(1)):
+        paint_m = None
     loc_m = next((m for m in _LOCATION_RE.finditer(t) if not _NOT_LOCATION_RE.search(m.group(1))), None)
     has_accident = True if _ACCIDENT_YES_RE.search(t) else (False if _ACCIDENT_NO_RE.search(t) else None)
     return ParsedCar(

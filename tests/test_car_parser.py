@@ -155,7 +155,7 @@ def test_merge_missing_keeps_regex_values():
 @pytest.mark.parametrize(
     ("text", "strict", "extended"),
     [
-        ("Baraka bo'ldi ✅", False, True),
+        ("Baraka bo'ldi ✅", True, True),
         ("Barakasini bersin", False, True),
         ("olib ketildi", False, True),
         ("SOTILDI", True, True),
