@@ -232,6 +232,7 @@ def test_is_different_car():
     existing.year = 2022
     existing.mileage_km = 60000
     existing.transmission = "avtomat"
+    existing.price_usd = 8500
 
     # 1. Shunchaki narx yoki qisqa izoh keldi (looks_like_car=False) -> Farq qilmaydi (update qilinadi)
     parsed_update = MagicMock()
@@ -245,6 +246,7 @@ def test_is_different_car():
     parsed_same.year = 2022
     parsed_same.mileage_km = 61000
     parsed_same.transmission = "avtomat"
+    parsed_same.price_usd = 8500
     assert not is_different_car(existing, parsed_same)
 
     # 3. Model boshqa (Cobalt keldi) -> Farq qiladi (yangi mashina qilinishi shart!)
@@ -282,4 +284,21 @@ def test_is_different_car():
     parsed_diff_trans.mileage_km = 60000
     parsed_diff_trans.transmission = "mexanika"
     assert is_different_car(existing, parsed_diff_trans)
+
+    # 7. Narx sezilarli farq qiladi (8500 vs 7200) -> Farq qiladi
+    parsed_diff_price = MagicMock()
+    parsed_diff_price.looks_like_car.return_value = True
+    parsed_diff_price.model = "Gentra"
+    parsed_diff_price.year = 2022
+    parsed_diff_price.mileage_km = 60000
+    parsed_diff_price.price_usd = 7200
+    assert is_different_car(existing, parsed_diff_price)
+
+
+def test_comparison_phrase_model_detection():
+    # Labo qidirganlar... Caddy keldi: Labo emas, Caddy olinishi kerak
+    text = "E, labo qidirib yurgan aka-ukalarimiz, sizlarga mana Volkswagen Caddy kelib qoldi. Labo'ni o'rniga tavsiya qilamiz"
+    r = p(text)
+    assert (r.brand, r.model) == ("Volkswagen", "Caddy")
+
 

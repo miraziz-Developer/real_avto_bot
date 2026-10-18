@@ -151,6 +151,11 @@ def is_different_car(existing_car: Any, parsed: Any) -> bool:
         if existing_car.transmission.lower() != parsed.transmission.lower():
             return True
 
+    # 5. Narx farqi (> $500 farq bo'lsa — bu boshqa mashina)
+    if isinstance(existing_car.price_usd, (int, float)) and isinstance(parsed.price_usd, (int, float)):
+        if abs(existing_car.price_usd - parsed.price_usd) > 500:
+            return True
+
     return False
 
 
@@ -766,7 +771,13 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             recent_car_id = _peek_recent_media_car(chat_id) or _recent_text_car_for(first)
             recent_car = await cars.get(recent_car_id) if recent_car_id else None
             if recent_car is not None:
-                heard = parse_car_text(" ".join(await _transcribe_media(bot, messages)), usd_rate_uzs=settings.usd_rate_uzs)
+                transcripts = await _transcribe_media(bot, messages)
+                heard_full = "\n".join([f"[Ovoz]: {t}" for t in transcripts]).strip()
+                heard = (
+                    await extract_car(heard_full, ai=get_ai(), usd_rate_uzs=settings.usd_rate_uzs)
+                    if heard_full
+                    else parse_car_text("", usd_rate_uzs=settings.usd_rate_uzs)
+                )
                 if not is_different_car(recent_car, heard):
                     await _apply_reply_to_car(
                         bot, cars, recent_car, messages, "", header="🎥 <b>Shu mashinaga yana video qo'shildi</b>"
@@ -797,7 +808,7 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             await _sold_by_announcement(bot, cars, parsed, messages, heard=transcripts, create_if_missing=False)
             return
         if not parsed.looks_like_car():
-            if has_media and not text and not is_roundup(full_text):
+            if has_media and not text and not is_roundup(full_text) and parsed.is_car_listing is not False:
                 _orphan_media[chat_id] = (time.monotonic(), messages)
             logger.info(
                 "Kanal posti e'lon emas deb topildi (msg %s): %r", msg_ids[0], full_text[:150].replace("\n", " ")
@@ -857,6 +868,10 @@ async def _process_channel_post(bot: Bot, messages: list[Message], *, edited: bo
             await _sold_by_announcement(
                 bot, cars, parsed, messages, heard=transcripts, create_if_missing=True, full_text=full_text
             )
+            return
+
+        if parsed.is_car_listing is False:
+            logger.info("Kanal posti e'lon emas deb topildi (is_car_listing=False): msg %s", msg_ids[0])
             return
 
         # Qayta tashlangan post (narx tushirib «ko'tarish», bot e'lonini qo'lda qayta joylash) — yangi mashina

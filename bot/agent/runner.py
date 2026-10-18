@@ -15,6 +15,18 @@ logger = logging.getLogger(__name__)
 
 MAX_STEPS = 6
 FALLBACK_REPLY = "Uzr, savolingizni biroz aniqroq yozib bera olasizmi? Masalan: qaysi model va qancha byudjet."
+
+
+async def fallback_reply_for(ctx: AgentContext) -> str:
+    car = await ctx.current_car()
+    if car:
+        title = f"{car.brand or ''} {car.model or ''}".strip() or "ushbu mashina"
+        return (
+            f"Ushbu {title} bo'yicha batafsil ma'lumot olish yoki savdolashish uchun menejerimiz bilan bog'lanishingiz mumkin:\n"
+            f"📞 +998 97 782 92 99\n"
+            f"Yoki telefon raqamingizni qoldiring, menejerimiz tez orada aloqaga chiqadi."
+        )
+    return FALLBACK_REPLY
 _MD_RE = re.compile(r"(\*\*|__|^#{1,6}\s*|`)", re.MULTILINE)
 
 
@@ -65,12 +77,18 @@ async def run_agent(ctx: AgentContext, llm: ChatModel, *, model: str | None = No
             # Model ba'zan asbob chaqiruvini buzadi (Groq: tool_use_failed) — bir marta asbobsiz javob so'raymiz,
             # shu paytgacha topilgan natijalar (tool javoblari) kontekstda qoladi
             logger.warning("Agent lead #%s, qadam %s: %s — asbobsiz qayta urinish", ctx.lead.id, step, e)
-            resp = await llm.chat(messages, tools=None, model=model)
-            return clean_reply(resp.get("content") or "") or FALLBACK_REPLY
+            try:
+                resp = await llm.chat(messages, tools=None, model=model)
+                text = clean_reply(resp.get("content") or "")
+                if text:
+                    return text
+            except Exception as retry_err:
+                logger.warning("Agent fallback retry failed: %s", retry_err)
+            return await fallback_reply_for(ctx)
         calls = resp.get("tool_calls") or []
         if not calls:
             text = clean_reply(resp.get("content") or "")
-            return text or FALLBACK_REPLY
+            return text or await fallback_reply_for(ctx)
         messages.append({"role": "assistant", "content": resp.get("content") or "", "tool_calls": calls})
         for call in calls:
             fn = (call.get("function") or {}).get("name", "")
@@ -79,4 +97,4 @@ async def run_agent(ctx: AgentContext, llm: ChatModel, *, model: str | None = No
             logger.info("Agent lead #%s → %s(%s) = %s", ctx.lead.id, fn, args, result[:300])
             messages.append({"role": "tool", "tool_call_id": call.get("id", fn), "name": fn, "content": result})
     logger.warning("Agent lead #%s: %s qadamda yakuniy javob bo'lmadi", ctx.lead.id, MAX_STEPS)
-    return FALLBACK_REPLY
+    return await fallback_reply_for(ctx)

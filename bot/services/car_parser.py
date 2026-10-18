@@ -193,6 +193,11 @@ _MODEL_ALIASES: dict[str, tuple[str, str]] = {
     "tico": ("Daewoo", "Tico"),
     "тико": ("Daewoo", "Tico"),
     "lanos": ("Daewoo", "Lanos"),
+    "caddy": ("Volkswagen", "Caddy"),
+    "kaddi": ("Volkswagen", "Caddy"),
+    "kaddy": ("Volkswagen", "Caddy"),
+    "кадди": ("Volkswagen", "Caddy"),
+    "кэдди": ("Volkswagen", "Caddy"),
 }
 
 _BRAND_ALIASES: dict[str, str] = {
@@ -266,12 +271,27 @@ _BRAND_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 _MODEL_TOKEN_RE = re.compile(r"[A-Za-zА-Яа-я0-9][\w\-]*")
 
 
+# Taqqoslash / muqobil iboralari: «labo qidirib yurganlar», «labo o'rniga» — bu model asosiy mashina emas
+_COMPARISON_AFTER_RE = re.compile(
+    r"^\s*(?:ni\s+|i\s+|'ni\s+|’ni\s+)?(?:o'?rniga|o'?rnida|o'?xshash|emas\b|qidir(?:ib\s+yurgan|gan|yotgan|uvchi)\w*)",
+    re.IGNORECASE,
+)
+
+
 def detect_brand_model(text: str) -> tuple[str | None, str | None]:
     model_hit: tuple[int, str, str] | None = None
+    comparison_hit: tuple[int, str, str] | None = None
     for pat, (brand, model) in _MODEL_PATTERNS:
-        m = pat.search(text)
-        if m and (model_hit is None or m.start() < model_hit[0]):
-            model_hit = (m.start(), brand, model)
+        for m in pat.finditer(text):
+            after = text[m.end() : m.end() + 40]
+            if _COMPARISON_AFTER_RE.search(after):
+                if comparison_hit is None or m.start() < comparison_hit[0]:
+                    comparison_hit = (m.start(), brand, model)
+            else:
+                if model_hit is None or m.start() < model_hit[0]:
+                    model_hit = (m.start(), brand, model)
+    if model_hit is None and comparison_hit is not None:
+        model_hit = comparison_hit
     brand_hit: tuple[int, int, str] | None = None
     for pat, brand in _BRAND_PATTERNS:
         m = pat.search(text)

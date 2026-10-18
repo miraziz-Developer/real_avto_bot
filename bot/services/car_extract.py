@@ -165,11 +165,23 @@ async def extract_car(text: str, *, ai: AIClient | None, usd_rate_uzs: int) -> P
         ai_parsed.is_car_listing = False
     if parsed.price_usd and ai_parsed.price_usd is None and _price_is_down_payment(parsed.price_usd, ai_parsed.notes):
         parsed.price_usd = None  # «600 dollar pulingiz bo'lsa nasiyaga» — narx emas
+    ai_conf = ai_parsed.confidence if ai_parsed.confidence is not None else 0.5
+    # Videodagi ovoz yoki erkin matnda AI kontekstni regexdan ko'ra ancha aniq tushunadi
+    # (masalan: "2020 Cobalt kelishilmadi, bu Cobalt 2022" -> yil 2022; "Labo qidirganlarga Caddy" -> Caddy).
+    if ai_conf >= 0.7 or "[Ovoz]:" in text:
+        if ai_parsed.model:
+            parsed.model = ai_parsed.model
+            parsed.brand = ai_parsed.brand or parsed.brand
+        if ai_parsed.year:
+            parsed.year = ai_parsed.year
+        if ai_parsed.price_usd and (parsed.price_usd is None or "[Ovoz]:" in text):
+            parsed.price_usd = ai_parsed.price_usd
+        if ai_parsed.mileage_km and (parsed.mileage_km is None or "[Ovoz]:" in text):
+            parsed.mileage_km = ai_parsed.mileage_km
     parsed.merge_missing(ai_parsed)
     parsed.is_car_listing = ai_parsed.is_car_listing
     parsed.notes = ai_parsed.notes
     # Regex asosiy maydonlarni to'liq topgan bo'lsa, AI ishonchi past bo'lsa ham natija ishonchli
-    ai_conf = ai_parsed.confidence if ai_parsed.confidence is not None else 0.5
     parsed.confidence = max(ai_conf, 0.9) if parsed.is_complete() else min(ai_conf, 0.6)
     parsed.extra = {"ai": data}
     return parsed

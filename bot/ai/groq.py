@@ -97,11 +97,12 @@ class GroqClient:
 
     async def chat_json(self, system: str, user: str, *, temperature: float = 0.0, max_tokens: int = 800) -> dict:
         """Model javobini JSON obyekt sifatida qaytaradi."""
+        sys_prompt = system if "json" in system.lower() else f"You must output a valid JSON object.\n{system}"
         data = await self._post(
             "/chat/completions",
             json={
                 "model": self.model,
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}],
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "response_format": {"type": "json_object"},

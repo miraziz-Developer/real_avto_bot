@@ -28,7 +28,7 @@ BRAND_MODELS: dict[str, list[str]] = {
     "Hyundai": ["Accent", "Solaris", "Elantra", "Sonata", "Tucson", "Santa Fe", "Creta"],
     "Toyota": ["Camry", "Corolla", "RAV4", "Land Cruiser", "Prado", "Highlander", "Yaris"],
     "Nissan": ["Juke", "Qashqai", "X-Trail", "Patrol", "Sentra", "Altima"],
-    "Volkswagen": ["Polo", "Jetta", "Passat", "Tiguan", "Golf"],
+    "Volkswagen": ["Polo", "Jetta", "Passat", "Tiguan", "Golf", "Caddy"],
     "Mercedes-Benz": ["E-Class", "C-Class", "GLE", "GLC", "Sprinter"],
     "BMW": ["3 Series", "5 Series", "X3", "X5", "X7"],
     "BYD": ["Song Plus", "Atto 3", "Han"],
