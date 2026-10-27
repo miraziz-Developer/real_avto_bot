@@ -214,18 +214,20 @@ fi
 say "Backup, watchdog va avtomatik ishga tushish"
 sudo mkdir -p /opt/backups/real_avto /var/log
 sudo chown "$(id -un)":"$(id -gn)" /opt/backups/real_avto
-sudo touch /var/log/real_avto_backup.log /var/log/real_avto_watchdog.log
-sudo chown "$(id -un)":"$(id -gn)" /var/log/real_avto_backup.log /var/log/real_avto_watchdog.log
-chmod +x scripts/server_backup.sh scripts/watchdog.sh
+sudo touch /var/log/real_avto_backup.log /var/log/real_avto_watchdog.log /var/log/real_avto_cleanup.log
+sudo chown "$(id -un)":"$(id -gn)" /var/log/real_avto_backup.log /var/log/real_avto_watchdog.log /var/log/real_avto_cleanup.log
+chmod +x scripts/server_backup.sh scripts/watchdog.sh scripts/server_cleanup.sh
 CRON_TMP="$(mktemp)"
-(crontab -l 2>/dev/null || true) | { grep -v -e real_avto_backup.log -e real_avto_watchdog.log || true; } > "$CRON_TMP"
+(crontab -l 2>/dev/null || true) | { grep -v -e real_avto_backup.log -e real_avto_watchdog.log -e real_avto_cleanup.log || true; } > "$CRON_TMP"
 {
     echo "0 */6 * * * $PROJECT_DIR/scripts/server_backup.sh >> /var/log/real_avto_backup.log 2>&1"
     echo "*/5 * * * * $PROJECT_DIR/scripts/watchdog.sh >> /var/log/real_avto_watchdog.log 2>&1"
+    echo "30 4 * * * $PROJECT_DIR/scripts/server_cleanup.sh >> /var/log/real_avto_cleanup.log 2>&1"
 } >> "$CRON_TMP"
 crontab "$CRON_TMP"
 rm -f "$CRON_TMP"
-echo "cron: backup har 6 soatda, watchdog har 5 daqiqada"
+echo "cron: backup har 6 soatda, watchdog har 5 daqiqada, tozalash har kuni 04:30"
+bash scripts/server_cleanup.sh || true
 
 sed "s|^WorkingDirectory=.*|WorkingDirectory=$PROJECT_DIR|" scripts/real-avto-stack.service \
     | sudo tee /etc/systemd/system/real-avto-stack.service > /dev/null

@@ -192,6 +192,7 @@ sync="$(docker compose logs --since 6h bot 2>/dev/null | grep -E 'Kanal sinxroni
 head_ "Backup, cron, resurslar"
 crontab -l 2>/dev/null | grep -q real_avto_backup.log && ok "backup cron o'rnatilgan" || bad "backup cron yo'q"
 crontab -l 2>/dev/null | grep -q real_avto_watchdog.log && ok "watchdog cron o'rnatilgan" || bad "watchdog cron yo'q"
+crontab -l 2>/dev/null | grep -q real_avto_cleanup.log && ok "kundalik tozalash cron o'rnatilgan: $(tail -n 1 /var/log/real_avto_cleanup.log 2>/dev/null)" || bad "tozalash cron yo'q"
 systemctl is-enabled real-avto-stack.service > /dev/null 2>&1 && ok "systemd: avtomatik ishga tushish yoqilgan" \
     || bad "systemd unit yoqilmagan"
 if [ "${RUN_BACKUP:-0}" = 1 ]; then
