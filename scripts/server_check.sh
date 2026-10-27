@@ -203,6 +203,8 @@ last_backup="$(ls -1t /opt/backups/real_avto/*.sql.gz 2>/dev/null | head -n 1)"
     || note "hali backup yo'q (har 6 soatda olinadi)"
 disk="$(df -P / | awk 'NR==2 {print $5}')"
 ok "disk: ${disk} band; xotira: $(free -h | awk '/Mem:/ {print $3 " / " $2}')"
+note "docker joyi: $(docker system df --format '{{.Type}} {{.Size}} (bo‘shatsa bo‘ladi {{.Reclaimable}})' 2>/dev/null | tr '\n' ';')"
+note "katta papkalar: $(sudo -n du -xsh /var/lib/docker /var/log /opt/backups /home 2>/dev/null | tr '\t\n' ' ;')"
 
 # --- Network (how the server is exposed) -------------------------------------------------------------
 head_ "Tarmoq"

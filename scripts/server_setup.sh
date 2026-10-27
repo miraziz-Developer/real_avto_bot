@@ -177,8 +177,14 @@ fi
 
 # --- 4. Build and start -------------------------------------------------------
 say "Build va ishga tushirish (birinchi marta 5–10 daqiqa)"
+# Disk to'la bo'lsa build yiqilmasin — avval eski keshni bo'shatamiz
+docker builder prune -f --filter "until=72h" > /dev/null 2>&1 || true
 docker compose build
 docker compose up -d --remove-orphans
+# Har deploy yangi image yasaydi — eskisi (tegsiz «dangling») va eski build keshi diskni to'ldirib yubormasin.
+# Faqat hech bir konteyner ishlatmayotgan qatlamlar o'chadi (serverdagi boshqa loyihaga ham tegmaydi).
+docker image prune -f > /dev/null 2>&1 || true
+docker builder prune -f --filter "until=72h" > /dev/null 2>&1 || true
 
 # --- 5. Wait for health --------------------------------------------------------
 say "Holat tekshiruvi"

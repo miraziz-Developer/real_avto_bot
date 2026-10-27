@@ -39,9 +39,19 @@ for svc in db redis backend bot; do
     esac
 done
 
-disk="$(df -P "$PROJECT_DIR" | awk 'NR==2 {gsub("%", "", $5); print $5}')"
+disk_used() { df -P "$PROJECT_DIR" | awk 'NR==2 {gsub("%", "", $5); print $5}'; }
+disk="$(disk_used)"
 if [ -n "$disk" ] && [ "$disk" -ge "$DISK_LIMIT_PERCENT" ]; then
-    problems+="disk: ${disk}% used"$'\n'
+    # Avval o'zimiz tozalaymiz: ishlatilmayotgan eski image'lar, build keshi, eski konteyner loglari
+    before="$disk"
+    docker image prune -f > /dev/null 2>&1 || true
+    docker builder prune -f > /dev/null 2>&1 || true
+    sudo -n journalctl --vacuum-size=200M > /dev/null 2>&1 || true
+    disk="$(disk_used)"
+    echo "[$(date)] disk ${before}% → tozalandi → ${disk}%"
+    if [ "$disk" -ge "$DISK_LIMIT_PERCENT" ]; then
+        problems+="disk: ${disk}% band (avtomatik tozalashdan keyin ham) — serverda joy kam"$'\n'
+    fi
 fi
 
 previous="$(cat "$STATE_FILE" 2>/dev/null || true)"
