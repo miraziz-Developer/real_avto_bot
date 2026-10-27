@@ -205,6 +205,9 @@ last_backup="$(ls -1t /opt/backups/real_avto/*.sql.gz 2>/dev/null | head -n 1)"
 disk="$(df -P / | awk 'NR==2 {print $5}')"
 ok "disk: ${disk} band; xotira: $(free -h | awk '/Mem:/ {print $3 " / " $2}')"
 note "docker joyi: $(docker system df --format '{{.Type}} {{.Size}} (bo‘shatsa bo‘ladi {{.Reclaimable}})' 2>/dev/null | tr '\n' ';')"
+note "eng katta image'lar: $(docker images --format '{{.Size}} {{.Repository}}:{{.Tag}}' 2>/dev/null | sort -rh | head -n 15 | tr '\n' ';')"
+note "loyihalar bo'yicha: $(docker ps -a --format '{{.Label "com.docker.compose.project"}} {{.Image}}' 2>/dev/null | sort -u | awk '{print $1}' | sort | uniq -c | tr '\n' ';')"
+note "diskdagi eng katta papkalar: $(sudo -n du -xh --max-depth=1 / 2>/dev/null | sort -rh | head -n 10 | tr '\t\n' ' ;')"
 note "katta papkalar: $(sudo -n du -xsh /var/lib/docker /var/log /opt/backups /home 2>/dev/null | tr '\t\n' ' ;')"
 
 # --- Network (how the server is exposed) -------------------------------------------------------------
