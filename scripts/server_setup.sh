@@ -180,11 +180,22 @@ say "Build va ishga tushirish (birinchi marta 5–10 daqiqa)"
 # Disk to'la bo'lsa build yiqilmasin — avval eski keshni bo'shatamiz
 docker builder prune -f --filter "until=72h" > /dev/null 2>&1 || true
 docker compose build
-docker compose up -d --remove-orphans
+# 80/443 ni serverdagi boshqa loyiha (masalan bozorliii nginx) band qilgan bo'lsa — HTTPS'ni o'sha beradi,
+# bizning proxy ishga tushirilmaydi (aks holda «port is already allocated» bilan deploy yiqiladi)
+SERVICES=""
+holder="$(docker ps --format '{{.Names}} {{.Ports}}' | grep -E ':(80|443)->' | grep -v '^real_avto-' | awk '{print $1}' | head -n 1)"
+if [ -n "$holder" ] && docker compose config --services | grep -qx proxy; then
+    warn "80/443 portlarini ${holder} band qilgan — HTTPS o'sha orqali; bizning proxy o'tkazib yuborildi"
+    docker compose rm -sf proxy > /dev/null 2>&1 || true
+    SERVICES="$(docker compose config --services | grep -vx proxy | tr '\n' ' ')"
+fi
+# shellcheck disable=SC2086
+docker compose up -d --remove-orphans $SERVICES
 # Har deploy yangi image yasaydi — eskisi (tegsiz «dangling») va eski build keshi diskni to'ldirib yubormasin.
 # Faqat hech bir konteyner ishlatmayotgan qatlamlar o'chadi (serverdagi boshqa loyihaga ham tegmaydi).
 docker image prune -f > /dev/null 2>&1 || true
-docker builder prune -f --filter "until=72h" > /dev/null 2>&1 || true
+docker builder prune -f > /dev/null 2>&1 || true
+sudo -n journalctl --vacuum-size=200M > /dev/null 2>&1 || true
 
 # --- 5. Wait for health --------------------------------------------------------
 say "Holat tekshiruvi"
