@@ -50,7 +50,12 @@ class FakeBot:
 
 @pytest.fixture
 def mc_settings():
-    patch = {"admin_telegram_ids": frozenset({ADMIN_ID}), "manychat_secret": SECRET, "manychat_api_key": ""}
+    patch = {
+        "admin_telegram_ids": frozenset({ADMIN_ID}),
+        "manychat_secret": SECRET,
+        "manychat_api_key": "",
+        "instagram_reply_reactions": True,  # reaksiya testlari uchun; o'chiq holat alohida testda
+    }
     old = {k: getattr(config.settings, k) for k in patch}
     for k, v in patch.items():
         object.__setattr__(config.settings, k, v)
@@ -589,3 +594,17 @@ async def test_make_poll_late_replies_are_sent_next_time_and_failed_ones_retried
         assert calls["boom"] == 2  # xatodan keyin «band» belgisi olib tashlangan — qayta urinildi
         r = await post({"stage": "comments", "rows": rows("fast", "slow", "boom")})
         assert r["replies"] == []
+
+
+async def test_reactions_and_praise_are_not_answered_by_default(factory, monkeypatch):
+    """Make operatsiyasini tejash: emoji va maqtovga javob yo'q, savolga javob bor."""
+    ai = FakeCommentAI()
+    monkeypatch.setattr(manychat, "get_ai", lambda: ai)
+    monkeypatch.setattr(manychat, "get_budget", lambda: AllowAll())
+    object.__setattr__(config.settings, "instagram_reply_reactions", False)
+    bridge = ManyChatBridge(FakeBot(), factory)
+    base = {"event": "comment", "dm": "false", "caption": "Spark ID: 3"}
+    assert (await bridge.answer({**base, "user_id": "9101", "text": "🔥🔥", "comment_id": "e1"}))["public_reply"] == ""
+    assert (await bridge.answer({**base, "user_id": "9102", "text": "zo'r mashina", "comment_id": "p1"}))["public_reply"] == ""
+    asked = await bridge.answer({**base, "user_id": "9103", "text": "narxi qancha?", "comment_id": "q1"})
+    assert asked["public_reply"]

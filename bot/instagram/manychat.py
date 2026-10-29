@@ -173,6 +173,9 @@ async def read_payload(request: web.Request) -> dict:
     return {k: v[-1] for k, v in parse_qs(raw, keep_blank_values=True).items()}
 
 
+# Instagram'da javob yozilmaydigan toifalar (INSTAGRAM_REPLY_REACTIONS=false): savol, narx, xarid, salbiy — javob bor
+QUIET_CATEGORIES = frozenset({"praise", "chat"})
+
 class ManyChatAPI:
     """Kechikkan AI javobi va menejer javoblarini mijozga yuborish (MANYCHAT_API_KEY kerak)."""
 
@@ -337,6 +340,8 @@ class ManyChatBridge:
         if is_comment and has_profanity(text):
             return result  # so'kinish — javob yo'q (AI ishlamasa ham), adminlarga ham xabar yuborilmaydi
         if is_comment and is_emoji_only(text):
+            if not settings.instagram_reply_reactions:
+                return result  # «❤️🔥» — javob yozilmaydi (Make operatsiyasi tejaladi)
             return await self._emoji_answer(payload, sub, text, username, result)
         # Make.com: Direct yuborilmaydi ("dm": false) — javob to'liq komment ostida bo'ladi
         dm_ok = _field(payload, "dm", limit=10).lower() not in ("false", "0", "no")
@@ -399,6 +404,8 @@ class ManyChatBridge:
             await session.commit()
         if is_comment:
             public = decision.reply if decision is not None and decision.should_reply else ""
+            if decision is not None and decision.category in QUIET_CATEGORIES and not settings.instagram_reply_reactions:
+                public = ""  # maqtov / oddiy gap — javob yozilmaydi (Make operatsiyasi tejaladi)
             if not public and result["reply"]:
                 public = PUBLIC_COMMENT_REPLY if dm_ok else result["reply"][:PUBLIC_REPLY_MAX]
             result["public_reply"] = public

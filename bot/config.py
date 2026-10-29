@@ -192,6 +192,8 @@ class Settings:
     business_owner_pause_hours: int
     comments_enabled: bool
     comments_ai_enabled: bool
+    # Instagram: emoji/maqtov/oddiy gapga ham javob yozilsinmi (Make operatsiyasini tejash uchun — yo'q)
+    instagram_reply_reactions: bool
     comments_answer_admins: bool
     ai_reply_label: str
     discussion_group_id: int | None
@@ -304,6 +306,7 @@ settings = Settings(
     # Kommentlar va muhokama guruhidagi xabarlarni AI o'qib, vaziyatga qarab javob beradi (salbiy fikrga ham).
     # AI kaliti yo'q / chegara tugasa — eski shablon javob (faqat savollarga)
     comments_ai_enabled=_bool("COMMENTS_AI_ENABLED", True),
+    instagram_reply_reactions=_bool("INSTAGRAM_REPLY_REACTIONS", False),
     # Admin guruhda o'zi savol yozsa (sinash uchun) ham javob beriladi. Admin boshqa odamga reply qilib
     # yozgan xabarlarga (mijozga javob) bot hech qachon aralashmaydi
     comments_answer_admins=_bool("COMMENTS_ANSWER_ADMINS", True),
